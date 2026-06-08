@@ -1,0 +1,74 @@
+{
+	"name": "ArtOfWar",
+	"servePlaceIds": [126275639019912],
+	"tree": {
+		"$className": "DataModel",
+		"ServerScriptService": {
+			"$className": "ServerScriptService",
+			"$ignoreUnknownInstances": true,
+			"ArtOfWar": {
+				"$path": "src/ServerScriptService/ArtOfWar"
+			},
+			"DataEditorService": {
+				"$path": "src/ServerScriptService/DataEditorService.server.luau"
+			}
+		},
+		"ReplicatedStorage": {
+			"$className": "ReplicatedStorage",
+			"$ignoreUnknownInstances": true,
+			"ArtOfWar": {
+				"$path": "src/ReplicatedStorage/ArtOfWar"
+			}
+		},
+		"ReplicatedFirst": {
+			"$className": "ReplicatedFirst",
+			"$ignoreUnknownInstances": true,
+			"AoWLoadingScreen": {
+				"$path": "src/ReplicatedFirst/AoWLoadingScreen.client.luau"
+			}
+		},
+		"StarterPlayer": {
+			"$className": "StarterPlayer",
+			"$ignoreUnknownInstances": true,
+			"StarterPlayerScripts": {
+				"$className": "StarterPlayerScripts",
+				"$ignoreUnknownInstances": true,
+				"ArtOfWar": {
+					"$path": "src/StarterPlayer/StarterPlayerScripts/ArtOfWar"
+				}
+			}
+		},
+		"StarterGui": {
+			"$className": "StarterGui",
+			"$ignoreUnknownInstances": true,
+			"DataEditorUI": {
+				"$className": "ScreenGui",
+				"$ignoreUnknownInstances": true,
+				"EditorClient": {
+					"$path": "src/StarterGui/DataEditorUI/EditorClient.client.luau"
+				}
+			}
+		},
+		"ServerStorage": {
+			"$className": "ServerStorage",
+			"$ignoreUnknownInstances": true,
+			"Dev": {
+				"$className": "Folder",
+				"$ignoreUnknownInstances": true,
+				"DataEditor": {
+					"$path": "src/ServerStorage/Dev/DataEditor.luau"
+				}
+			},
+			"Services": {
+				"$className": "Folder",
+				"$ignoreUnknownInstances": true,
+				"DataOverlay": {
+					"$path": "src/ServerStorage/Services/DataOverlay.luau"
+				},
+				"DraftOverlay": {
+					"$path": "src/ServerStorage/Services/DraftOverlay.luau"
+				}
+			}
+		}
+	}
+}

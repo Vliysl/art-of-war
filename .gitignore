@@ -1,0 +1,10 @@
+*.rbxl
+*.rbxlx
+*.rbxm
+*.rbxmx
+/.export/
+/build/
+/sourcemap.json
+/.tool-results/
+/src/ServerStorage/Dev/RelayConfig.luau
+/src/ServerStorage/Dev/RelayConfig.meta.json

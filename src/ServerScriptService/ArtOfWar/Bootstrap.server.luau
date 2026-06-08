@@ -1,0 +1,1043 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
+local StarterPlayer = game:GetService("StarterPlayer")
+
+pcall(function() StarterPlayer.EnableMouseLockOption = false end)
+
+local ArtOfWarServer = script.Parent
+local Framework = ArtOfWarServer:WaitForChild("Framework")
+local Systems = ArtOfWarServer:WaitForChild("Systems")
+
+local WorldConstants = require(ReplicatedStorage.ArtOfWar.Shared.WorldConstants)
+local Channels = require(ReplicatedStorage.ArtOfWar.Events.Channels)
+
+local EventBus = require(Framework.EventBus)
+local TickScheduler = require(Framework.TickScheduler)
+local WorldState = require(Framework.WorldState)
+local DataLoader = require(Framework.DataLoader)
+local UIBridge = require(Framework.UIBridge)
+local InputValidator = require(Framework.InputValidator)
+local ModifierStack = require(Framework.ModifierStack)
+
+UIBridge.init()
+
+UIBridge.registerCommand("ready", function(player)
+	EventBus.publish(Channels.PlayerReady, { userId = player.UserId, name = player.Name })
+end)
+
+local context = {
+	EventBus = EventBus,
+	TickScheduler = TickScheduler,
+	WorldState = WorldState,
+	DataLoader = DataLoader,
+	UIBridge = UIBridge,
+	InputValidator = InputValidator,
+	Channels = Channels,
+	WorldConstants = WorldConstants,
+}
+
+ModifierStack.register(context)
+
+local bundle = DataLoader.loadBundle()
+context.Bundle = bundle
+
+local heals = DataLoader.healBundle(bundle)
+if #heals > 0 then
+	warn(string.format("[ArtOfWar] auto-healed %d bundle issue(s) before validation:", #heals))
+	for i, msg in ipairs(heals) do
+		if i <= 30 then warn("  · " .. msg) end
+	end
+	if #heals > 30 then warn(string.format("  · …and %d more", #heals - 30)) end
+end
+
+do
+	local overlayMod = ServerStorage:FindFirstChild("Services")
+	overlayMod = overlayMod and overlayMod:FindFirstChild("DataOverlay")
+	if overlayMod then
+		local ok, overlay = pcall(require, overlayMod)
+		if ok and overlay and overlay.snapshot and overlay.setProvince then
+			local snap = overlay.snapshot()
+			local overlayProvinces = snap and snap.provinces or {}
+			local countries = bundle.countries or {}
+			local function tagIsGhost(tag)
+				if tag == nil or tag == "" or tag == "NONE" then return false end
+				return countries[tag] == nil
+			end
+			local function coresDiverged(overlayCores, healedCores)
+				if type(overlayCores) ~= "table" then return false end
+				local healedSet = {}
+				if type(healedCores) == "table" then
+					for _, t in ipairs(healedCores) do healedSet[t] = true end
+				end
+				for _, t in ipairs(overlayCores) do
+					if not healedSet[t] then return true end
+				end
+				return false
+			end
+			local persisted, samples = 0, {}
+			for pid, prov in pairs(bundle.provinces or {}) do
+				if type(prov) == "table" then
+					local overlayRec = overlayProvinces[pid] or overlayProvinces[tostring(pid)]
+					if type(overlayRec) == "table" then
+						local oGhost = tagIsGhost(overlayRec.ownerTag)
+						local cGhost = tagIsGhost(overlayRec.controllerTag)
+						local staleCores = coresDiverged(overlayRec.cores, prov.cores)
+						if oGhost or cGhost or staleCores then
+							local patched = table.clone(overlayRec)
+							patched.ownerTag = prov.ownerTag or "NONE"
+							patched.controllerTag = prov.controllerTag or patched.ownerTag
+							if staleCores then
+								local cleaned = {}
+								if type(prov.cores) == "table" then
+									for _, t in ipairs(prov.cores) do table.insert(cleaned, t) end
+								end
+								patched.cores = cleaned
+							end
+							overlay.setProvince(pid, patched)
+							persisted = persisted + 1
+							if #samples < 5 then
+								local note = string.format("pid=%s owner %s→%s ctrl %s→%s",
+									tostring(pid),
+									tostring(overlayRec.ownerTag), tostring(patched.ownerTag),
+									tostring(overlayRec.controllerTag), tostring(patched.controllerTag))
+								if staleCores then
+									note = note .. string.format(" cores %d→%d",
+										type(overlayRec.cores) == "table" and #overlayRec.cores or 0,
+										#patched.cores)
+								end
+								table.insert(samples, note)
+							end
+						end
+					end
+				end
+			end
+			if persisted > 0 then
+				print(string.format("[ArtOfWar] persisting %d ghost heal(s) to DataOverlay", persisted))
+				for _, s in ipairs(samples) do print("  · " .. s) end
+				if overlay.flush then
+					local flushOk, flushResult = pcall(overlay.flush)
+					if not flushOk then
+						warn(string.format("[ArtOfWar] overlay flush after ghost-heal failed: %s", tostring(flushResult)))
+					elseif type(flushResult) == "table" and (flushResult.failures or 0) > 0 then
+						warn(string.format("[ArtOfWar] ghost-heal flush reported %d failure(s)", flushResult.failures))
+					end
+				end
+			end
+		end
+	end
+end
+
+local report = DataLoader.validateBundle(bundle)
+if not report.ok then
+	warn(string.format("[ArtOfWar] bundle validation surfaced %d non-fatal error(s); boot continues so the map and physics still load:", #report.errors))
+	for _, err in report.errors do
+		warn("  · " .. err)
+	end
+end
+for _, note in report.warnings do
+	warn("[ArtOfWar] data warning: " .. note)
+end
+
+local registryOrder = { "ProvinceRegistry", "CountryRegistry" }
+local loadedSystems = {}
+
+for _, name in registryOrder do
+	local moduleScript = Systems:FindFirstChild(name)
+	if moduleScript then
+		local ok, system = pcall(require, moduleScript)
+		if not ok then
+			error(string.format("[ArtOfWar] failed to require '%s': %s", name, tostring(system)))
+		end
+		if type(system) == "table" and type(system.register) == "function" then
+			system.register(context)
+			loadedSystems[name] = system
+		end
+	end
+end
+
+if loadedSystems.ProvinceRegistry and type(loadedSystems.ProvinceRegistry.hydrate) == "function" then
+	loadedSystems.ProvinceRegistry.hydrate(bundle.provinces)
+end
+if loadedSystems.CountryRegistry and type(loadedSystems.CountryRegistry.hydrate) == "function" then
+	loadedSystems.CountryRegistry.hydrate(bundle.countries)
+end
+
+for _, child in Systems:GetChildren() do
+	if child:IsA("ModuleScript") and not loadedSystems[child.Name] then
+		local ok, system = pcall(require, child)
+		if not ok then
+			warn(string.format("[Bootstrap] failed to require system '%s': %s", child.Name, tostring(system)))
+		elseif type(system) == "table" and type(system.register) == "function" then
+			local success, err = pcall(system.register, context)
+			if not success then
+				warn(string.format("[Bootstrap] system '%s' register errored: %s", child.Name, tostring(err)))
+			else
+				loadedSystems[child.Name] = system
+			end
+		end
+	end
+end
+
+if loadedSystems.ProvinceStamper and type(loadedSystems.ProvinceStamper.stamp) == "function" then
+	local stamped = loadedSystems.ProvinceStamper.stamp()
+	print(string.format("[ArtOfWar] stamped %d provinces onto map parts", stamped))
+end
+
+do
+	local overlayModule = ServerStorage:FindFirstChild("Services")
+	overlayModule = overlayModule and overlayModule:FindFirstChild("DataOverlay")
+	if overlayModule then
+		local ok, overlay = pcall(require, overlayModule)
+		if ok and overlay then
+			if overlay.onMigrated then
+				overlay.onMigrated(function()
+					local stamper = context.ProvinceStamper
+					if stamper and stamper.applyTileOwnership then
+						pcall(stamper.applyTileOwnership)
+					end
+					if context.StateReplicator and context.StateReplicator.broadcast then
+						pcall(context.StateReplicator.broadcast)
+					end
+				end)
+			end
+			if overlay.autoMigrate then
+				overlay.autoMigrate()
+			end
+		end
+	end
+end
+
+task.spawn(function()
+	local overlayMod = ServerStorage:FindFirstChild("Services")
+	overlayMod = overlayMod and overlayMod:FindFirstChild("DataOverlay")
+	local ov = overlayMod and select(2, pcall(require, overlayMod))
+	for _ = 1, 10 do
+		task.wait(6)
+		local stamper = loadedSystems.ProvinceStamper
+		if not stamper or type(stamper.refreshEU4Mappings) ~= "function" then break end
+		if type(ov) == "table" and type(ov.retryNow) == "function" then pcall(ov.retryNow) end
+		local recovered = 0
+		pcall(function() recovered = stamper.refreshEU4Mappings() or 0 end)
+		if recovered > 0 then
+			if type(stamper.stamp) == "function" then pcall(stamper.stamp) end
+			print(string.format("[ArtOfWar] map self-healed: recovered %d province tile mappings after a throttled boot and re-stamped", recovered))
+			break
+		end
+	end
+end)
+
+if context.AdjacencyGraph and context.AdjacencyGraph.build then
+	context.AdjacencyGraph.build()
+end
+
+if context.SeaAdjacencyGraph and context.SeaAdjacencyGraph.build then
+	context.SeaAdjacencyGraph.build()
+end
+
+local remotesFolder = ReplicatedStorage.ArtOfWar:FindFirstChild("Remotes")
+if not remotesFolder then
+	remotesFolder = Instance.new("Folder")
+	remotesFolder.Name = "Remotes"
+	remotesFolder.Parent = ReplicatedStorage.ArtOfWar
+end
+
+local function ensureEvent(name)
+	local existing = remotesFolder:FindFirstChild(name)
+	if existing and existing:IsA("RemoteEvent") then return existing end
+	if existing then existing:Destroy() end
+	local remote = Instance.new("RemoteEvent")
+	remote.Name = name
+	remote.Parent = remotesFolder
+	return remote
+end
+
+local function ensureFunction(name)
+	local existing = remotesFolder:FindFirstChild(name)
+	if existing and existing:IsA("RemoteFunction") then return existing end
+	if existing then existing:Destroy() end
+	local remote = Instance.new("RemoteFunction")
+	remote.Name = name
+	remote.Parent = remotesFolder
+	return remote
+end
+
+InputValidator.register("ClaimCountry", {
+	schema = { { name = "tag", type = "countryTag" } },
+	rate = { count = 3, window = 10 },
+})
+InputValidator.register("ReleaseCountry", {
+	schema = {},
+	rate = { count = 3, window = 10 },
+})
+InputValidator.register("SetEconomyPolicy", {
+	schema = { { name = "policyId", type = "policyId" } },
+	rate = { count = 4, window = 10 },
+})
+InputValidator.register("SetConsumerGoods", {
+	schema = { { name = "priorities", type = "shallowTable" } },
+	rate = { count = 4, window = 10 },
+})
+InputValidator.register("ProposeTrade", {
+	schema = {
+		{ name = "toTag", type = "countryTag" },
+		{ name = "offer", type = "tradeOffer" },
+		{ name = "request", type = "tradeOffer" },
+	},
+	rate = { count = 6, window = 10 },
+})
+InputValidator.register("AcceptTrade", {
+	schema = { { name = "tradeId", type = "integer" } },
+	rate = { count = 12, window = 10 },
+})
+InputValidator.register("CancelTrade", {
+	schema = { { name = "tradeId", type = "integer" } },
+	rate = { count = 12, window = 10 },
+})
+InputValidator.register("RequestFullState", {
+	rate = { count = 2, window = 30 },
+})
+InputValidator.register("SetIdeology", {
+	schema = { { name = "ideologyId", type = "policyId" } },
+	rate = { count = 2, window = 15 },
+})
+InputValidator.register("SetGovernmentType", {
+	schema = {
+		{ name = "targetGov", type = "policyId" },
+		{ name = "targetIdeology", type = "policyId" },
+	},
+	rate = { count = 1, window = 30 },
+})
+InputValidator.register("CancelTransition", {
+	rate = { count = 2, window = 30 },
+})
+InputValidator.register("EnactPolicy", {
+	schema = { { name = "policyId", type = "policyId" } },
+	rate = { count = 3, window = 15 },
+})
+InputValidator.register("RepealPolicy", {
+	schema = { { name = "policyId", type = "policyId" } },
+	rate = { count = 3, window = 15 },
+})
+InputValidator.register("CancelLaw", {
+	rate = { count = 2, window = 30 },
+})
+InputValidator.register("AppointLeader", {
+	schema = {
+		{ name = "slot", type = "policyId" },
+		{ name = "candidateIndex", type = "integer" },
+	},
+	rate = { count = 4, window = 15 },
+})
+InputValidator.register("DismissLeader", {
+	schema = { { name = "slot", type = "policyId" } },
+	rate = { count = 3, window = 15 },
+})
+InputValidator.register("SetMapMode", {
+	schema = { { name = "mode", type = "policyId" } },
+	rate = { count = 4, window = 10 },
+})
+InputValidator.register("RecruitUnit", {
+	schema = {
+		{ name = "provinceId", type = "integer" },
+		{ name = "unitTypeId", type = "policyId" },
+		{ name = "count", type = "integer" },
+	},
+	rate = { count = 6, window = 10 },
+})
+InputValidator.register("MoveArmy", {
+	schema = {
+		{ name = "armyId", type = "string" },
+		{ name = "toProvinceId", type = "integer" },
+	},
+	rate = { count = 12, window = 10 },
+})
+InputValidator.register("MoveArmyPath", {
+	schema = {
+		{ name = "armyId", type = "string" },
+		{ name = "finalProvinceId", type = "integer" },
+	},
+	rate = { count = 12, window = 10 },
+})
+InputValidator.register("AttackProvince", {
+	schema = {
+		{ name = "armyId", type = "string" },
+		{ name = "targetProvinceId", type = "integer" },
+	},
+	rate = { count = 6, window = 10 },
+})
+InputValidator.register("DisbandArmy", {
+	schema = { { name = "armyId", type = "string" } },
+	rate = { count = 6, window = 15 },
+})
+InputValidator.register("MergeArmies", {
+	schema = {
+		{ name = "primaryId", type = "string" },
+		{ name = "otherIds", type = "shallowTable" },
+	},
+	rate = { count = 4, window = 15 },
+})
+InputValidator.register("SetDoctrine", {
+	schema = { { name = "doctrineId", type = "policyId" } },
+	rate = { count = 3, window = 15 },
+})
+InputValidator.register("RecruitShip", {
+	schema = {
+		{ name = "provinceId", type = "integer" },
+		{ name = "shipTypeId", type = "policyId" },
+		{ name = "count", type = "integer" },
+	},
+	rate = { count = 6, window = 10 },
+})
+InputValidator.register("MoveFleet", {
+	schema = {
+		{ name = "fleetId", type = "string" },
+		{ name = "toProvinceId", type = "integer" },
+	},
+	rate = { count = 12, window = 10 },
+})
+InputValidator.register("AttackFleet", {
+	schema = {
+		{ name = "fleetId", type = "string" },
+		{ name = "targetFleetId", type = "string" },
+	},
+	rate = { count = 6, window = 10 },
+})
+InputValidator.register("DisbandFleet", {
+	schema = { { name = "fleetId", type = "string" } },
+	rate = { count = 6, window = 15 },
+})
+InputValidator.register("SetFleetMission", {
+	schema = {
+		{ name = "fleetId", type = "string" },
+		{ name = "missionType", type = "string" },
+		{ name = "targetProvinceId", type = "integer" },
+		{ name = "targetFleetId", type = "optionalString" },
+	},
+	rate = { count = 6, window = 10 },
+})
+InputValidator.register("ClearFleetMission", {
+	schema = { { name = "fleetId", type = "string" } },
+	rate = { count = 6, window = 10 },
+})
+InputValidator.register("ReassignOfficer", {
+	schema = {
+		{ name = "armyId", type = "string" },
+		{ name = "traitIds", type = "shallowTable" },
+	},
+	rate = { count = 4, window = 30 },
+})
+InputValidator.register("BuildBuilding", {
+	schema = {
+		{ name = "provinceId", type = "integer" },
+		{ name = "buildingId", type = "policyId" },
+	},
+	rate = { count = 6, window = 10 },
+})
+InputValidator.register("CancelBuilding", {
+	schema = { { name = "ticketId", type = "string" } },
+	rate = { count = 6, window = 15 },
+})
+
+InputValidator.register("DeclareWar", {
+	schema = { { name = "targetTag", type = "countryTag" } },
+	rate = { count = 2, window = 30 },
+})
+InputValidator.register("ProposePeace", {
+	schema = {
+		{ name = "targetTag", type = "countryTag" },
+		{ name = "terms", type = "shallowTable" },
+	},
+	rate = { count = 4, window = 30 },
+})
+InputValidator.register("AcceptPeace", {
+	schema = { { name = "proposalId", type = "string" } },
+	rate = { count = 4, window = 15 },
+})
+InputValidator.register("RejectPeace", {
+	schema = { { name = "proposalId", type = "string" } },
+	rate = { count = 6, window = 15 },
+})
+InputValidator.register("CancelPeaceProposal", {
+	schema = { { name = "proposalId", type = "string" } },
+	rate = { count = 4, window = 15 },
+})
+
+local function bindEvent(name, handler)
+	local remote = ensureEvent(name)
+	remote.OnServerEvent:Connect(function(player, ...)
+		if not InputValidator.accept(player, name, ...) then return end
+		local ok, err = pcall(handler, player, ...)
+		if not ok then
+			warn(string.format("[ArtOfWar] remote '%s' handler errored: %s", name, tostring(err)))
+		end
+	end)
+	return remote
+end
+
+local function bindFunction(name, handler)
+	local remote = ensureFunction(name)
+	remote.OnServerInvoke = function(player, ...)
+		if not InputValidator.accept(player, name, ...) then return nil end
+		local ok, result = pcall(handler, player, ...)
+		if not ok then
+			warn(string.format("[ArtOfWar] remote '%s' handler errored: %s", name, tostring(result)))
+			return nil
+		end
+		return result
+	end
+	return remote
+end
+
+local function authority()
+	return context.PlayerAuthority
+end
+
+bindEvent("ClaimCountry", function(player, tag)
+	local auth = authority()
+	if not auth then return end
+	local ok = auth.claim(player, tag)
+	if ok and context.StateReplicator and context.StateReplicator.broadcast then
+		context.StateReplicator.broadcast()
+	end
+end)
+
+bindEvent("ReleaseCountry", function(player)
+	local auth = authority()
+	if not auth then return end
+	auth.release(player)
+	if context.StateReplicator and context.StateReplicator.broadcast then
+		context.StateReplicator.broadcast()
+	end
+end)
+
+bindEvent("SetEconomyPolicy", function(player, policyId)
+	local auth = authority()
+	local system = loadedSystems.EconomySystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.setEconomyPolicy(tag, policyId)
+end)
+
+bindEvent("SetConsumerGoods", function(player, priorities)
+	local auth = authority()
+	local system = loadedSystems.EconomySystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.setConsumerGoods(tag, priorities)
+end)
+
+bindEvent("ProposeTrade", function(player, toTag, offer, request)
+	local auth = authority()
+	local system = loadedSystems.TradeSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.propose(tag, toTag, offer, request)
+end)
+
+bindEvent("AcceptTrade", function(player, tradeId)
+	local auth = authority()
+	local system = loadedSystems.TradeSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.accept(tradeId, tag)
+end)
+
+bindEvent("CancelTrade", function(player, tradeId)
+	local auth = authority()
+	local system = loadedSystems.TradeSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.cancel(tradeId, tag)
+end)
+
+bindEvent("SetIdeology", function(player, ideologyId)
+	local auth = authority()
+	local system = loadedSystems.IdeologySystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.setIdeology(tag, ideologyId, "voluntary")
+end)
+
+bindEvent("SetGovernmentType", function(player, targetGov, targetIdeology)
+	local auth = authority()
+	if not auth or not context.GovernmentTransitions then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	context.GovernmentTransitions.begin(tag, targetGov, {
+		trigger = "voluntary",
+		targetIdeology = targetIdeology,
+	})
+end)
+
+bindEvent("CancelTransition", function(player)
+	local auth = authority()
+	if not auth or not context.GovernmentTransitions then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	context.GovernmentTransitions.cancel(tag)
+end)
+
+bindEvent("EnactPolicy", function(player, policyId)
+	local auth = authority()
+	if not auth then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	local lawSys = loadedSystems.LawSystem
+	if lawSys then
+		lawSys.startLawProcess(tag, policyId)
+		return
+	end
+	local polSys = loadedSystems.PolicySystem
+	if polSys then polSys.enact(tag, policyId, "voluntary") end
+end)
+
+bindEvent("RepealPolicy", function(player, policyId)
+	local auth = authority()
+	local system = loadedSystems.PolicySystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.repeal(tag, policyId, "voluntary")
+end)
+
+bindEvent("CancelLaw", function(player)
+	local auth = authority()
+	local system = loadedSystems.LawSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.cancelLaw(tag, "voluntary")
+end)
+
+bindEvent("AppointLeader", function(player, slot, candidateIndex)
+	local auth = authority()
+	local system = loadedSystems.LeaderSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.appoint(tag, slot, candidateIndex)
+end)
+
+bindEvent("DismissLeader", function(player, slot)
+	local auth = authority()
+	local system = loadedSystems.LeaderSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.dismiss(tag, slot)
+end)
+
+bindEvent("SetMapMode", function(player, mode)
+	local system = loadedSystems.MapModeSystem
+	if not system then return end
+	system.setMode(player, mode)
+end)
+
+bindEvent("RecruitUnit", function(player, provinceId, unitTypeId, count)
+	local auth = authority()
+	local system = loadedSystems.RecruitSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.enqueue(tag, provinceId, unitTypeId, count)
+end)
+
+-- Helper: surface a server-side movement rejection as a notification toast.
+local function notifyMoveRejected(tag, reason)
+	if not tag then return end
+	local nb = context.NotificationBroadcaster
+	if not nb or not nb.push then return end
+	local title, body
+	if reason == "not_at_war" then
+		title = "No path to enemy territory"
+		body  = "You must declare war before crossing the border."
+	elseif reason == "in_battle" then
+		title = "Army is engaged"
+		body  = "Cannot reorder a force currently in battle."
+	elseif reason == "no_path" then
+		title = "No accessible path"
+		body  = "There is no friendly route to that destination."
+	elseif reason == "no_speed" then
+		title = "Army cannot move"
+		body  = "This force has no movement speed."
+	else
+		return
+	end
+	nb.push({
+		kind = "warn",
+		title = title,
+		body = body,
+		audience = "self",
+		tag = tag,
+		ttl = 4,
+	})
+end
+
+bindEvent("MoveArmy", function(player, armyId, toProvinceId)
+	local auth = authority()
+	local system = loadedSystems.MovementSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	local army = context.WorldState.getArmy(armyId)
+	if not army or army.ownerTag ~= tag then return end
+	local ok, reason = system.beginMove(armyId, toProvinceId)
+	if not ok and reason then notifyMoveRejected(tag, reason) end
+end)
+
+bindEvent("MoveArmyPath", function(player, armyId, finalProvinceId)
+	local auth = authority()
+	local system = loadedSystems.MovementSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	local army = context.WorldState.getArmy(armyId)
+	if not army or army.ownerTag ~= tag then return end
+	local ok, reason = system.beginMovePath(armyId, finalProvinceId)
+	if not ok and reason then notifyMoveRejected(tag, reason) end
+end)
+
+bindEvent("AttackProvince", function(player, armyId, targetProvinceId)
+	local auth = authority()
+	local system = loadedSystems.CombatSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	local army = context.WorldState.getArmy(armyId)
+	if not army or army.ownerTag ~= tag then return end
+	system.attackProvince(armyId, targetProvinceId)
+end)
+
+bindEvent("DisbandArmy", function(player, armyId)
+	local auth = authority()
+	local armySys = loadedSystems.ArmySystem
+	if not auth or not armySys then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	local army = context.WorldState.getArmy(armyId)
+	if not army or army.ownerTag ~= tag then return end
+	local country = context.WorldState.getCountry(tag)
+	if country and army.composition then
+		local refund = context.WorldConstants.ArmyDisbandManpowerRefund or 0.5
+		local bundle = context.Bundle
+		for unitTypeId, quantity in army.composition do
+			local unit = bundle and bundle.unitTypes and bundle.unitTypes[unitTypeId]
+			if unit then
+				country.manpower = (country.manpower or 0) + unit.recruitManpower * quantity * refund
+			end
+		end
+		context.WorldState.setCountry(tag, country)
+	end
+	armySys.destroyArmy(armyId, "disbanded")
+end)
+
+bindEvent("MergeArmies", function(player, primaryId, otherIds)
+	local auth = authority()
+	local armySys = loadedSystems.ArmySystem
+	if not auth or not armySys or not armySys.mergeArmies then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	-- Verify primary belongs to player
+	local primary = context.WorldState.getArmy(primaryId)
+	if not primary or primary.ownerTag ~= tag then return end
+	-- Filter otherIds to player-owned strings only (defensive)
+	local cleaned = {}
+	for _, id in ipairs(otherIds or {}) do
+		if type(id) == "string" and id ~= primaryId then
+			local other = context.WorldState.getArmy(id)
+			if other and other.ownerTag == tag then
+				table.insert(cleaned, id)
+			end
+		end
+	end
+	if #cleaned == 0 then return end
+	armySys.mergeArmies(primaryId, cleaned)
+end)
+
+bindEvent("SetDoctrine", function(player, doctrineId)
+	local auth = authority()
+	local system = loadedSystems.DoctrineSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.setDoctrine(tag, doctrineId)
+end)
+
+bindEvent("RecruitShip", function(player, provinceId, shipTypeId, count)
+	local auth = authority()
+	local system = loadedSystems.NavalSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.queueRecruit(tag, provinceId, shipTypeId, count)
+end)
+
+bindEvent("MoveFleet", function(player, fleetId, toProvinceId)
+	local auth = authority()
+	local system = loadedSystems.NavalSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	local fleet = context.WorldState.getFleet(fleetId)
+	if not fleet or fleet.ownerTag ~= tag then return end
+	system.moveFleet(tag, fleetId, toProvinceId)
+end)
+
+bindEvent("AttackFleet", function(player, fleetId, targetFleetId)
+	local auth = authority()
+	local system = loadedSystems.NavalSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	local fleet = context.WorldState.getFleet(fleetId)
+	if not fleet or fleet.ownerTag ~= tag then return end
+	system.attackFleet(tag, fleetId, targetFleetId)
+end)
+
+bindEvent("DisbandFleet", function(player, fleetId)
+	local auth = authority()
+	local system = loadedSystems.NavalSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.disbandFleet(tag, fleetId)
+end)
+
+bindEvent("SetFleetMission", function(player, fleetId, missionType, targetProvinceId, targetFleetId)
+	local auth = authority()
+	local system = loadedSystems.NavalSystem
+	if not auth or not system or not system.assignMission then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	local fleet = context.WorldState.getFleet(fleetId)
+	if not fleet or fleet.ownerTag ~= tag then return end
+	local target = (type(targetProvinceId) == "number" and targetProvinceId > 0) and targetProvinceId or nil
+	local fleetRef = (type(targetFleetId) == "string" and targetFleetId ~= "") and targetFleetId or nil
+	if fleetRef then
+		local targetFleet = context.WorldState.getFleet(fleetRef)
+		if not targetFleet then return end
+		system.assignMission(fleetId, missionType, target, {
+			targetFleetId = fleetRef,
+			pairedFleetId = fleetRef,
+		})
+	else
+		system.assignMission(fleetId, missionType, target)
+	end
+end)
+
+bindEvent("ClearFleetMission", function(player, fleetId)
+	local auth = authority()
+	local system = loadedSystems.NavalSystem
+	if not auth or not system or not system.clearMission then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	local fleet = context.WorldState.getFleet(fleetId)
+	if not fleet or fleet.ownerTag ~= tag then return end
+	system.clearMission(fleetId)
+end)
+
+local OFFICER_REASSIGN_COST = 25
+
+bindEvent("ReassignOfficer", function(player, armyId, traitIds)
+	local auth = authority()
+	local armySys = loadedSystems.ArmySystem
+	if not auth or not armySys or not armySys.reassignOfficer then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	local army = context.WorldState.getArmy(armyId)
+	if not army or army.ownerTag ~= tag then return end
+	if type(traitIds) ~= "table" then return end
+	local cleaned = {}
+	for _, tid in pairs(traitIds) do
+		if type(tid) == "string" and tid ~= "" then
+			table.insert(cleaned, tid)
+		end
+	end
+	if #cleaned == 0 then return end
+	local pp = context.PoliticalPower
+	if pp and pp.spend then
+		local paid = pp.spend(tag, OFFICER_REASSIGN_COST, "officer_reassign")
+		if not paid then return end
+	end
+	armySys.reassignOfficer(armyId, cleaned)
+end)
+
+bindEvent("BuildBuilding", function(player, provinceId, buildingId)
+	local auth = authority()
+	local system = loadedSystems.BuildingSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.enqueue(tag, provinceId, buildingId)
+end)
+
+bindEvent("CancelBuilding", function(player, ticketId)
+	local auth = authority()
+	local system = loadedSystems.BuildingSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.cancel(tag, ticketId)
+end)
+bindEvent("DeclareWar", function(player, targetTag)
+	local auth = authority()
+	local system = loadedSystems.DiplomacySystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.declareWar(tag, targetTag)
+end)
+
+bindEvent("ProposePeace", function(player, targetTag, terms)
+	local auth = authority()
+	local system = loadedSystems.DiplomacySystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.proposePeace(tag, targetTag, terms)
+end)
+
+bindEvent("AcceptPeace", function(player, proposalId)
+	local auth = authority()
+	local system = loadedSystems.DiplomacySystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.acceptPeace(proposalId, tag)
+end)
+
+bindEvent("RejectPeace", function(player, proposalId)
+	local auth = authority()
+	local system = loadedSystems.DiplomacySystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.rejectPeace(proposalId, tag)
+end)
+
+bindEvent("CancelPeaceProposal", function(player, proposalId)
+	local auth = authority()
+	local system = loadedSystems.DiplomacySystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.cancelPeaceProposal(proposalId, tag)
+end)
+
+
+
+local mapModeSync = ensureEvent("MapModeSync")
+if loadedSystems.MapModeSystem and context.MapModeSystem then
+	context.MapModeSystem.setSync(mapModeSync)
+	for _, existing in game:GetService("Players"):GetPlayers() do
+		context.MapModeSystem.handleJoin(existing)
+	end
+end
+
+local stateSync = ensureEvent("StateSync")
+if loadedSystems.StateReplicator and context.StateReplicator then
+	context.StateReplicator.setStateSync(stateSync)
+end
+
+local notificationChannel = ensureEvent("NotificationChannel")
+if loadedSystems.NotificationBroadcaster and context.NotificationBroadcaster then
+	context.NotificationBroadcaster.setRemote(notificationChannel)
+end
+
+local battlePhaseChannel = ensureEvent("BattlePhaseChannel")
+EventBus.subscribe(Channels.BattlePhaseChanged, function(data)
+	if type(data) ~= "table" then return end
+	battlePhaseChannel:FireAllClients(data)
+end)
+
+local timeSync = ensureEvent("TimeSync")
+local timeRequest = ensureEvent("TimeRequest")
+if loadedSystems.TimeController and context.TimeController then
+	context.TimeController.setSync(timeSync)
+	timeRequest.OnServerEvent:Connect(function(player, payload)
+		context.TimeController.handleRequest(player, payload)
+	end)
+	task.defer(context.TimeController.broadcast)
+end
+
+bindFunction("RequestFullState", function()
+	if not context.StateReplicator then return nil end
+	return context.StateReplicator.buildSnapshot()
+end)
+
+local function isAdminPlayer(player)
+	if not player or typeof(player) ~= "Instance" or not player:IsA("Player") then return false end
+	local RunService = game:GetService("RunService")
+	if RunService:IsStudio() then return true end
+	local creatorType = game.CreatorType
+	local creatorId = game.CreatorId
+	if creatorType == Enum.CreatorType.User and player.UserId == creatorId then return true end
+	local relayMod = ServerStorage:FindFirstChild("Dev")
+	relayMod = relayMod and relayMod:FindFirstChild("RelayConfig")
+	if not relayMod then return false end
+	local ok, relayCfg = pcall(require, relayMod)
+	if not ok or not relayCfg then return false end
+	if creatorType == Enum.CreatorType.Group then
+		local rankOk, rank = pcall(function() return player:GetRankInGroup(creatorId) end)
+		if rankOk and rank and rank >= (relayCfg.ADMIN_GROUP_RANK or 254) then return true end
+	end
+	if relayCfg.ADMIN_USER_IDS and relayCfg.ADMIN_USER_IDS[player.UserId] then return true end
+	return false
+end
+
+context.isAdminPlayer = isAdminPlayer
+
+local function applyAdminAttribute(player)
+	player:SetAttribute("IsAdmin", isAdminPlayer(player))
+end
+
+local Players = game:GetService("Players")
+Players.PlayerAdded:Connect(applyAdminAttribute)
+for _, p in Players:GetPlayers() do
+	task.spawn(applyAdminAttribute, p)
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	InputValidator.releaseWindows(player.UserId)
+end)
+
+print(string.format("[ArtOfWar] loaded %d provinces, %d countries, %d areas, %d regions",
+	DataLoader.countEntries(bundle.provinces),
+	DataLoader.countEntries(bundle.countries),
+	DataLoader.countEntries(bundle.areas),
+	DataLoader.countEntries(bundle.regions)))
+
+print(string.format("[ArtOfWar] economy online: %d goods, %d manufactories, %d policies, %d remotes, tick=%.1fs",
+	DataLoader.countEntries(bundle.tradeGoods),
+	DataLoader.countEntries(bundle.manufactories),
+	DataLoader.countEntries(bundle.economyPolicies),
+	#remotesFolder:GetChildren(),
+	WorldConstants.SecondsPerEconomyUpdate))
+
+print(string.format("[ArtOfWar] politics online: %d ideologies, %d government types, %d policies, %d leader slots, %d traits, %d factions, PP cap=%d",
+	DataLoader.countEntries(bundle.ideologies),
+	DataLoader.countEntries(bundle.governmentTypes),
+	DataLoader.countEntries(bundle.policies),
+	DataLoader.countEntries(bundle.leaderSlots),
+	DataLoader.countEntries(bundle.leaderTraits),
+	DataLoader.countEntries(bundle.factions),
+	WorldConstants.PoliticalPowerCap))
+
+print(string.format("[ArtOfWar] combat online: %d unit types, %d doctrines, combat cap=%dx, adjacency=%d studs",
+	DataLoader.countEntries(bundle.unitTypes),
+	DataLoader.countEntries(bundle.doctrines),
+	WorldConstants.MultiplierCapCombatStat,
+	WorldConstants.AdjacencyThreshold))
+
+local audit = DataLoader.auditUsage(bundle)
+print(string.format("[ArtOfWar] registry headroom: %d cultures, %d religions, %d goods, %d terrains, %d climates, %d superregions reserved for future content",
+	#audit.unusedCultures, #audit.unusedReligions, #audit.unusedTradeGoods,
+	#audit.unusedTerrains, #audit.unusedClimates, #audit.unusedSuperRegions))
+
+TickScheduler.start()

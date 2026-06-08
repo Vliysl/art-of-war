@@ -1,0 +1,17 @@
+return {
+	farmland  = { id = "farmland",  displayName = "Farmland",  movementCost = 1.0,  supplyLimit = 8, developmentCostMod = -0.05, defenderMod = 0.0,  combatWidth = 80, attackerPenalty = 0.00, defenderBonus = 0.00 },
+	grassland = { id = "grassland", displayName = "Grassland", movementCost = 1.0,  supplyLimit = 6, developmentCostMod = 0.0,   defenderMod = 0.0,  combatWidth = 90, attackerPenalty = 0.00, defenderBonus = 0.00 },
+	plains    = { id = "plains",    displayName = "Plains",    movementCost = 1.0,  supplyLimit = 6, developmentCostMod = 0.0,   defenderMod = 0.0,  combatWidth = 90, attackerPenalty = 0.00, defenderBonus = 0.00 },
+	forest    = { id = "forest",    displayName = "Forest",    movementCost = 1.25, supplyLimit = 5, developmentCostMod = 0.1,   defenderMod = 0.1,  combatWidth = 50, attackerPenalty = -0.20, defenderBonus = 0.10 },
+	hills     = { id = "hills",     displayName = "Hills",     movementCost = 1.35, supplyLimit = 4, developmentCostMod = 0.1,   defenderMod = 0.15, combatWidth = 60, attackerPenalty = -0.25, defenderBonus = 0.15 },
+	mountain  = { id = "mountain",  displayName = "Mountain",  movementCost = 1.8,  supplyLimit = 3, developmentCostMod = 0.25,  defenderMod = 0.3,  combatWidth = 40, attackerPenalty = -0.40, defenderBonus = 0.30 },
+	marsh     = { id = "marsh",     displayName = "Marsh",     movementCost = 1.5,  supplyLimit = 3, developmentCostMod = 0.2,   defenderMod = 0.15, combatWidth = 45, attackerPenalty = -0.30, defenderBonus = 0.15 },
+	desert    = { id = "desert",    displayName = "Desert",    movementCost = 1.6,  supplyLimit = 2, developmentCostMod = 0.3,   defenderMod = 0.0,  combatWidth = 50, attackerPenalty = -0.15, defenderBonus = 0.00 },
+	drylands  = { id = "drylands",  displayName = "Drylands",  movementCost = 1.15, supplyLimit = 4, developmentCostMod = 0.1,   defenderMod = 0.0,  combatWidth = 70, attackerPenalty = -0.05, defenderBonus = 0.00 },
+	steppe    = { id = "steppe",    displayName = "Steppe",    movementCost = 1.0,  supplyLimit = 5, developmentCostMod = 0.05,  defenderMod = 0.0,  combatWidth = 90, attackerPenalty = 0.00, defenderBonus = 0.00 },
+	tundra    = { id = "tundra",    displayName = "Tundra",    movementCost = 1.4,  supplyLimit = 2, developmentCostMod = 0.25,  defenderMod = 0.05, combatWidth = 50, attackerPenalty = -0.20, defenderBonus = 0.05 },
+	savanna   = { id = "savanna",   displayName = "Savanna",   movementCost = 1.1,  supplyLimit = 5, developmentCostMod = 0.05,  defenderMod = 0.05, combatWidth = 75, attackerPenalty = -0.05, defenderBonus = 0.05 },
+	jungle    = { id = "jungle",    displayName = "Jungle",    movementCost = 1.6,  supplyLimit = 3, developmentCostMod = 0.3,   defenderMod = 0.2,  combatWidth = 40, attackerPenalty = -0.35, defenderBonus = 0.20 },
+	coast     = { id = "coast",     displayName = "Coast",     movementCost = 1.0,  supplyLimit = 6, developmentCostMod = 0.0,   defenderMod = 0.0,  combatWidth = 70, attackerPenalty = -0.05, defenderBonus = 0.00 },
+	ocean     = { id = "ocean",     displayName = "Ocean",     movementCost = 1.0,  supplyLimit = 0, developmentCostMod = 0.0,   defenderMod = 0.0,  combatWidth = 0,  attackerPenalty = -1.00, defenderBonus = 0.00 },
+}

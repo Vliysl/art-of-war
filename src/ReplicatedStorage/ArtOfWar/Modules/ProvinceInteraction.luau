@@ -1,0 +1,476 @@
+local ProvinceInteraction = {}
+
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+local GuiService = game:GetService("GuiService")
+
+local DEBOUNCE_FRAMES = 1
+local HOVER_INTERVAL = 1 / 30
+local RAY_LENGTH = 200000
+local HOVER_FILL = Color3.fromRGB(255, 220, 140)
+local HOVER_OUTLINE = Color3.fromRGB(255, 235, 180)
+local SELECT_FILL = Color3.fromRGB(120, 220, 255)
+local SELECT_OUTLINE = Color3.fromRGB(180, 235, 255)
+
+local hoveredProvince = nil
+local selectedProvince = nil
+local hoverHighlight = nil
+local selectHighlight = nil
+local connections = {}
+local lastTarget = nil
+local targetFrames = 0
+local hoverClock = 0
+
+local onHovered, onSelected, onWater, onRightClicked = nil, nil, nil, nil
+local selectListeners = {}
+local multiSelectListeners = {}
+local hoverListeners = {}
+
+local multiSelection = {}
+local multiHighlights = {}
+
+local raycastFolders = {}
+
+local MULTI_FILL = Color3.fromRGB(120, 220, 255)
+local MULTI_OUTLINE = Color3.fromRGB(180, 235, 255)
+
+local raycastParams = RaycastParams.new()
+raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+raycastParams.IgnoreWater = true
+local filterList = {}
+
+local function rebuildFilter()
+	table.clear(filterList)
+	for _, p in Players:GetPlayers() do
+		if p.Character then
+			table.insert(filterList, p.Character)
+		end
+	end
+	local map = workspace:FindFirstChild("ArtOfWarMap")
+	if map then
+		local floor = map:FindFirstChild("FieldFloor")
+		if floor then table.insert(filterList, floor) end
+		local armies = map:FindFirstChild("Armies")
+		if armies then table.insert(filterList, armies) end
+	end
+	raycastParams.FilterDescendantsInstances = filterList
+end
+
+local function ensureHighlights()
+	if hoverHighlight and hoverHighlight.Parent then return end
+	hoverHighlight = Instance.new("Highlight")
+	hoverHighlight.Name = "AoWHover"
+	hoverHighlight.FillColor = HOVER_FILL
+	hoverHighlight.OutlineColor = HOVER_OUTLINE
+	hoverHighlight.FillTransparency = 0.7
+	hoverHighlight.OutlineTransparency = 0.1
+	hoverHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hoverHighlight.Adornee = nil
+	hoverHighlight.Parent = workspace.CurrentCamera
+
+	selectHighlight = Instance.new("Highlight")
+	selectHighlight.Name = "AoWSelect"
+	selectHighlight.FillColor = SELECT_FILL
+	selectHighlight.OutlineColor = SELECT_OUTLINE
+	selectHighlight.FillTransparency = 0.6
+	selectHighlight.OutlineTransparency = 0
+	selectHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	selectHighlight.Adornee = nil
+	selectHighlight.Parent = workspace.CurrentCamera
+end
+
+local function isProvincePart(inst)
+	if not inst or not inst:IsA("BasePart") then return false end
+	local parent = inst.Parent
+	if not parent then return false end
+	return parent.Name == "Provinces" or parent.Name == "Sea"
+end
+
+local function activeCamera()
+	return workspace.CurrentCamera
+end
+
+local function isMouseOverUI()
+	local player = Players.LocalPlayer
+	if not player then return false end
+	local pg = player:FindFirstChildOfClass("PlayerGui")
+	if not pg then return false end
+	local mp = UserInputService:GetMouseLocation()
+	local inset = GuiService:GetGuiInset()
+	local x, y = mp.X, mp.Y - inset.Y
+	local objects = pg:GetGuiObjectsAtPosition(x, y)
+	for _, obj in objects do
+		local cursor = obj
+		while cursor and cursor:IsA("GuiObject") do
+			local sink = cursor:GetAttribute("AoWInputSink")
+			if sink == true then return true end
+			if sink == false then break end
+			if cursor:IsA("ScrollingFrame") then return true end
+			cursor = cursor.Parent
+		end
+	end
+	return false
+end
+
+local CLICK_DRAG_THRESHOLD = 6
+local mb1DownPos = nil
+local mb2Down = false
+local mb2DownProvince = nil
+local mb2Moved = false
+local mb2Accum = 0
+local rightClickArmed = function() return true end
+local mapModeRef
+local function inCommandMode()
+	if mapModeRef == nil then
+		local ok, mod = pcall(function()
+			return require(game:GetService("ReplicatedStorage").ArtOfWar.Modules.MapModeController)
+		end)
+		mapModeRef = (ok and mod) or false
+	end
+	if mapModeRef and mapModeRef.current then
+		return mapModeRef.current() == "command"
+	end
+	return true
+end
+
+local function getProvinceAtMouse(skipUiCheck)
+	local cam = activeCamera()
+	if not cam then return nil end
+	if not skipUiCheck and isMouseOverUI() then return nil end
+	local mp = UserInputService:GetMouseLocation()
+	local ray = cam:ViewportPointToRay(mp.X, mp.Y)
+	local result = workspace:Raycast(ray.Origin, ray.Direction * RAY_LENGTH, raycastParams)
+	if not result then return nil end
+	if isProvincePart(result.Instance) then
+		return result.Instance
+	end
+	return nil
+end
+
+local function getMouseWorldPlanePosition()
+	local cam = activeCamera()
+	if not cam then return nil end
+	local mp = UserInputService:GetMouseLocation()
+	local ray = cam:ViewportPointToRay(mp.X, mp.Y)
+	if math.abs(ray.Direction.Y) < 1e-6 then return nil end
+	local t = (0 - ray.Origin.Y) / ray.Direction.Y
+	if t < 0 then return nil end
+	local hit = ray.Origin + ray.Direction * t
+	return hit.X, hit.Z
+end
+
+local function setHover(province)
+	if province == hoveredProvince then return end
+	hoveredProvince = province
+	hoverHighlight.Adornee = province
+	if onHovered then onHovered(province) end
+	for listener in pairs(hoverListeners) do
+		local ok, err = pcall(listener, province)
+		if not ok then warn("[ProvinceInteraction] hover listener errored: " .. tostring(err)) end
+	end
+end
+
+local function setSelection(province)
+	selectedProvince = province
+	selectHighlight.Adornee = province
+	if onSelected then onSelected(province) end
+	for listener in pairs(selectListeners) do
+		listener(province)
+	end
+end
+
+local function clearSelectionSilent()
+	-- Clear province selection state + highlight WITHOUT firing onSelected/selectListeners.
+	-- Used when a unit click is consumed by a classifier so the freshly-selected unit is
+	-- not immediately deselected by the onSelectProvince(nil) cascade.
+	selectedProvince = nil
+	if selectHighlight then selectHighlight.Adornee = nil end
+end
+
+local function notifyMultiSelectionChanged()
+	for listener in pairs(multiSelectListeners) do
+		local ok, err = pcall(listener, multiSelection)
+		if not ok then warn("[ProvinceInteraction] multi-select listener errored: " .. tostring(err)) end
+	end
+end
+
+local function clearMultiSelection()
+	for _, hl in pairs(multiHighlights) do
+		if hl.Parent then hl:Destroy() end
+	end
+	table.clear(multiHighlights)
+	if #multiSelection > 0 then
+		multiSelection = {}
+		notifyMultiSelectionChanged()
+	end
+end
+
+local function applyMultiHighlights()
+	local present = {}
+	for _, part in ipairs(multiSelection) do present[part] = true end
+	for part, hl in pairs(multiHighlights) do
+		if not present[part] then
+			if hl.Parent then hl:Destroy() end
+			multiHighlights[part] = nil
+		end
+	end
+	for _, part in ipairs(multiSelection) do
+		if not multiHighlights[part] then
+			local hl = Instance.new("Highlight")
+			hl.Name = "AoWMultiSelect"
+			hl.FillColor = MULTI_FILL
+			hl.OutlineColor = MULTI_OUTLINE
+			hl.FillTransparency = 0.78
+			hl.OutlineTransparency = 0.25
+			hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+			hl.Adornee = part
+			hl.Parent = workspace.CurrentCamera
+			multiHighlights[part] = hl
+		end
+	end
+end
+
+local function toggleInMultiSelection(province)
+	if not province then return end
+	for i, p in ipairs(multiSelection) do
+		if p == province then
+			table.remove(multiSelection, i)
+			applyMultiHighlights()
+			notifyMultiSelectionChanged()
+			return
+		end
+	end
+	table.insert(multiSelection, province)
+	applyMultiHighlights()
+	notifyMultiSelectionChanged()
+end
+
+local function tryClassifierRaycasts()
+	if #raycastFolders == 0 then return false end
+	local cam = activeCamera()
+	if not cam then return false end
+	if isMouseOverUI() then return false end
+	local mp = UserInputService:GetMouseLocation()
+	local ray = cam:ViewportPointToRay(mp.X, mp.Y)
+	for _, entry in ipairs(raycastFolders) do
+		if entry.folder and entry.folder.Parent then
+			local p = RaycastParams.new()
+			p.FilterType = Enum.RaycastFilterType.Include
+			p.FilterDescendantsInstances = { entry.folder }
+			p.IgnoreWater = true
+			local result = workspace:Raycast(ray.Origin, ray.Direction * RAY_LENGTH, p)
+			if result and result.Instance then
+				local ok, classification = pcall(entry.classifier, result.Instance)
+				if ok and classification == "consumed" then
+					return true
+				end
+			end
+		end
+	end
+	return false
+end
+
+function ProvinceInteraction.addRaycastFolder(folder, classifierFn)
+	if not folder or type(classifierFn) ~= "function" then return end
+	for _, entry in ipairs(raycastFolders) do
+		if entry.folder == folder then return end
+	end
+	table.insert(raycastFolders, { folder = folder, classifier = classifierFn })
+	rebuildFilter()
+end
+
+function ProvinceInteraction.clearSelection()
+	setSelection(nil)
+end
+
+function ProvinceInteraction.init()
+	ensureHighlights()
+	rebuildFilter()
+
+	connections[#connections + 1] = Players.PlayerAdded:Connect(function(p)
+		rebuildFilter()
+		p.CharacterAdded:Connect(rebuildFilter)
+	end)
+	connections[#connections + 1] = Players.PlayerRemoving:Connect(rebuildFilter)
+	for _, p in Players:GetPlayers() do
+		connections[#connections + 1] = p.CharacterAdded:Connect(rebuildFilter)
+	end
+
+	connections[#connections + 1] = RunService.RenderStepped:Connect(function(dt)
+		hoverClock += dt
+		if hoverClock < HOVER_INTERVAL then return end
+		hoverClock = 0
+
+		if isMouseOverUI() then
+			setHover(nil)
+			if onWater then onWater(nil, nil) end
+			lastTarget = nil
+			targetFrames = 0
+			return
+		end
+
+		local ok, province = pcall(getProvinceAtMouse, true)
+		if not ok then return end
+
+		if province then
+			if province == lastTarget then
+				targetFrames += 1
+			else
+				lastTarget = province
+				targetFrames = 1
+			end
+			if targetFrames >= DEBOUNCE_FRAMES then
+				setHover(province)
+			end
+		else
+			setHover(nil)
+			if onWater then
+				local wx, wz = getMouseWorldPlanePosition()
+				if wx then
+					onWater(wx, wz)
+				else
+					onWater(nil, nil)
+				end
+			end
+			lastTarget = nil
+			targetFrames = 0
+		end
+	end)
+
+	connections[#connections + 1] = UserInputService.InputBegan:Connect(function(input, processed)
+		-- Right-click move: capture on press (any map mode), resolve on release as a CLICK (move)
+		-- vs DRAG (field-camera rotate). Armed only while a unit is selected, so with nothing
+		-- selected MB2 is left entirely to the camera. gameProcessedEvent is ignored here because
+		-- the Classic field camera marks MB2 processed.
+		if input.UserInputType == Enum.UserInputType.MouseButton2 then
+			mb2Down, mb2DownProvince, mb2Moved, mb2Accum = false, nil, false, 0
+			if not rightClickArmed() then return end
+			if isMouseOverUI() then return end
+			mb2Down = true
+			local ok2, province = pcall(getProvinceAtMouse, true)
+			mb2DownProvince = ok2 and province or nil
+			return
+		end
+		if processed then return end
+		if input.KeyCode == Enum.KeyCode.Escape then
+			setSelection(nil)
+			return
+		end
+		if isMouseOverUI() then return end
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			local mp = UserInputService:GetMouseLocation()
+			mb1DownPos = Vector2.new(mp.X, mp.Y)
+		end
+	end)
+
+	connections[#connections + 1] = UserInputService.InputChanged:Connect(function(input)
+		if mb2Down and input.UserInputType == Enum.UserInputType.MouseMovement then
+			mb2Accum += math.abs(input.Delta.X) + math.abs(input.Delta.Y)
+			if mb2Accum > CLICK_DRAG_THRESHOLD then mb2Moved = true end
+		end
+	end)
+
+	connections[#connections + 1] = UserInputService.InputEnded:Connect(function(input, processed)
+		if input.UserInputType == Enum.UserInputType.MouseButton2 then
+			local wasDown, province, moved = mb2Down, mb2DownProvince, mb2Moved
+			mb2Down, mb2DownProvince, mb2Moved, mb2Accum = false, nil, false, 0
+			if not wasDown then return end
+			if moved then return end -- right-drag = field-camera rotate, not a move order
+			if isMouseOverUI() then return end
+			if province and onRightClicked then onRightClicked(province) end
+			return
+		end
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+		local downPos = mb1DownPos
+		mb1DownPos = nil
+		if not downPos or processed then return end
+		if isMouseOverUI() then return end
+		local mp = UserInputService:GetMouseLocation()
+		if math.abs(mp.X - downPos.X) > CLICK_DRAG_THRESHOLD or math.abs(mp.Y - downPos.Y) > CLICK_DRAG_THRESHOLD then
+			return
+		end
+		if tryClassifierRaycasts() then
+			-- A classifier (e.g. ArmyView) already handled this click and selected a unit.
+			-- Clear the province highlight silently so we don't deselect that unit; the
+			-- province detail panel is hidden by the army-selected listener in UIController.
+			clearSelectionSilent()
+			clearMultiSelection()
+			return
+		end
+		local ok3, province = pcall(getProvinceAtMouse, true)
+		local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+			or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
+		if ok3 and province then
+			if shift then
+				toggleInMultiSelection(province)
+				setSelection(province)
+			else
+				clearMultiSelection()
+				setSelection(province)
+			end
+		else
+			clearMultiSelection()
+			setSelection(nil)
+		end
+	end)
+end
+
+function ProvinceInteraction.onHover(cb) onHovered = cb end
+function ProvinceInteraction.onSelect(cb) onSelected = cb end
+function ProvinceInteraction.onWater(cb) onWater = cb end
+function ProvinceInteraction.onRightClick(cb) onRightClicked = cb end
+function ProvinceInteraction.setRightClickPredicate(fn) rightClickArmed = (type(fn) == "function") and fn or function() return false end end
+function ProvinceInteraction.getSelected() return selectedProvince end
+function ProvinceInteraction.getHovered() return hoveredProvince end
+
+function ProvinceInteraction.addSelectListener(cb)
+	selectListeners[cb] = true
+	return function() selectListeners[cb] = nil end
+end
+
+function ProvinceInteraction.addHoverListener(cb)
+	hoverListeners[cb] = true
+	return function() hoverListeners[cb] = nil end
+end
+
+function ProvinceInteraction.addMultiSelectListener(cb)
+	multiSelectListeners[cb] = true
+	return function() multiSelectListeners[cb] = nil end
+end
+
+function ProvinceInteraction.getMultiSelection()
+	local out = {}
+	for i, p in ipairs(multiSelection) do out[i] = p end
+	return out
+end
+
+function ProvinceInteraction.clearMultiSelection()
+	clearMultiSelection()
+end
+
+function ProvinceInteraction.focusPart(part)
+	setSelection(part)
+end
+
+function ProvinceInteraction.setSelectColor(fillColor, outlineColor)
+	ensureHighlights()
+	if fillColor then selectHighlight.FillColor = fillColor end
+	if outlineColor then selectHighlight.OutlineColor = outlineColor end
+end
+
+function ProvinceInteraction.resetSelectColor()
+	ensureHighlights()
+	selectHighlight.FillColor = SELECT_FILL
+	selectHighlight.OutlineColor = SELECT_OUTLINE
+end
+
+function ProvinceInteraction.destroy()
+	for _, conn in connections do conn:Disconnect() end
+	connections = {}
+	if hoverHighlight then hoverHighlight:Destroy(); hoverHighlight = nil end
+	if selectHighlight then selectHighlight:Destroy(); selectHighlight = nil end
+	hoveredProvince, selectedProvince = nil, nil
+end
+
+return ProvinceInteraction

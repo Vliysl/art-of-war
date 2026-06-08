@@ -1,0 +1,42 @@
+return {
+	agrarian = {
+		id = "agrarian",
+		displayName = "Agrarian",
+		taxMult = 0.85,
+		productionMult = 0.95,
+		tradeMult = 0.9,
+		unrestMult = 0.85,
+	},
+	mercantilism = {
+		id = "mercantilism",
+		displayName = "Mercantilism",
+		taxMult = 1.1,
+		productionMult = 1.0,
+		tradeMult = 1.2,
+		unrestMult = 1.0,
+	},
+	laissez_faire = {
+		id = "laissez_faire",
+		displayName = "Laissez-Faire",
+		taxMult = 0.8,
+		productionMult = 1.25,
+		tradeMult = 1.15,
+		unrestMult = 0.9,
+	},
+	state_enterprise = {
+		id = "state_enterprise",
+		displayName = "State Enterprise",
+		taxMult = 1.25,
+		productionMult = 1.15,
+		tradeMult = 0.95,
+		unrestMult = 1.05,
+	},
+	war_economy = {
+		id = "war_economy",
+		displayName = "War Economy",
+		taxMult = 1.3,
+		productionMult = 1.3,
+		tradeMult = 0.8,
+		unrestMult = 1.25,
+	},
+}

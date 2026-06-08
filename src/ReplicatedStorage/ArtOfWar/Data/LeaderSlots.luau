@@ -1,0 +1,45 @@
+return {
+	prime_minister = {
+		id = "prime_minister",
+		displayName = "Prime Minister",
+		primaryDomain = "base_stability",
+		unlockedByDefault = true,
+		order = 1,
+	},
+	chief_of_army = {
+		id = "chief_of_army",
+		displayName = "Chief of Army",
+		primaryDomain = "army_combat",
+		unlockedByDefault = true,
+		order = 2,
+	},
+	chief_of_navy = {
+		id = "chief_of_navy",
+		displayName = "Chief of Navy",
+		primaryDomain = "naval_combat",
+		unlockedByDefault = true,
+		order = 3,
+	},
+	chief_of_airforce = {
+		id = "chief_of_airforce",
+		displayName = "Chief of Airforce",
+		primaryDomain = "air_combat",
+		unlockedByDefault = false,
+		researchGate = "air_tech",
+		order = 4,
+	},
+	economic_minister = {
+		id = "economic_minister",
+		displayName = "Economic Minister",
+		primaryDomain = "tax_income",
+		unlockedByDefault = true,
+		order = 5,
+	},
+	interior_minister = {
+		id = "interior_minister",
+		displayName = "Interior Minister",
+		primaryDomain = "unrest_reduction",
+		unlockedByDefault = true,
+		order = 6,
+	},
+}
