@@ -928,6 +928,8 @@ function ArmyPanel.create(parent, callbacks)
 		setMergeEnabled(#currentArmyIds >= 2)
 	end
 
+	local rebuildLog
+
 	local function refreshActive()
 		local army = getActiveArmy()
 		if not army then return end
@@ -1321,7 +1323,7 @@ function ArmyPanel.create(parent, callbacks)
 		end
 	end
 
-	local function rebuildLog(army)
+	function rebuildLog(army)
 		clearLogScroll()
 		if not army or not army.battleId then return end
 		local battle = ClientStateCache.getBattle and ClientStateCache.getBattle(army.battleId)
