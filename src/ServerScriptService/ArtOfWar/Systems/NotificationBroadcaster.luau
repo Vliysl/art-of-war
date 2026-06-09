@@ -64,14 +64,14 @@ end
 local function onArmyCreated(data)
 	broadcast(makePayload("info", "Army Raised",
 		string.format("Regiments assembled in %s.", tostring(data.provinceId or "?")),
-		"self", data.ownerTag, "army.created"))
+		"self", data.tag, "army.created"))
 end
 
 local function onArmyMoveCompleted(data)
 	-- quiet success; only notify owner
 	broadcast(makePayload("info", "Army Arrived",
-		string.format("Your force has reached province %s.", tostring(data.toProvinceId or "?")),
-		"self", data.ownerTag, "army.move.completed"))
+		string.format("Your force has reached province %s.", tostring(data.provinceId or "?")),
+		"self", data.tag, "army.move.completed"))
 end
 
 local function onProvinceOccupied(data)
@@ -140,13 +140,13 @@ end
 
 local function onTransitionStarted(data)
 	broadcast(makePayload("warn", "Government Transition",
-		string.format("Transition to %s has begun.", tostring(data.toGovernment or "a new government")),
+		string.format("Transition to %s has begun.", tostring(data.to or "a new government")),
 		"self", data.tag, "transition.started"))
 end
 
 local function onTransitionCompleted(data)
 	broadcast(makePayload("good", "Transition Complete",
-		string.format("The state has completed its transition to %s.", tostring(data.toGovernment or "a new government")),
+		string.format("The state has completed its transition to %s.", tostring(data.to or "a new government")),
 		"self", data.tag, "transition.completed"))
 end
 
