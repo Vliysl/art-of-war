@@ -18,7 +18,7 @@ local function effectiveSpeed(army)
 	local base = ctx.ArmySystem.compositionSpeed(army.composition) * (ctx.WorldConstants.ArmyMovementSpeed or 80)
 	local country = ctx.WorldState.getCountry(army.ownerTag)
 	local doctrineSpeed = doctrineMod(country, "army_movement_speed")
-	local leaderSpeed = country and ctx.ModifierStack.resolveAdditive(army.ownerTag, "army_movement_speed") or 0
+	local leaderSpeed = country and ctx.ModifierStack and ctx.ModifierStack.resolveAdditive(army.ownerTag, "army_movement_speed") or 0
 	local mult = math.clamp(1 + doctrineSpeed + leaderSpeed, 1 / combatCap(), combatCap())
 	return base * mult
 end
