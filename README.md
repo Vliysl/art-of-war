@@ -42,7 +42,12 @@ Every container Rojo manages carries `ignoreUnknownInstances`, so a sync never d
 
 ## Publishing
 
-The place carries the geometry that a `rojo build` cannot, so publishing to the live universes happens from a place that already holds it: sync the scripts in, then publish. Geometry edits are made in Studio and saved back to the shared place.
+`rojo build` only contains scripts, not the out-of-git geometry, so publishing goes through `tools/publish.luau` (Lune). It loads a place snapshot, overlays the current `src/` scripts onto it (leaving geometry, GUI, Remotes, RelayConfig, and Fonts untouched), and uploads the result to both universes via Open Cloud:
+
+    cp <your-place>.rbxl .export/base.rbxl
+    ROBLOX_OPEN_CLOUD_KEY=<key> lune run tools/publish -- .export/base.rbxl
+
+Add `--dry-run` to build `build/publish.rbxl` locally without uploading. Universe and place IDs live in `tools/publish.config.json`; the API key is read from the environment and never committed. The base place must sit inside the repo — Lune's filesystem is sandboxed to the project, which is why `.export/` (gitignored) exists. Re-snapshot the place whenever the geometry changes.
 
 ## Re-exporting from the place
 
