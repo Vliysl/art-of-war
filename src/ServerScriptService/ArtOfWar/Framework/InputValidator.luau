@@ -122,8 +122,9 @@ function InputValidator.accept(player, remoteName, ...)
 end
 
 function InputValidator.releaseWindows(userId)
+	local suffix = "|" .. tostring(userId)
 	for key in windows do
-		if key:find("|" .. tostring(userId), 1, true) then
+		if key:sub(-#suffix) == suffix then
 			windows[key] = nil
 		end
 	end
