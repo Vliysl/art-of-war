@@ -151,6 +151,7 @@ end
 local function completeTransition(tag, country)
 	local transition = country.transition
 	if not transition then return end
+	local previousIdeology = country.ideology
 	local rollover = applyRollover(country, transition.from, transition.to, transition.targetIdeology, transition.trigger)
 	country.transition = nil
 	ctx.WorldState.setCountry(tag, country)
@@ -162,7 +163,7 @@ local function completeTransition(tag, country)
 		tag = tag, previous = transition.from, current = transition.to, trigger = transition.trigger,
 	})
 	ctx.EventBus.publish(ctx.Channels.CountryIdeologyChanged, {
-		tag = tag, previous = country.ideology, current = transition.targetIdeology, trigger = "transition",
+		tag = tag, previous = previousIdeology, current = transition.targetIdeology, trigger = "transition",
 	})
 end
 
