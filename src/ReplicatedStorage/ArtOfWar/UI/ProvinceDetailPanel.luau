@@ -631,7 +631,7 @@ function ProvinceDetailPanel.create(parent, onClose, callbacks)
 				TextSize = 12,
 				TextXAlignment = Enum.TextXAlignment.Left,
 			})
-		local manpowerLbl = UIBuilder.label(headerCard, string.format("Manpower %d", math.floor(country.manpower or 0)),
+		local manpowerLbl = UIBuilder.label(headerCard, string.format("Levy %d · Pro %d", math.floor(country.levyManpower or 0), math.floor(country.manpower or 0)),
 			UIStyle.Type.Small, UIStyle.Color.Text or Color3.fromRGB(232, 220, 192), {
 				Size = UDim2.new(0.5, -8, 0, 18),
 				Position = UDim2.new(0.5, 0, 0, 4),
@@ -789,7 +789,8 @@ function ProvinceDetailPanel.create(parent, onClose, callbacks)
 			-- Affordability check
 			local cost = unit.recruitCost or 0
 			local mp = unit.recruitManpower or 0
-			local canAfford = (country.treasury or 0) >= cost and (country.manpower or 0) >= mp
+			local pool = (unit.class == "levy") and (country.levyManpower or 0) or (country.manpower or 0)
+				local canAfford = (country.treasury or 0) >= cost and pool >= mp
 			local hasFreeLine = freeLines > 0
 
 			UIBuilder.label(row, unit.displayName or entry.id, UIStyle.Type.StatValue,

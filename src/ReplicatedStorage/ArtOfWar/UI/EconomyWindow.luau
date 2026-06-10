@@ -270,7 +270,7 @@ local function buildOverviewTab(page)
 		update = function(country, providersMaybe)
 			-- Realm stats
 			realmRefs.treasury.Text = formatNumber(country and country.treasury or 0)
-			realmRefs.manpower.Text = formatNumber(country and country.manpower or 0)
+			realmRefs.manpower.Text = (country and country.levyManpower ~= nil) and string.format("Levy %s · Pro %s", formatNumber(country.levyManpower or 0), formatNumber(country.manpower or 0)) or formatNumber(country and country.manpower or 0)
 			realmRefs.pp.Text = formatNumber(country and country.politicalPower or 0)
 			realmRefs.stability.Text = string.format("%+d", math.floor((country and country.stability or 0) + 0.5))
 			realmRefs.stability.TextColor3 = UIStyle.stateColor and UIStyle.stateColor(country and country.stability or 0) or UIStyle.Color.Text

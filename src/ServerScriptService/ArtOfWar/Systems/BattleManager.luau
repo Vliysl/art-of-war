@@ -3,6 +3,8 @@
 local ctx
 local nextBattleSeq = 0
 
+local CombatPhases = require(game:GetService("ReplicatedStorage").ArtOfWar.Data.CombatPhases)
+
 -- ===== Helpers (stable) =====================================================
 
 local function unitsNavalLike(armyIds)
@@ -339,10 +341,9 @@ local function startBattle(provinceId, attackerArmyIds, defenderArmyIds, attacke
 		defenderStrengthStart = totalSideStrength(defenderArmyIds),
 		attackerOrgStart = totalSideOrg(attackerArmyIds),
 		defenderOrgStart = totalSideOrg(defenderArmyIds),
-		-- phaseCycle/phaseIndex kept populated for the client ArmyPanel (read-only there);
-		-- the round-based engine drives resolution, not the phase machinery.
 		phaseCycle = cycleId,
 		phaseIndex = 1,
+		phaseElapsed = 0,
 	}
 
 	for _, armyId in attackerArmyIds do
@@ -528,6 +529,8 @@ local function tickBattle(record)
 		record.phaseIndex = 1
 	end
 
+	local phaseSpec = CombatPhases.getPhase(record.phaseCycle, record.phaseIndex or 1)
+
 	local attackerSide = buildSideInput(record.attackerArmyIds, terrain)
 	local defenderSide = buildSideInput(record.defenderArmyIds, terrain)
 
@@ -536,6 +539,7 @@ local function tickBattle(record)
 		terrain = terrain,
 		fortTier = fortTierFor(record.provinceId),
 		roleSet = record.phaseCycle or "ground",
+		phaseSpec = phaseSpec,
 		width = width,
 		regimentStrength = ctx.WorldConstants.ArmyRegimentStrength or 1000,
 		attacker = attackerSide,
@@ -552,6 +556,23 @@ local function tickBattle(record)
 
 	record.round = (record.round or 0) + 1
 	record.lastDamageRoll = { attacker = result.attacker.damageTaken, defender = result.defender.damageTaken }
+
+	local activeSpec = phaseSpec or CombatPhases.getPhase(record.phaseCycle, record.phaseIndex or 1)
+	local phaseDuration = math.max(1, (activeSpec and activeSpec.duration) or 1)
+	record.phaseElapsed = (record.phaseElapsed or 0) + 1
+	if record.phaseElapsed >= phaseDuration then
+		record.phaseIndex = CombatPhases.next(record.phaseCycle, record.phaseIndex or 1)
+		record.phaseElapsed = 0
+		local nextSpec, nextIdx = CombatPhases.getPhase(record.phaseCycle, record.phaseIndex)
+		ctx.EventBus.publish(ctx.Channels.BattlePhaseChanged, {
+			battleId = record.id,
+			provinceId = record.provinceId,
+			phaseCycle = record.phaseCycle,
+			phaseIndex = nextIdx or record.phaseIndex,
+			phaseName = nextSpec and (nextSpec.displayName or nextSpec.id) or nil,
+		})
+	end
+
 	if type(record.log) ~= "table" then record.log = {} end
 	table.insert(record.log, {
 		round = record.round,

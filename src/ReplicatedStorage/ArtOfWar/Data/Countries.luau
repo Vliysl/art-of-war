@@ -242,7 +242,7 @@ return {
 	SIC = {
 		tag = "SIC",
 		displayName = "Kingdom of Sicily",
-		capitalProvinceId = 640,
+		capitalProvinceId = 1343,
 		primaryCulture = "sicilian",
 		acceptedCultures = {  },
 		stateReligion = "catholic",

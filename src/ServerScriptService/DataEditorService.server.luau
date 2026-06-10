@@ -614,6 +614,7 @@ api.OnServerInvoke = function(player, command, payload)
 		end
 		return safeCall(function()
 			local processed, errors, deltas = 0, {}, {}
+			Editor.beginBatch(string.format("assignProvinceFieldBatch %s", field))
 			for _, id in ipairs(items) do
 				local ok, err = pcall(Editor.assignProvinceField, id, field, value)
 				if ok then
@@ -624,6 +625,7 @@ api.OnServerInvoke = function(player, command, payload)
 					table.insert(errors, { id = id, error = tostring(err) })
 				end
 			end
+			Editor.endBatch()
 			broadcastBatch(player, deltas)
 			return { processed = processed, errors = errors, total = #items }
 		end)
@@ -669,6 +671,7 @@ api.OnServerInvoke = function(player, command, payload)
 		return safeCall(function()
 			local map = workspace:FindFirstChild("ArtOfWarMap")
 			local processed, errors, deltas = 0, {}, {}
+			Editor.beginBatch(string.format("assignBatch -> %s", ownerTag))
 			for _, item in ipairs(items) do
 				if type(item) == "table" then
 					if item.kind == "seed" and item.id ~= nil then
@@ -696,6 +699,7 @@ api.OnServerInvoke = function(player, command, payload)
 					end
 				end
 			end
+			Editor.endBatch()
 			broadcastBatch(player, deltas)
 			return { processed = processed, errors = errors, total = #items }
 		end)

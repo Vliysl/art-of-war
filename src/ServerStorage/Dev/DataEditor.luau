@@ -32,10 +32,13 @@ local ideologies = {}
 local governments = {}
 local loaded = false
 
-local HISTORY_MAX = 30
+local HISTORY_MAX = 8
 local history = {}
 local redoStack = {}
 local baseline = nil
+local batchActive = false
+local pendingBatchLabel = nil
+local pendingBatchSnapshot = nil
 
 local ensureLoaded
 
@@ -65,6 +68,7 @@ end
 
 local function pushHistory(label)
 	if not loaded then return end
+	if batchActive then return end
 	table.insert(history, {
 		label = label or "edit",
 		at = os.time(),
@@ -74,6 +78,34 @@ local function pushHistory(label)
 		table.remove(history, 1)
 	end
 	table.clear(redoStack)
+end
+
+function DataEditor.beginBatch(label)
+	ensureLoaded()
+	if batchActive then
+		DataEditor.endBatch()
+	end
+	batchActive = true
+	pendingBatchLabel = label or "batch"
+	pendingBatchSnapshot = captureSnapshot()
+end
+
+function DataEditor.endBatch()
+	if not batchActive then return end
+	batchActive = false
+	if pendingBatchSnapshot and loaded then
+		table.insert(history, {
+			label = pendingBatchLabel,
+			at = os.time(),
+			snapshot = pendingBatchSnapshot,
+		})
+		while #history > HISTORY_MAX do
+			table.remove(history, 1)
+		end
+		table.clear(redoStack)
+	end
+	pendingBatchSnapshot = nil
+	pendingBatchLabel = nil
 end
 
 local LUA_KEYWORDS = {

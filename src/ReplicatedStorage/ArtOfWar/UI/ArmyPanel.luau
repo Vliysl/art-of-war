@@ -38,14 +38,15 @@ local function commafy(n)
 	return (out:gsub("^,", ""))
 end
 
--- Country reserve pool for the Manpower line, levy/professional-aware (falls back to the
--- legacy single `manpower` pool). Kept short to fit the value column.
 local function manpowerText(country)
 	if not country then return "—" end
-	if country.levyManpower ~= nil then
-		return string.format("Levy %s", commafy(country.levyManpower or 0))
+	local levy, pro = country.levyManpower, country.manpower
+	if levy ~= nil and pro ~= nil then
+		return string.format("Levy %s · Pro %s", commafy(levy), commafy(pro))
+	elseif levy ~= nil then
+		return string.format("Levy %s", commafy(levy))
 	end
-	return commafy(country.manpower or 0)
+	return commafy(pro or 0)
 end
 
 local MODIFIER_LABELS = {

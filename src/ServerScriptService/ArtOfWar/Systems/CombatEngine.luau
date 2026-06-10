@@ -10,6 +10,8 @@
 
 local CombatEngine = {}
 
+local CombatPhases = require(game:GetService("ReplicatedStorage").ArtOfWar.Data.CombatPhases)
+
 local function num(v, d)
 	if type(v) == "number" then return v end
 	return d
@@ -156,6 +158,17 @@ function CombatEngine.resolveRound(input)
 	local fortMult = 1 + fortTier * fortPerTier
 	local width = num(input.width, terrain and num(terrain.combatWidth, 60) or 60)
 
+	local phaseSpec = input.phaseSpec
+	if phaseSpec == nil and input.phaseIndex then
+		phaseSpec = CombatPhases.getPhase(input.phaseCycle or roleSet, input.phaseIndex)
+	end
+	local phaseDmgMult = phaseSpec and num(phaseSpec.damageMultiplier, 1) or 1
+	local phaseMorMult = phaseSpec and num(phaseSpec.moraleMultiplier, 1) or 1
+	local function affinity(u)
+		if not phaseSpec then return 1 end
+		return CombatPhases.tagAffinity(phaseSpec, u.tags)
+	end
+
 	local atkSlots = slotSide(input.attacker, width, regStrength)
 	local defSlots = slotSide(input.defender, width, regStrength)
 
@@ -166,7 +179,7 @@ function CombatEngine.resolveRound(input)
 			local u, f = s.u, s.f
 			local role = classifyRole(u, roleSet)
 			local power = s.front * num(u.attack, 0) * num(u.discipline, 1) * moraleFactor(f)
-				* (1 + unitTerrainMod(u, terrain)) * num(f.atkMult, 1) * terrAtk
+				* (1 + unitTerrainMod(u, terrain)) * num(f.atkMult, 1) * terrAtk * affinity(u)
 			atkOff[role] = (atkOff[role] or 0) + power
 		end
 	end
@@ -177,7 +190,7 @@ function CombatEngine.resolveRound(input)
 			local u, f = s.u, s.f
 			local role = classifyRole(u, roleSet)
 			local power = s.front * num(u.defense, 0) * num(u.discipline, 1) * moraleFactor(f)
-				* (1 + unitTerrainMod(u, terrain)) * num(f.defMult, 1) * terrDef * fortMult
+				* (1 + unitTerrainMod(u, terrain)) * num(f.defMult, 1) * terrDef * fortMult * affinity(u)
 			defDef[role] = (defDef[role] or 0) + power
 		end
 	end
@@ -195,6 +208,8 @@ function CombatEngine.resolveRound(input)
 	end
 	netToDefender *= scale
 	netToAttacker *= scale
+	netToDefender *= phaseDmgMult
+	netToAttacker *= phaseDmgMult
 
 	local atkStr = sideStrength(input.attacker, regStrength)
 	local defStr = sideStrength(input.defender, regStrength)
@@ -235,8 +250,8 @@ function CombatEngine.resolveRound(input)
 	local defDisc = sideDiscipline(input.defender, regStrength)
 	local atkMR = 1 + sideMoraleResist(input.attacker, regStrength)
 	local defMR = 1 + sideMoraleResist(input.defender, regStrength)
-	local atkMoraleDelta = -(moraleBase + (moraleScale * atkRatio) / (atkDisc * atkMR))
-	local defMoraleDelta = -(moraleBase + (moraleScale * defRatio) / (defDisc * defMR))
+	local atkMoraleDelta = -(moraleBase + ((moraleScale * atkRatio) / (atkDisc * atkMR)) * phaseMorMult)
+	local defMoraleDelta = -(moraleBase + ((moraleScale * defRatio) / (defDisc * defMR)) * phaseMorMult)
 	local atkOrgDelta = -(orgBase + orgScale * atkRatio)
 	local defOrgDelta = -(orgBase + orgScale * defRatio)
 
