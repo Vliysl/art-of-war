@@ -2,6 +2,8 @@
 
 Source for the Art of War Roblox grand-strategy game. The Luau code lives here as files and syncs into Studio with [Rojo](https://rojo.space). The place file — map geometry, GUI instances, RemoteEvents, and the relay config — is **not** in this repository. It is shared separately and stays the source of truth for everything that isn't a script.
 
+> **On Windows?** See [`WINDOWS-SETUP.md`](WINDOWS-SETUP.md) for a click-to-run setup and a step-by-step daily guide.
+
 ## Layout
 
 - `src/` — every game script (141), mirroring the Studio tree
