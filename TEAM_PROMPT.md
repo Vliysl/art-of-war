@@ -39,4 +39,4 @@ Each has its own DataStore, and an external Cloudflare relay mirrors saved edits
 
 ## If you're an AI agent with the Roblox Studio MCP
 
-Use it for runtime work only — read-only checks of live state, Play-mode smoke tests. Don't read or write script source through it anymore; the files plus Rojo replace that, and the old base64 transport was slow and lossy on big scripts, which is the whole reason this repo exists.
+Use it for runtime work only — read-only checks of live state, Play-mode smoke tests. Don't read or write script source through it anymore; the files plus Rojo replace that, and the old base64 transport was slow and lossy on big scripts, which is the whole reason this repo exists. See [`AI-AGENT-GUIDE.md`](AI-AGENT-GUIDE.md) for the full agent workflow and golden rules.
