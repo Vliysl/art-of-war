@@ -134,67 +134,6 @@ function UIBuilder.sectionHeader(parent, title, yOffset)
 	return bar
 end
 
--- STAT ROW
-function UIBuilder.statRow(parent, yOffset, iconText, label, value, valueColor)
-	local row = Instance.new("Frame")
-	row.Size = UDim2.new(1, 0, 0, UIStyle.Size.StatRowH)
-	row.Position = UDim2.fromOffset(0, yOffset or 0)
-	row.BackgroundTransparency = 1
-	row.ZIndex = UIStyle.Z.Content
-	row.Parent = parent
-
-	local icon = Instance.new("TextLabel")
-	icon.Size = UDim2.fromOffset(20, UIStyle.Size.StatRowH)
-	icon.Position = UDim2.fromOffset(0, 0)
-	icon.BackgroundTransparency = 1
-	icon.Text = iconText or ""
-	icon.TextColor3 = UIStyle.Color.Gold
-	icon.TextXAlignment = Enum.TextXAlignment.Left
-	icon.TextYAlignment = Enum.TextYAlignment.Center
-	icon.ZIndex = UIStyle.Z.Content
-	UIStyle.applyType(icon, UIStyle.Type.StatValue)
-	icon.Parent = row
-
-	local labelObj = Instance.new("TextLabel")
-	labelObj.Size = UDim2.new(0.55, -24, 1, 0)
-	labelObj.Position = UDim2.fromOffset(24, 0)
-	labelObj.BackgroundTransparency = 1
-	labelObj.Text = label
-	labelObj.TextColor3 = UIStyle.Color.TextMuted
-	labelObj.TextXAlignment = Enum.TextXAlignment.Left
-	labelObj.TextYAlignment = Enum.TextYAlignment.Center
-	labelObj.ZIndex = UIStyle.Z.Content
-	UIStyle.applyType(labelObj, UIStyle.Type.StatLabel)
-	labelObj.Parent = row
-
-	local valueObj = Instance.new("TextLabel")
-	valueObj.Size = UDim2.new(0.45, 0, 1, 0)
-	valueObj.Position = UDim2.new(1, 0, 0, 0)
-	valueObj.AnchorPoint = Vector2.new(1, 0)
-	valueObj.BackgroundTransparency = 1
-	valueObj.Text = value or ""
-	valueObj.TextColor3 = valueColor or UIStyle.Color.Text
-	valueObj.TextXAlignment = Enum.TextXAlignment.Right
-	valueObj.TextYAlignment = Enum.TextYAlignment.Center
-	valueObj.ZIndex = UIStyle.Z.Content
-	UIStyle.applyType(valueObj, UIStyle.Type.StatValue)
-	valueObj.Parent = row
-
-	return { row = row, icon = icon, label = labelObj, value = valueObj }
-end
-
-function UIBuilder.divider(parent, yOffset)
-	local line = Instance.new("Frame")
-	line.Size = UDim2.new(1, 0, 0, UIStyle.Size.DividerH)
-	line.Position = UDim2.fromOffset(0, yOffset or 0)
-	line.BackgroundColor3 = UIStyle.Color.Border
-	line.BorderSizePixel = 0
-	line.BackgroundTransparency = 0.5
-	line.ZIndex = UIStyle.Z.Content
-	line.Parent = parent
-	return line
-end
-
 -- BUTTON
 function UIBuilder.button(parent, props, primary)
 	local btn = Instance.new("TextButton")
@@ -329,13 +268,6 @@ function UIBuilder.crest(parent, countryColor, tag, props)
 		return frame
 	end
 	local f = buildCrest(parent, countryColor, tag, size)
-	apply(f, stripSize(props))
-	return f
-end
-
--- Legacy shield wrapper
-function UIBuilder.shield(parent, countryColor, tag, props)
-	local f = buildCrest(parent, countryColor, tag, (props and props.size) or UIStyle.Size.ShieldH)
 	apply(f, stripSize(props))
 	return f
 end
@@ -1163,13 +1095,6 @@ function UIBuilder.statRowBar(parent, opts)
 	return { row = row, label = labelObj, value = valueObj, barTrack = barTrack, barFill = fill }
 end
 
-function UIBuilder.tweenTo(obj, spec, props)
-	local info = UIStyle.tween(spec or UIStyle.Motion.Medium)
-	local t = TweenService:Create(obj, info, props)
-	t:Play()
-	return t
-end
-
 UIBuilder.stroke  = newStroke
 UIBuilder.corner  = newCorner
 UIBuilder.padding = newPadding
@@ -1571,103 +1496,6 @@ function UIBuilder.bracketedPanel(parent, props, bracketSize, bracketInset)
 	return panel
 end
 
-function UIBuilder.dotCircle(parent, opts)
-	opts = opts or {}
-	local img = Instance.new("ImageLabel")
-	img.Size = opts.Size or UDim2.fromOffset(8, 8)
-	img.Position = opts.Position or UDim2.fromScale(0, 0.5)
-	img.AnchorPoint = opts.AnchorPoint or Vector2.new(0, 0.5)
-	img.BackgroundTransparency = 1
-	img.Image = UIAssets.DotCircle
-	img.ImageColor3 = opts.color or UIStyle.Color.LedgerSection
-	img.ImageTransparency = opts.transparency or 0
-	img.ScaleType = Enum.ScaleType.Fit
-	img.ZIndex = opts.ZIndex or ((parent.ZIndex or 1) + 1)
-	img.Parent = parent
-	return img
-end
-
-function UIBuilder.dividerOrnament(parent, opts)
-	opts = opts or {}
-	local frame = Instance.new("Frame")
-	frame.Size = opts.Size or UDim2.new(1, 0, 0, 12)
-	frame.Position = opts.Position or UDim2.fromScale(0, 0)
-	frame.BackgroundTransparency = 1
-	frame.ZIndex = (parent.ZIndex or 1) + 1
-	frame.Parent = parent
-
-	local color = opts.color or UIStyle.Color.Border
-
-	local leftLine = Instance.new("Frame")
-	leftLine.Size = UDim2.new(0.4, -16, 0, 1)
-	leftLine.Position = UDim2.new(0, 0, 0.5, 0)
-	leftLine.AnchorPoint = Vector2.new(0, 0.5)
-	leftLine.BackgroundColor3 = color
-	leftLine.BackgroundTransparency = 0.15
-	leftLine.BorderSizePixel = 0
-	leftLine.ZIndex = frame.ZIndex
-	leftLine.Parent = frame
-
-	local rightLine = leftLine:Clone()
-	rightLine.Position = UDim2.new(1, 0, 0.5, 0)
-	rightLine.AnchorPoint = Vector2.new(1, 0.5)
-	rightLine.Parent = frame
-
-	local function diamond(parent2, x)
-		local d = Instance.new("Frame")
-		d.Size = UDim2.fromOffset(7, 7)
-		d.Position = UDim2.new(x, 0, 0.5, 0)
-		d.AnchorPoint = Vector2.new(0.5, 0.5)
-		d.BackgroundColor3 = color
-		d.BorderSizePixel = 0
-		d.Rotation = 45
-		d.ZIndex = frame.ZIndex
-		d.Parent = parent2
-		return d
-	end
-	diamond(frame, 0.42)
-	local center = diamond(frame, 0.5)
-	center.Size = UDim2.fromOffset(11, 11)
-	diamond(frame, 0.58)
-
-	return frame
-end
-
-function UIBuilder.ledgerSection(parent, title, opts)
-	opts = opts or {}
-	local frame = Instance.new("Frame")
-	frame.Size = UDim2.new(1, 0, 0, 22)
-	frame.Position = opts.Position or UDim2.fromOffset(0, 0)
-	frame.BackgroundTransparency = 1
-	frame.LayoutOrder = opts.LayoutOrder or 0
-	frame.ZIndex = (parent.ZIndex or 1) + 1
-	frame.Parent = parent
-
-	local label = Instance.new("TextLabel")
-	label.Size = UDim2.new(1, 0, 0, 14)
-	label.Position = UDim2.fromOffset(0, 0)
-	label.BackgroundTransparency = 1
-	label.Text = string.upper(title or "")
-	label.TextColor3 = UIStyle.Color.LedgerSection
-	label.FontFace = UIStyle.FontFace.Cinzel
-	label.TextSize = 11
-	label.TextXAlignment = Enum.TextXAlignment.Left
-	label.TextYAlignment = Enum.TextYAlignment.Center
-	label.ZIndex = frame.ZIndex
-	label.Parent = frame
-
-	local rule = Instance.new("Frame")
-	rule.Size = UDim2.new(1, 0, 0, 1)
-	rule.Position = UDim2.new(0, 0, 1, -2)
-	rule.BackgroundColor3 = UIStyle.Color.LedgerSection
-	rule.BackgroundTransparency = 0.5
-	rule.BorderSizePixel = 0
-	rule.ZIndex = frame.ZIndex
-	rule.Parent = frame
-
-	return frame
-end
-
 function UIBuilder.ledgerRow(parent, opts)
 	opts = opts or {}
 	local frame = Instance.new("Frame")
@@ -1721,88 +1549,6 @@ function UIBuilder.ledgerNumberColor(delta)
 	if delta > 0 then return UIStyle.Color.LedgerStabilityPos end
 	if delta < 0 then return UIStyle.Color.LedgerNegative end
 	return UIStyle.Color.LedgerValue
-end
-
-function UIBuilder.tooltipFrame(parent, opts)
-	opts = opts or {}
-	local frame = Instance.new("Frame")
-	frame.Size = opts.Size or UDim2.fromOffset(240, 120)
-	frame.Position = opts.Position or UDim2.fromScale(0, 0)
-	frame.AnchorPoint = opts.AnchorPoint or Vector2.new(0, 0)
-	frame.BackgroundColor3 = UIStyle.Color.Panel
-	frame.BorderSizePixel = 0
-	frame.ZIndex = opts.ZIndex or UIStyle.Z.Tooltip
-	frame.Parent = parent
-	newCorner(frame, 3)
-	local stroke = newStroke(frame, 1, UIStyle.Color.Border)
-	stroke.Transparency = 0.1
-
-	local gradient = Instance.new("UIGradient")
-	gradient.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, UIStyle.Color.PanelAlt),
-		ColorSequenceKeypoint.new(1, UIStyle.Color.Panel),
-	})
-	gradient.Rotation = 90
-	gradient.Parent = frame
-
-	cornerBracket(frame, Vector2.new(0, 0), UIStyle.Color.Border, 3)
-	cornerBracket(frame, Vector2.new(1, 0), UIStyle.Color.Border, 3)
-	cornerBracket(frame, Vector2.new(0, 1), UIStyle.Color.Border, 3)
-	cornerBracket(frame, Vector2.new(1, 1), UIStyle.Color.Border, 3)
-	return frame
-end
-
-function UIBuilder.tooltipTitle(parent, text, opts)
-	opts = opts or {}
-	local label = Instance.new("TextLabel")
-	label.Size = opts.Size or UDim2.new(1, -20, 0, 18)
-	label.Position = opts.Position or UDim2.fromOffset(10, 8)
-	label.BackgroundTransparency = 1
-	label.Text = string.upper(text or "")
-	label.TextColor3 = UIStyle.Color.TooltipPrimary
-	label.FontFace = UIStyle.FontFace.CinzelBold
-	label.TextSize = opts.TextSize or 14
-	label.TextXAlignment = Enum.TextXAlignment.Left
-	label.TextYAlignment = Enum.TextYAlignment.Center
-	label.ZIndex = (parent.ZIndex or 1) + 1
-	label.Parent = parent
-	return label
-end
-
-function UIBuilder.tooltipBody(parent, text, opts)
-	opts = opts or {}
-	local label = Instance.new("TextLabel")
-	label.Size = opts.Size or UDim2.new(1, -20, 0, 16)
-	label.Position = opts.Position or UDim2.fromOffset(10, 30)
-	label.BackgroundTransparency = 1
-	label.Text = text or ""
-	label.TextColor3 = UIStyle.Color.TooltipSecondary
-	label.FontFace = UIStyle.FontFace.Inter
-	label.TextSize = opts.TextSize or 12
-	label.TextXAlignment = opts.TextXAlignment or Enum.TextXAlignment.Left
-	label.TextYAlignment = Enum.TextYAlignment.Center
-	label.TextWrapped = opts.TextWrapped or false
-	label.ZIndex = (parent.ZIndex or 1) + 1
-	label.Parent = parent
-	return label
-end
-
-function UIBuilder.tooltipFlavor(parent, text, opts)
-	opts = opts or {}
-	local label = Instance.new("TextLabel")
-	label.Size = opts.Size or UDim2.new(1, -20, 0, 14)
-	label.Position = opts.Position or UDim2.fromOffset(10, 60)
-	label.BackgroundTransparency = 1
-	label.Text = text or ""
-	label.TextColor3 = UIStyle.Color.TooltipTertiary
-	label.FontFace = UIStyle.FontFace.InterItalic
-	label.TextSize = opts.TextSize or 11
-	label.TextXAlignment = opts.TextXAlignment or Enum.TextXAlignment.Left
-	label.TextYAlignment = Enum.TextYAlignment.Center
-	label.TextWrapped = opts.TextWrapped or false
-	label.ZIndex = (parent.ZIndex or 1) + 1
-	label.Parent = parent
-	return label
 end
 
 function UIBuilder.generalLabel(parent, text, opts)

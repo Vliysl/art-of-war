@@ -109,9 +109,7 @@ local function recomputeLevyCaps()
         local cap = math.floor(caps[country.tag] or 0)
         local changed = false
         if country.levyCap ~= cap then country.levyCap = cap; changed = true end
-        if country.levyManpower == nil then
-            country.levyManpower = cap; changed = true
-        elseif country.levyManpower > cap then
+        if country.levyManpower == nil or country.levyManpower > cap then
             country.levyManpower = cap; changed = true
         end
         if changed then ctx.WorldState.setCountry(country.tag, country) end

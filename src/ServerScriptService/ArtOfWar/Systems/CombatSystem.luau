@@ -45,10 +45,12 @@ local function attackProvince(armyId, targetProvinceId)
 	end
 	-- Adjacency
 	local adjacency = ctx.AdjacencyGraph
+	if not adjacency or not adjacency.areNeighbors then return false, "no_adjacency" end
 	if not adjacency.areNeighbors(army.provinceId, targetProvinceId) then
 		return false, "not_adjacent"
 	end
 	-- Dispatch movement
+	if not ctx.MovementSystem or not ctx.MovementSystem.beginMove then return false, "no_movement" end
 	local ok, reason = ctx.MovementSystem.beginMove(armyId, targetProvinceId)
 	if not ok then return false, reason end
 	return true
@@ -59,6 +61,7 @@ local function onArmyArrival(armyId, provinceId)
 	if not army then return end
 	local province = ctx.WorldState.getProvince(provinceId)
 	local controllerTag = province and province.controllerTag
+	if not ctx.BattleManager or not ctx.ArmySystem then return end
 
 	-- Existing battle at province?
 	local existing = getBattleAt(provinceId)

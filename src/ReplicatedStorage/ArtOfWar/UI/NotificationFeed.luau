@@ -128,7 +128,6 @@ function NotificationFeed.create(parent)
 			dismissed = true
 			local tween = TweenService:Create(toast, UIStyle.tween(UIStyle.Motion.Slow), {
 				BackgroundTransparency = 1,
-				Position = toast.Position + UDim2.fromOffset(TOAST_W + 20, 0),
 			})
 			tween.Completed:Connect(function() toast:Destroy() end)
 			tween:Play()
@@ -151,12 +150,6 @@ function NotificationFeed.create(parent)
 				dismiss()
 			end)
 		end
-
-		-- Slide-in animation
-		toast.Position = UDim2.fromOffset(TOAST_W + 20, 0)
-		task.defer(function()
-			TweenService:Create(toast, UIStyle.tween(UIStyle.Motion.Medium), { Position = UDim2.fromOffset(0, 0) }):Play()
-		end)
 
 		-- Auto-dismiss unless pinnable
 		if not data.pinnable then

@@ -1,7 +1,6 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
 
 local uiFolder = ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("UI")
 local UIStyle = require(uiFolder:WaitForChild("UIStyle"))
@@ -167,7 +166,7 @@ function MovableWindow.create(opts)
 		closeBtn.TextColor3 = UIStyle.Color.Bad
 	end)
 	closeBtn.MouseLeave:Connect(function()
-		closeBtn.TextColor3 = UIStyle.Color.TextMuted
+		closeBtn.TextColor3 = UIStyle.Color.GoldDim
 	end)
 
 	-- Body

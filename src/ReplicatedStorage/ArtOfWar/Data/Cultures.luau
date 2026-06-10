@@ -256,5 +256,5 @@ return {
 	yaqui = { id = "yaqui", displayName = "Yaqui", groupId = "uto_aztecan" },
 	yoruba = { id = "yoruba", displayName = "Yoruba", groupId = "west_african" },
 	zapotec = { id = "zapotec", displayName = "Zapotec", groupId = "mayan" },
-	zulu = { id = "zulu", displayName = "Nguni", groupId = "bantu_south" },
+	zulu = { id = "zulu", displayName = "Zulu", groupId = "bantu_south" },
 }

@@ -124,10 +124,9 @@ function BottomBar.create(parent)
 		setCountry = function() end,
 		onPanelButtonClicked = function(fn) onPanelButtonClick = fn end,
 		setActiveWindow = function(id, isActive)
-			for buttonId, refs in panelButtonRefs do
-				if refs.setActive then
-					refs.setActive(buttonId == id and isActive)
-				end
+			local refs = panelButtonRefs[id]
+			if refs and refs.setActive then
+				refs.setActive(isActive and true or false)
 			end
 		end,
 		setMapMode = function() end,

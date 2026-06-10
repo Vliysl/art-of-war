@@ -62,7 +62,7 @@ local selectedProvinceId = nil
 local pendingCommand = nil
 local lastWaterName = nil
 
-local dirty = { countries = false, armies = false, provinces = false, claim = false }
+local dirty = { countries = false, armies = false, provinces = false, fleets = false, claim = false }
 local dirtyProvinceIds = {}   -- province ids changed since last refresh (targeted recolor)
 local dirtyConn = nil
 
@@ -829,21 +829,6 @@ function UIController.start()
 			menuBtn.MouseButton1Click:Connect(function() settingsMenu.toggle() end)
 		end
 	end
-	if topBar and topBar.getPauseButton then
-		local pauseBtn = topBar.getPauseButton()
-		if pauseBtn then
-			pauseBtn.MouseButton1Click:Connect(function()
-				if not claimedTag or not timeRequest then return end
-				if not isAdmin() then
-					if notifFeed and notifFeed.push then
-						notifFeed.push({ kind = "warn", title = "Admin only", body = "Only admins can pause time." })
-					end
-					return
-				end
-				timeRequest:FireServer({ action = "togglePause" })
-			end)
-		end
-	end
 	shortcutsOverlay = ShortcutsOverlay.create(modalLayer)
 	minimap = Minimap.create(clusterLayer)
 	task.defer(UISound.preload)
@@ -873,7 +858,6 @@ function UIController.start()
 	local function applyMapMode(mode)
 		local colors = currentCountryColors()
 		MapRenderer.setMode(mode, { countryColors = colors })
-		if minimap and minimap.refresh then minimap.refresh({ claimedTag = claimedTag }) end
 	end
 
 	mapModesBar = MapModesBar.create(clusterLayer, applyMapMode)
@@ -1144,6 +1128,22 @@ function UIController.start()
 		return topBar and topBar.isAdmin and topBar.isAdmin() or false
 	end
 
+	if topBar and topBar.getPauseButton then
+		local pauseBtn = topBar.getPauseButton()
+		if pauseBtn then
+			pauseBtn.MouseButton1Click:Connect(function()
+				if not claimedTag or not timeRequest then return end
+				if not isAdmin() then
+					if notifFeed and notifFeed.push then
+						notifFeed.push({ kind = "warn", title = "Admin only", body = "Only admins can pause time." })
+					end
+					return
+				end
+				timeRequest:FireServer({ action = "togglePause" })
+			end)
+		end
+	end
+
 	local SPEED_KEYS = {
 		[Enum.KeyCode.One]   = 1,
 		[Enum.KeyCode.Two]   = 2,
@@ -1348,11 +1348,7 @@ function UIController.start()
 		if dirty.claim then
 			dirty.claim = false
 			local hadClaim = claimedTag ~= nil
-			local prevClaimedTag = claimedTag
 			syncClaim()
-			if claimedTag and claimedTag ~= prevClaimedTag and minimap and minimap.setClaimedTag then
-				minimap.setClaimedTag(claimedTag)  -- C2: minimap claim highlight (formerly driven by the removed recolor block)
-			end
 			if not claimedTag then
 				local claims = collectClaims()
 				table.sort(claims)
@@ -1371,7 +1367,6 @@ function UIController.start()
 				end
 			end
 		end
-		local mapColorsDirty = false
 		if dirty.countries then
 			dirty.countries = false
 			refresh()
@@ -1405,14 +1400,6 @@ function UIController.start()
 				for id in pairs(dirtyProvinceIds) do MapRenderer.recolorProvince(id) end
 				table.clear(dirtyProvinceIds)
 			end
-			if minimap and minimap.rebuildOwnership then minimap.rebuildOwnership() end
-		end
-		-- O1: apply MapRenderer.setMode at most once per tick
-		if mapColorsDirty and mapModesBar then
-			local mode = MapRenderer.getMode()
-			local colors = currentCountryColors()
-			MapRenderer.setMode(mode, { countryColors = colors })
-			if minimap and minimap.setClaimedTag then minimap.setClaimedTag(claimedTag) end
 		end
 	end)
 end

@@ -130,6 +130,7 @@ WorldConstants.NavalMoraleRegenPerTick = 2
 WorldConstants.NavalMoraleBattleLoss = 8
 WorldConstants.NavalMovementTickInterval = 1.5
 WorldConstants.NavalCombatTickInterval = 3
+WorldConstants.NavalMissionTickInterval = 3
 WorldConstants.NavalBuildTickInterval = 3
 WorldConstants.BuildingTickInterval = 3
 WorldConstants.NavalMovementSpeed = 120
@@ -234,6 +235,7 @@ WorldConstants.LevyConscriptionDefault = 1.0  -- HOOK: conscription-law multipli
 WorldConstants.LevyRegenPerMonthPct = 0.05    -- levy pool regens 5%/mo of cap (peacetime)
 WorldConstants.ProfessionalRegenPerMonthPct = 0 -- HOOK: pro regen (laws/barracks out of scope; 0 = legacy static)
 WorldConstants.ManpowerRegenTickInterval = 6  -- scheduler cadence (effective s); actual regen is month-gated
+WorldConstants.AttritionTickInterval = 6
 
 -- Diplomacy
 WorldConstants.TrucePeriodDays = 1825

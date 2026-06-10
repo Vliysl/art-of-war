@@ -527,10 +527,12 @@ local function reassignOfficer(armyId, traitIds)
 	end
 	if #cleaned == 0 then return false, "no_valid_traits" end
 	if type(army.officer) ~= "table" then
+		local ownerCountry = ctx.WorldState.getCountry(army.ownerTag)
+		local officerCulture = (ownerCountry and ownerCountry.primaryCulture) or "generic"
 		army.officer = {
 			name = (bundle.officerNames and bundle.officerNames.roll
-				and bundle.officerNames.roll(nil)) or "Officer",
-			culture = "generic",
+				and bundle.officerNames.roll(officerCulture)) or "Officer",
+			culture = officerCulture,
 			traits = cleaned,
 			assignedAt = ctx.TickScheduler.getSimTime(),
 			experience = 0,

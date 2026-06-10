@@ -354,7 +354,7 @@ EconomySystem.registerIncomeProvider = function(...) return registerIncomeProvid
 EconomySystem.registerExpenseProvider = function(...) return registerExpenseProvider(...) end
 EconomySystem.unregisterIncomeProvider = function(...) return unregisterIncomeProvider(...) end
 EconomySystem.unregisterExpenseProvider = function(...) return unregisterExpenseProvider(...) end
-EconomySystem.listProviders = function(...) return listProviders(...) end
+EconomySystem.listProviders = function() return listProviders() end
 
 function EconomySystem.register(context)
 	ctx = context

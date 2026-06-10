@@ -2,7 +2,6 @@ return {
 	anglican = { id = "anglican", displayName = "Anglican", group = "christian" },
 	animist = { id = "animist", displayName = "Animist", group = "pagan" },
 	armenian_apostolic = { id = "armenian_apostolic", displayName = "Armenian Apostolic", group = "christian" },
-	audit_export_religion = { id = "audit_export_religion", displayName = "Export Test Religion", group = "pagan" },
 	bantu_religion = { id = "bantu_religion", displayName = "Bantu Religion", group = "pagan" },
 	catholic = { id = "catholic", displayName = "Catholic", group = "christian" },
 	confucian = { id = "confucian", displayName = "State Confucianism", group = "east_asian" },

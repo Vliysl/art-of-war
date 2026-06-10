@@ -64,11 +64,6 @@ function LeadersTab.mount(page, fireDismiss, fireAppoint)
 						if leader.traits and #leader.traits > 0 then
 							table.insert(rows, { label = "Traits", value = traitLine(bundle, leader.traits) })
 						end
-						if leader.skills then
-							for k, v in leader.skills do
-								table.insert(rows, { label = k, value = tostring(v) })
-							end
-						end
 					else
 						table.insert(rows, { body = "Seat is vacant. Appoint from your candidate pool." })
 					end

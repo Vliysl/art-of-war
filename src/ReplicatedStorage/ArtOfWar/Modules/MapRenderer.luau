@@ -72,7 +72,6 @@ local OCEAN_HINT     = Color3.fromRGB( 40,  48,  68)
 
 local currentMode = MODES.POLITICAL
 local colorCache = {}
-local bundleRef = nil
 
 local function getProvinceFolders()
 	local map = workspace:FindFirstChild("ArtOfWarMap")
@@ -191,13 +190,14 @@ local function attachLiveTint(attrNames, recolor)
 			for _, p in folder:GetChildren() do watchPart(p) end
 			folderWatchers[#folderWatchers + 1] = folder.DescendantAdded:Connect(function(d)
 				watchPart(d)
-				if liveRecolor and d:IsA("BasePart") then liveRecolor(d) end
+				if d:IsA("BasePart") then
+					if d:GetAttribute("province_id") ~= nil then indexBuilt = false end
+					if liveRecolor then liveRecolor(d) end
+				end
 			end)
 		end
 	end
 end
-
-function MapRenderer.setBundle(bundle) bundleRef = bundle end
 
 function MapRenderer.applyPolitical(countryColors)
 	local function recolor(p)
@@ -302,7 +302,6 @@ end
 function MapRenderer.destroy()
 	detachLiveTint()
 	colorCache = {}
-	bundleRef = nil
 end
 -- Reliable incremental recolor driven by the replicated province delta (UIController calls this
 -- on a province change). Independent of the per-part AttributeChanged watcher: it looks up the

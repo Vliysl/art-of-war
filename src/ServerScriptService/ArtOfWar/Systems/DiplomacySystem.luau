@@ -579,79 +579,6 @@ local function tickProposals()
 	end
 end
 
-local function registerRemotes(context)
-	-- Bootstrap-script edits don't always propagate via Studio's bytecode cache.
-	-- Register the 5 diplomacy remotes ourselves to guarantee they exist.
-	-- BUT skip if Bootstrap already created them (avoid double-bind handlers).
-	local rs = game:GetService("ReplicatedStorage")
-	local aow = rs:FindFirstChild("ArtOfWar")
-	if not aow then return end
-	local remotes = aow:FindFirstChild("Remotes")
-	if not remotes then
-		remotes = Instance.new("Folder"); remotes.Name = "Remotes"; remotes.Parent = aow
-	end
-	if remotes:FindFirstChild("DeclareWar") then
-		-- Bootstrap already wired the diplomacy remotes; skip our self-registration.
-		return
-	end
-
-	local InputValidator = context.InputValidator
-	if InputValidator and InputValidator.register then
-		InputValidator.register("DeclareWar", { schema = { { name = "targetTag", type = "countryTag" } }, rate = { count = 2, window = 30 } })
-		InputValidator.register("ProposePeace", { schema = { { name = "targetTag", type = "countryTag" }, { name = "terms", type = "shallowTable" } }, rate = { count = 4, window = 30 } })
-		InputValidator.register("AcceptPeace", { schema = { { name = "proposalId", type = "string" } }, rate = { count = 4, window = 15 } })
-		InputValidator.register("RejectPeace", { schema = { { name = "proposalId", type = "string" } }, rate = { count = 6, window = 15 } })
-		InputValidator.register("CancelPeaceProposal", { schema = { { name = "proposalId", type = "string" } }, rate = { count = 4, window = 15 } })
-	end
-
-	local function ensureEvent(name)
-		local existing = remotes:FindFirstChild(name)
-		if existing and existing:IsA("RemoteEvent") then return existing end
-		if existing then existing:Destroy() end
-		local r = Instance.new("RemoteEvent")
-		r.Name = name; r.Parent = remotes
-		return r
-	end
-
-	local function bindEvent(name, handler)
-		local r = ensureEvent(name)
-		r.OnServerEvent:Connect(function(player, ...)
-			if InputValidator and InputValidator.accept and not InputValidator.accept(player, name, ...) then return end
-			local ok, err = pcall(handler, player, ...)
-			if not ok then warn(string.format("[DiplomacySystem] remote '%s' handler errored: %s", name, tostring(err))) end
-		end)
-		return r
-	end
-
-	local function tagFor(player)
-		if context.PlayerAuthority and context.PlayerAuthority.tagFor then
-			return context.PlayerAuthority.tagFor(player)
-		end
-		return nil
-	end
-
-	bindEvent("DeclareWar", function(player, targetTag)
-		local tag = tagFor(player); if not tag then return end
-		declareWar(tag, targetTag)
-	end)
-	bindEvent("ProposePeace", function(player, targetTag, terms)
-		local tag = tagFor(player); if not tag then return end
-		proposePeace(tag, targetTag, terms)
-	end)
-	bindEvent("AcceptPeace", function(player, proposalId)
-		local tag = tagFor(player); if not tag then return end
-		acceptPeace(proposalId, tag)
-	end)
-	bindEvent("RejectPeace", function(player, proposalId)
-		local tag = tagFor(player); if not tag then return end
-		rejectPeace(proposalId, tag)
-	end)
-	bindEvent("CancelPeaceProposal", function(player, proposalId)
-		local tag = tagFor(player); if not tag then return end
-		cancelPeaceProposal(proposalId, tag)
-	end)
-end
-
 function DiplomacySystem.register(context)
 	ctx = context
 	local api = {
@@ -698,9 +625,6 @@ function DiplomacySystem.register(context)
 			end
 		end,
 	})
-
-	-- Register remotes ourselves (Bootstrap script edits sometimes don't propagate)
-	pcall(registerRemotes, context)
 end
 
 return DiplomacySystem

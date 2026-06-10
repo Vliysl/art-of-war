@@ -50,11 +50,21 @@ function FactionsTab.mount(page)
 					if entry.def and entry.def.description then table.insert(rows, { body = entry.def.description }) end
 					table.insert(rows, { label = "Tier", value = entry.record.tier or "influential" })
 					table.insert(rows, { label = "Clout", value = string.format("%.0f%%", (entry.record.clout or 0) * 100) })
-					if entry.def and entry.def.favoredPolicies then
-						table.insert(rows, { label = "Favored", value = table.concat(entry.def.favoredPolicies, ", ") })
-					end
-					if entry.def and entry.def.opposedPolicies then
-						table.insert(rows, { label = "Opposed", value = table.concat(entry.def.opposedPolicies, ", ") })
+					if entry.def and entry.def.policyReactions then
+						local favored, opposed = {}, {}
+						for policyId, weight in entry.def.policyReactions do
+							if weight > 0 then
+								table.insert(favored, policyId)
+							elseif weight < 0 then
+								table.insert(opposed, policyId)
+							end
+						end
+						if #favored > 0 then
+							table.insert(rows, { label = "Favored", value = table.concat(favored, ", ") })
+						end
+						if #opposed > 0 then
+							table.insert(rows, { label = "Opposed", value = table.concat(opposed, ", ") })
+						end
 					end
 					return rows
 				end)

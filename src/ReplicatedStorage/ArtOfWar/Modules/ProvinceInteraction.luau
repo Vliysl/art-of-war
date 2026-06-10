@@ -255,11 +255,7 @@ local function tryClassifierRaycasts()
 	local ray = cam:ViewportPointToRay(mp.X, mp.Y)
 	for _, entry in ipairs(raycastFolders) do
 		if entry.folder and entry.folder.Parent then
-			local p = RaycastParams.new()
-			p.FilterType = Enum.RaycastFilterType.Include
-			p.FilterDescendantsInstances = { entry.folder }
-			p.IgnoreWater = true
-			local result = workspace:Raycast(ray.Origin, ray.Direction * RAY_LENGTH, p)
+			local result = workspace:Raycast(ray.Origin, ray.Direction * RAY_LENGTH, entry.params)
 			if result and result.Instance then
 				local ok, classification = pcall(entry.classifier, result.Instance)
 				if ok and classification == "consumed" then
@@ -276,7 +272,11 @@ function ProvinceInteraction.addRaycastFolder(folder, classifierFn)
 	for _, entry in ipairs(raycastFolders) do
 		if entry.folder == folder then return end
 	end
-	table.insert(raycastFolders, { folder = folder, classifier = classifierFn })
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Include
+	params.FilterDescendantsInstances = { folder }
+	params.IgnoreWater = true
+	table.insert(raycastFolders, { folder = folder, classifier = classifierFn, params = params })
 	rebuildFilter()
 end
 
@@ -290,7 +290,7 @@ function ProvinceInteraction.init()
 
 	connections[#connections + 1] = Players.PlayerAdded:Connect(function(p)
 		rebuildFilter()
-		p.CharacterAdded:Connect(rebuildFilter)
+		connections[#connections + 1] = p.CharacterAdded:Connect(rebuildFilter)
 	end)
 	connections[#connections + 1] = Players.PlayerRemoving:Connect(rebuildFilter)
 	for _, p in Players:GetPlayers() do

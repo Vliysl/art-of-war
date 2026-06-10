@@ -56,14 +56,6 @@ local SECTIONS = {
 			{ "F12",   "this shortcut list" },
 		},
 	},
-	{
-		title = "Province Panel",
-		rows = {
-			{ "I", "Information" },
-			{ "R", "Recruitment" },
-			{ "B", "Buildings" },
-		},
-	},
 }
 
 function ShortcutsOverlay.create(parent)

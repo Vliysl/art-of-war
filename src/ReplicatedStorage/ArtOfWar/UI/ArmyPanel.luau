@@ -1363,7 +1363,7 @@ function ArmyPanel.create(parent, callbacks)
 			local tickLbl = Instance.new("TextLabel")
 			tickLbl.Size = UDim2.fromOffset(36, 18)
 			tickLbl.BackgroundTransparency = 1
-			tickLbl.Text = string.format("T%d", e.tick or 0)
+			tickLbl.Text = string.format("R%d", e.round or 0)
 			tickLbl.TextColor3 = UIStyle.Color.Gold or Color3.fromRGB(220, 180, 110)
 			tickLbl.Font = UIStyle.Font.Regular or Enum.Font.Gotham
 			tickLbl.TextSize = 10
@@ -1375,7 +1375,7 @@ function ArmyPanel.create(parent, callbacks)
 			phaseLblE.Size = UDim2.fromOffset(72, 18)
 			phaseLblE.Position = UDim2.fromOffset(36, 0)
 			phaseLblE.BackgroundTransparency = 1
-			phaseLblE.Text = tostring(e.phaseId or "?"):gsub("^%l", string.upper)
+			phaseLblE.Text = (tostring(e.reason or "-"):gsub("_", " "):gsub("^%l", string.upper))
 			phaseLblE.TextColor3 = UIStyle.Color.Cream or Color3.fromRGB(220, 200, 160)
 			phaseLblE.Font = UIStyle.Font.Regular or Enum.Font.Gotham
 			phaseLblE.TextSize = 10
@@ -1387,7 +1387,7 @@ function ArmyPanel.create(parent, callbacks)
 			casLbl.Size = UDim2.new(1, -116, 1, 0)
 			casLbl.Position = UDim2.fromOffset(112, 0)
 			casLbl.BackgroundTransparency = 1
-			casLbl.Text = string.format("atk %d / def %d", e.atkCasualties or 0, e.defCasualties or 0)
+			casLbl.Text = string.format("atk %d%% / def %d%%", math.floor((e.atkCasualtyRatio or 0) * 100 + 0.5), math.floor((e.defCasualtyRatio or 0) * 100 + 0.5))
 			casLbl.TextColor3 = UIStyle.Color.TextMuted or Color3.fromRGB(180, 160, 120)
 			casLbl.Font = UIStyle.Font.Regular or Enum.Font.Gotham
 			casLbl.TextSize = 10

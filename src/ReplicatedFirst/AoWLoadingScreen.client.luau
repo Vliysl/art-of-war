@@ -110,12 +110,6 @@ task.spawn(function()
 	end
 end)
 
-task.delay(80, function()
-	if gui and gui.Parent then
-		gui:Destroy()
-	end
-end)
-
 if not game:IsLoaded() then
 	game.Loaded:Wait()
 end

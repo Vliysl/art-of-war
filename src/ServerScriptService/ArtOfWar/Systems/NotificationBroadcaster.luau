@@ -27,10 +27,7 @@ end
 local function broadcast(payload)
 	if not remote then return end
 	local audience = payload.audience
-	if audience == "self" then
-		local player = playerForTag(payload.tag)
-		if player then deliver(player, payload) end
-	elseif audience == "global" then
+	if audience == "global" then
 		remote:FireAllClients(payload)
 	elseif audience == "tags" and type(payload.toTags) == "table" then
 		for _, tag in payload.toTags do
@@ -126,7 +123,7 @@ local function onPolicyEnacted(data)
 end
 
 local function onPolicyRepealed(data)
-	local reason = data.reason == "pp_exhausted" and " (political power exhausted)" or ""
+	local reason = (data.reason or data.trigger) == "pp_exhausted" and " (political power exhausted)" or ""
 	broadcast(makePayload("warn", "Policy Repealed",
 		string.format("%s has been repealed%s.", tostring(data.policyId), reason),
 		"self", data.tag, "policy.repealed"))
@@ -151,11 +148,11 @@ local function onTransitionCompleted(data)
 end
 
 local function onFactionTierChanged(data)
-	if data.tier == "powerful" then
+	if data.to == "powerful" then
 		broadcast(makePayload("warn", "Faction Rising",
 			string.format("%s have grown powerful.", tostring(data.factionId or "A faction")),
 			"self", data.tag, "faction.tier.powerful"))
-	elseif data.tier == "marginalized" then
+	elseif data.to == "marginalized" then
 		broadcast(makePayload("info", "Faction Marginalized",
 			string.format("%s have faded into the background.", tostring(data.factionId or "A faction")),
 			"self", data.tag, "faction.tier.marginalized"))

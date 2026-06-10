@@ -248,55 +248,6 @@ function UIStyle.applyType(label, token)
 	end
 end
 
-function UIStyle.font(label, fontFace, size)
-	if fontFace then label.FontFace = fontFace end
-	if size then label.TextSize = size end
-end
-
-function UIStyle.fadeIn(instance, fromScale, time)
-	local TweenService = game:GetService("TweenService")
-	if not instance then return end
-	local spec = UIStyle.Motion.Panel
-	local dur = time or spec.time
-	if UIStyle.ReduceMotion then
-		instance.Visible = true
-		return
-	end
-	local targetSize = instance.Size
-	local anchor = instance.AnchorPoint
-	local anchored = anchor.X ~= 0 or anchor.Y ~= 0
-	instance.Visible = true
-	instance.Size = UDim2.new(targetSize.X.Scale * (fromScale or 0.96), targetSize.X.Offset * (fromScale or 0.96),
-		targetSize.Y.Scale * (fromScale or 0.96), targetSize.Y.Offset * (fromScale or 0.96))
-	TweenService:Create(instance, TweenInfo.new(dur, spec.style, spec.dir), { Size = targetSize }):Play()
-	if instance:IsA("GuiObject") then
-		local originalTrans = instance.BackgroundTransparency
-		instance.BackgroundTransparency = math.min(1, originalTrans + 0.4)
-		TweenService:Create(instance, TweenInfo.new(dur, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{ BackgroundTransparency = originalTrans }):Play()
-	end
-	return anchored
-end
-
-function UIStyle.hoverLift(btn)
-	local TweenService = game:GetService("TweenService")
-	if not btn or UIStyle.ReduceMotion then return end
-	local stroke = btn:FindFirstChildOfClass("UIStroke")
-	local restStrokeTransparency = stroke and stroke.Transparency or 0
-	btn.MouseEnter:Connect(function()
-		if stroke then
-			TweenService:Create(stroke, TweenInfo.new(UIStyle.Motion.Hover.time, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ Transparency = 0, Thickness = (stroke.Thickness or 1) + 0.5 }):Play()
-		end
-	end)
-	btn.MouseLeave:Connect(function()
-		if stroke then
-			TweenService:Create(stroke, TweenInfo.new(UIStyle.Motion.Hover.time, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ Transparency = restStrokeTransparency, Thickness = stroke.Thickness }):Play()
-		end
-	end)
-end
-
 function UIStyle.stateColor(delta)
 	if type(delta) ~= "number" then return UIStyle.Color.TextMuted end
 	if delta > 0 then return UIStyle.Color.Good end

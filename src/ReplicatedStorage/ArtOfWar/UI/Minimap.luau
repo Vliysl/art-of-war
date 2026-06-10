@@ -541,7 +541,7 @@ function Minimap.create(parent)
 
 
 	mapImage.MouseButton1Click:Connect(function()
-		if dragging then return end
+		if viewportDragging then return end
 		local u, v = mouseToUV()
 		if not u then return end
 		local x, z = uvToWorld(u, v)
@@ -654,10 +654,6 @@ function Minimap.create(parent)
 		isVisible = function() return visible end,
 		setExpanded = setExpanded,
 		isExpanded = function() return expanded end,
-		refresh = function() end,
-		rebuildOwnership = function() end,
-		setClaimedTag = function() end,
-		setMode = function() end,
 		applyDecal = applyDecal,
 		bindModesToggle = function(fn) modesToggleHandler = fn end,
 		setModesIndicator = function(open)

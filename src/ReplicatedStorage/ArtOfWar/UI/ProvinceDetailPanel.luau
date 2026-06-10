@@ -468,7 +468,7 @@ function ProvinceDetailPanel.create(parent, onClose, callbacks)
 
 	local tabs = {}
 	local update  -- forward decl so inner closures can refresh
-	local activeTab = TAB_KEY.Recruitment
+	local activeTab = TAB_KEY.Information
 	local buildingsFilter = ""
 
 	local function setActive(name)
@@ -1470,8 +1470,6 @@ function ProvinceDetailPanel.create(parent, onClose, callbacks)
 		panel.Visible = false
 		clearLiveTickets()
 	end
-
-	task.defer(function() setActive(TAB_KEY.Information) end)
 
 	return {
 		root = panel,

@@ -41,6 +41,58 @@ OfficerNames.pools = {
 		first = { "Hideyoshi", "Ieyasu", "Takeda", "Date", "Mori", "Honda", "Sakai", "Toyotomi", "Tokugawa", "Maeda" },
 		last = { "Kenshin", "Shingen", "Masamune", "Motonari", "Tadakatsu", "Tadakiyo", "Hideyoshi", "Ieyasu", "Toshiie", "Yoshihiro" },
 	},
+	dutch = {
+		first = { "Willem", "Maurits", "Johan", "Cornelis", "Pieter", "Hendrik", "Jacob", "Adriaan", "Frederik", "Karel" },
+		last = { "van Wassenaer", "van Nassau", "van Brederode", "van Aylva", "van Reede", "van Ginkel", "Cronstrom", "van Schuylenburch", "van Hardenbroek", "van Tuyll" },
+	},
+	danish = {
+		first = { "Christian", "Frederik", "Niels", "Peder", "Jens", "Hans", "Anders", "Ulrik", "Valdemar", "Knud" },
+		last = { "Juel", "Gyldenlove", "Rantzau", "Reventlow", "Schack", "Ahlefeldt", "Wedel", "Trolle", "Rosenkrantz", "Brockenhuus" },
+	},
+	swedish = {
+		first = { "Carl", "Gustaf", "Erik", "Axel", "Magnus", "Fredrik", "Adolf", "Nils", "Johan", "Hans" },
+		last = { "Lewenhaupt", "Stenbock", "Rehnskiold", "Armfeldt", "Cronstedt", "Posse", "Sparre", "Horn", "Ehrensvard", "Hamilton" },
+	},
+	polish = {
+		first = { "Stanislaw", "Jan", "Kazimierz", "Michal", "Jozef", "Franciszek", "Adam", "Karol", "Ignacy", "Antoni" },
+		last = { "Poniatowski", "Czartoryski", "Branicki", "Potocki", "Lubomirski", "Rzewuski", "Sapieha", "Oginski", "Zamoyski", "Radziwill" },
+	},
+	portuguese = {
+		first = { "Joao", "Pedro", "Manuel", "Afonso", "Sebastiao", "Luis", "Antonio", "Francisco", "Diogo", "Henrique" },
+		last = { "de Mello", "de Braganca", "da Cunha", "de Lima", "de Castro", "de Almeida", "de Tavora", "de Noronha", "da Costa", "Pereira" },
+	},
+	bavarian = {
+		first = { "Maximilian", "Ferdinand", "Klemens", "Joseph", "Albrecht", "Theodor", "Kajetan", "Ludwig", "Sigmund", "Anton" },
+		last = { "von Seinsheim", "von Torring", "von Preysing", "von Wahl", "von Minucci", "von Holnstein", "von Berchem", "von Horwarth", "von Gronsfeld", "von Daun" },
+	},
+	saxon = {
+		first = { "Friedrich", "August", "Johann", "Moritz", "Christian", "Heinrich", "Anton", "Xaver", "Albrecht", "Kasimir" },
+		last = { "Rutowski", "von Arnim", "von Bruhl", "von Flemming", "von Wackerbarth", "von Schonberg", "von Bose", "von Gersdorff", "von Pflugk", "von Sachsen" },
+	},
+	hannoverian = {
+		first = { "Georg", "Ernst", "Ludwig", "August", "Friedrich", "Wilhelm", "Christian", "Johann", "Karl", "Heinrich" },
+		last = { "von dem Bussche", "von Sporcken", "von Hardenberg", "von Zastrow", "von Estorff", "von Reden", "von Wangenheim", "von Munchhausen", "von Diepenbroick", "von Linsingen" },
+	},
+	catalan = {
+		first = { "Jordi", "Pere", "Joan", "Antoni", "Francesc", "Miquel", "Ramon", "Josep", "Carles", "Bernat" },
+		last = { "de Montcada", "Despujol", "de Cardona", "Sagarra", "de Peguera", "Folch", "de Cruilles", "Vilanova", "de Rocaberti", "Safont" },
+	},
+	sicilian = {
+		first = { "Carlo", "Ruggero", "Federico", "Antonio", "Giuseppe", "Vincenzo", "Francesco", "Salvatore", "Domenico", "Gaetano" },
+		last = { "di Sangro", "Caracciolo", "Pignatelli", "Filangieri", "Branciforte", "Ventimiglia", "Moncada", "Tagliavia", "Alliata", "Lanza" },
+	},
+	tatar = {
+		first = { "Selim", "Devlet", "Kaplan", "Arslan", "Mengli", "Sahib", "Murad", "Gazi", "Kirim", "Bahadir" },
+		last = { "Giray", "Shirin", "Mansur", "Barin", "Argin", "Yashlav", "Sicivut", "Kipchak", "Nogai", "Or-Bey" },
+	},
+	akan = {
+		first = { "Kofi", "Kwame", "Kwaku", "Yaw", "Kwabena", "Kojo", "Kwasi", "Osei", "Opoku", "Akwasi" },
+		last = { "Tutu", "Bonsu", "Frempong", "Boateng", "Agyeman", "Asante", "Kusi", "Owusu", "Sarpong", "Badu" },
+	},
+	iroquoian = {
+		first = { "Joseph", "Hendrick", "Cornplanter", "Sayenqueraghta", "Skenandoa", "Canassatego", "Kiasutha", "Logan", "Theyanoguin", "Hiokatoo" },
+		last = { "Brant", "Thayendanegea", "Guyasuta", "Old Smoke", "Half-King", "Karonghyontye", "Honayawas", "Tahgahjute", "Shononses", "Tekarihoken" },
+	},
 	generic = {
 		first = { "Marcus", "Anton", "Henri", "Lucas", "Carl", "Otto", "Alexei", "Stefan", "Gilles", "Hector" },
 		last = { "the Bold", "the Wise", "the Stern", "Cromwell", "Vaughn", "Roland", "Conway", "Brooke", "Marcellus", "Reinhardt" },

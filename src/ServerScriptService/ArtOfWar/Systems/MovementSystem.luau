@@ -288,35 +288,6 @@ function MovementSystem.register(context)
 			handleOwnershipLoss(payload.oldOwner)
 		end
 	end)
-
-	-- Self-register MoveArmyPath remote (idempotent — skip if already exists)
-	local rs = game:GetService("ReplicatedStorage")
-	local aow = rs:FindFirstChild("ArtOfWar")
-	local remotes = aow and aow:FindFirstChild("Remotes")
-	if remotes and not remotes:FindFirstChild("MoveArmyPath") then
-		if context.InputValidator and context.InputValidator.register then
-			context.InputValidator.register("MoveArmyPath", {
-				schema = {
-					{ name = "armyId", type = "string" },
-					{ name = "targetProvinceId", type = "integer" },
-				},
-				rate = { count = 12, window = 10 },
-			})
-		end
-		local r = Instance.new("RemoteEvent")
-		r.Name = "MoveArmyPath"
-		r.Parent = remotes
-		r.OnServerEvent:Connect(function(player, armyId, targetProvinceId)
-			if context.InputValidator and context.InputValidator.accept
-				and not context.InputValidator.accept(player, "MoveArmyPath", armyId, targetProvinceId) then return end
-			if not context.PlayerAuthority or not context.PlayerAuthority.tagFor then return end
-			local tag = context.PlayerAuthority.tagFor(player)
-			if not tag then return end
-			local army = context.WorldState.getArmy(armyId)
-			if not army or army.ownerTag ~= tag then return end
-			beginMovePath(armyId, targetProvinceId)
-		end)
-	end
 end
 
 return MovementSystem

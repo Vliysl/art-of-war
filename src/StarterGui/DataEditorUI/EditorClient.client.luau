@@ -575,6 +575,7 @@ local state = {
 
 local refresh
 local paintRefresh
+local pendingProvincesAPI
 
 local WRITE_COMMANDS_LOCAL = {
 	addCountry = true, updateCountry = true, removeCountry = true,
@@ -1045,7 +1046,7 @@ local function makeCombo(row, options, value, opts)
 				BackgroundTransparency = 1,
 				Text = "",
 				TextColor3 = PALETTE.textMuted,
-				Font = Enum.Font.GothamItalic,
+				Font = Enum.Font.Gotham,
 				TextSize = 10,
 				TextXAlignment = Enum.TextXAlignment.Center,
 				ZIndex = 52,
@@ -1429,7 +1430,7 @@ local function collectOwnedEntries(tag)
 	return list
 end
 
-local pendingProvincesAPI = nil
+pendingProvincesAPI = nil
 
 local function buildProvincesSection(parent, ctx, order)
 	local tag = ctx.tag
@@ -1736,7 +1737,8 @@ local function buildProvincesSection(parent, ctx, order)
 			renderList()
 			return
 		end
-		local currentOwner = province.owner
+		local currentOwner = province.ownerTag
+		if currentOwner == "NONE" or currentOwner == "" then currentOwner = nil end
 		if shouldConfirmOverwrite(currentOwner, tag) then
 			local now = os.clock()
 			local key = "seed:" .. tostring(pid)
@@ -3199,9 +3201,7 @@ local function performSave()
 		local failures = result.writes and result.writes.failures or 0
 		local verify = result.verify
 		local tone = PALETTE.good
-		if failures > 0 then
-			tone = PALETTE.warn
-		elseif verify and verify.total > 0 and verify.verified < verify.total then
+		if failures > 0 or (verify and verify.total > 0 and verify.verified < verify.total) then
 			tone = PALETTE.warn
 		end
 		setStatus(result.message or "Saved ✓", tone)
@@ -3977,9 +3977,12 @@ table.insert(identityTabRebuilders, religionsTab.rebuild)
 table.insert(identityTabRebuilders, ideologiesTab.rebuild)
 table.insert(identityTabRebuilders, governmentsTab.rebuild)
 
+local liveSync
+local softRefresh
+
 do
 	local remotesFolder = ReplicatedStorage:FindFirstChild("ArtOfWar") and ReplicatedStorage.ArtOfWar:FindFirstChild("Remotes")
-	local liveSync = remotesFolder and remotesFolder:FindFirstChild("DataEditorLive")
+	liveSync = remotesFolder and remotesFolder:FindFirstChild("DataEditorLive")
 	local presenceRemote = remotesFolder and remotesFolder:FindFirstChild("DataEditorPresence")
 
 	state.presence = {}
@@ -4123,7 +4126,7 @@ do
 		decorateRows(provinceListItems, "province")
 	end
 
-	local function softRefresh()
+	softRefresh = function()
 		if not state.snapshot then return end
 		local tab = state.currentTab
 		if tab == "countries" then
