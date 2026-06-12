@@ -1,7 +1,7 @@
 local InputValidator = {}
 
 local MAX_STRING_LENGTH = 64
-local MAX_TABLE_DEPTH = 4
+local MAX_TABLE_ENTRIES = 256
 local TAG_LENGTH = 3
 
 local configs = {}
@@ -36,7 +36,10 @@ end
 
 local function isShallowTable(v)
 	if type(v) ~= "table" then return false end
+	local count = 0
 	for key, value in v do
+		count += 1
+		if count > MAX_TABLE_ENTRIES then return false end
 		if type(key) ~= "string" and type(key) ~= "number" then return false end
 		local t = type(value)
 		if t ~= "string" and t ~= "number" and t ~= "boolean" then return false end

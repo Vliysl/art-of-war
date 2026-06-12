@@ -1585,6 +1585,7 @@ function DiplomacyWindow.create(callbacks)
 	ClientStateCache.onChangePrefix("countries", scheduleRefresh)
 	ClientStateCache.onChangePrefix("wars", scheduleRefresh)
 	ClientStateCache.onChangePrefix("peaceProposals", scheduleRefresh)
+	ClientStateCache.onChangePrefix("provinces", scheduleRefresh)
 
 	----------------------------------------------------------------
 	-- Public handle

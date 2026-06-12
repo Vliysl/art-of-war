@@ -49,7 +49,9 @@ function AdjacencyGraph.build()
 	computeNeighbors()
 	local count = 0
 	for _, list in neighbors do count += #list end
-	print(string.format("[ArtOfWar] adjacency graph: %d provinces, %d directed edges", #positions, count))
+	local provinceCount = 0
+	for _ in positions do provinceCount += 1 end
+	print(string.format("[ArtOfWar] adjacency graph: %d provinces, %d directed edges", provinceCount, count))
 end
 
 function AdjacencyGraph.getNeighbors(provinceId)

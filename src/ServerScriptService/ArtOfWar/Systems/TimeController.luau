@@ -93,6 +93,10 @@ function TimeController.register(context)
 		task.delay(0.1, broadcast)
 	end)
 
+	game:GetService("Players").PlayerRemoving:Connect(function(player)
+		lastRequestAt[player.UserId] = nil
+	end)
+
 	ctx.TimeController = {
 		broadcast = broadcast,
 		setSync = function(remote) timeSync = remote end,

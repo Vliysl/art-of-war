@@ -57,8 +57,8 @@ do
 	if overlayMod then
 		local ok, overlay = pcall(require, overlayMod)
 		if ok and overlay and overlay.snapshot and overlay.setProvince then
-			local snap = overlay.snapshot()
-			local overlayProvinces = snap and snap.provinces or {}
+			local snapOk, snap = pcall(overlay.snapshot)
+			local overlayProvinces = (snapOk and snap and snap.provinces) or {}
 			local countries = bundle.countries or {}
 			local function tagIsGhost(tag)
 				if tag == nil or tag == "" or tag == "NONE" then return false end
@@ -184,8 +184,12 @@ for _, child in Systems:GetChildren() do
 end
 
 if loadedSystems.ProvinceStamper and type(loadedSystems.ProvinceStamper.stamp) == "function" then
-	local stamped = loadedSystems.ProvinceStamper.stamp()
-	print(string.format("[ArtOfWar] stamped %d provinces onto map parts", stamped))
+	local ok, stamped = pcall(loadedSystems.ProvinceStamper.stamp)
+	if ok then
+		print(string.format("[ArtOfWar] stamped %d provinces onto map parts", stamped or 0))
+	else
+		warn("[ArtOfWar] ProvinceStamper.stamp errored: " .. tostring(stamped))
+	end
 end
 
 do

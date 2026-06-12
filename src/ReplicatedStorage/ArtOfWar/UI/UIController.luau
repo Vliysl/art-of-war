@@ -623,7 +623,11 @@ local function onClaimTag(tag)
 	invokeRemote("ClaimCountry", tag)
 end
 
+local uiStarted = false
+
 function UIController.start()
+	if uiStarted then return end
+	uiStarted = true
 	remotes.ClaimCountry = aow:WaitForChild("Remotes"):WaitForChild("ClaimCountry", 10)
 	remotes.EnactPolicy = aow.Remotes:WaitForChild("EnactPolicy", 10)
 	remotes.RepealPolicy = aow.Remotes:WaitForChild("RepealPolicy", 10)
