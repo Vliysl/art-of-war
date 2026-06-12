@@ -66,21 +66,15 @@ local function repealIncompatiblePolicies(country, newGov, newIdeology)
 end
 
 local function cancelInProgressLaws(country)
-	if not country.lawPasses then return 0 end
-	local cancelled = 0
-	local refund = 0
+	local record = country.lawPass
+	if type(record) ~= "table" or record.state ~= "in_progress" then return 0, 0 end
 	local refundFraction = ctx.WorldConstants.TransitionLawCancelRefund or 0.5
-	for lawId, record in country.lawPasses do
-		if record.state == "in_progress" then
-			refund += (record.ppSpent or 0) * refundFraction
-			country.lawPasses[lawId] = nil
-			cancelled += 1
-			ctx.EventBus.publish(ctx.Channels.CountryTransitionProgressed, {
-				tag = country.tag, lawCancelled = lawId,
-			})
-		end
-	end
-	return cancelled, refund
+	local refund = (record.ppSpent or 0) * refundFraction
+	country.lawPass = nil
+	ctx.EventBus.publish(ctx.Channels.CountryTransitionProgressed, {
+		tag = country.tag, lawCancelled = record.policyId,
+	})
+	return 1, refund
 end
 
 local function applyRollover(country, fromGov, toGov, targetIdeology, trigger)

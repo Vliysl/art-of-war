@@ -147,17 +147,25 @@ end
 function DataLoader.validateIndividual(bundle)
 	local errors = {}
 	for key, record in bundle.provinces do
-		ensureSchema(record, requiredProvinceFields, "Province", key, errors)
-		ensureNumeric(record, numericProvinceFields, "Province", key, errors)
-		if record.id ~= key then
-			table.insert(errors, string.format("Province keyed at %s has id=%s (mismatch)", str(key), str(record.id)))
+		if type(record) ~= "table" then
+			table.insert(errors, string.format("Province keyed at %s is not a table", str(key)))
+		else
+			ensureSchema(record, requiredProvinceFields, "Province", key, errors)
+			ensureNumeric(record, numericProvinceFields, "Province", key, errors)
+			if record.id ~= key then
+				table.insert(errors, string.format("Province keyed at %s has id=%s (mismatch)", str(key), str(record.id)))
+			end
 		end
 	end
 	for key, record in bundle.countries do
-		ensureSchema(record, requiredCountryFields, "Country", key, errors)
-		ensureNumeric(record, numericCountryFields, "Country", key, errors)
-		if record.tag ~= key then
-			table.insert(errors, string.format("Country keyed at '%s' has tag='%s' (mismatch)", str(key), str(record.tag)))
+		if type(record) ~= "table" then
+			table.insert(errors, string.format("Country keyed at '%s' is not a table", str(key)))
+		else
+			ensureSchema(record, requiredCountryFields, "Country", key, errors)
+			ensureNumeric(record, numericCountryFields, "Country", key, errors)
+			if record.tag ~= key then
+				table.insert(errors, string.format("Country keyed at '%s' has tag='%s' (mismatch)", str(key), str(record.tag)))
+			end
 		end
 	end
 	return errors
@@ -590,6 +598,19 @@ function DataLoader.healBundle(bundle)
 	local fallbackTerrain = pickKey(terrains, "plains")
 	local fallbackClimate = pickKey(climates, "temperate")
 	local fallbackTradeGood = pickKey(tradeGoods, "grain")
+
+	for id, rec in pairs(bundle.provinces or {}) do
+		if type(rec) ~= "table" then
+			table.insert(heals, string.format("Province %s dropped: overlay record was not a table", tostring(id)))
+			bundle.provinces[id] = nil
+		end
+	end
+	for tag, rec in pairs(bundle.countries or {}) do
+		if type(rec) ~= "table" then
+			table.insert(heals, string.format("Country '%s' dropped: overlay record was not a table", tostring(tag)))
+			bundle.countries[tag] = nil
+		end
+	end
 
 	for provinceId, province in pairs(bundle.provinces or {}) do
 		if type(province) == "table" then

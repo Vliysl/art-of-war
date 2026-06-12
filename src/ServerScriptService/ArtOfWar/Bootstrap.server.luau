@@ -128,7 +128,11 @@ do
 	end
 end
 
-local report = DataLoader.validateBundle(bundle)
+local validateOk, report = pcall(DataLoader.validateBundle, bundle)
+if not validateOk then
+	warn("[ArtOfWar] validateBundle errored, continuing: " .. tostring(report))
+	report = { ok = true, errors = {}, warnings = {} }
+end
 if not report.ok then
 	warn(string.format("[ArtOfWar] bundle validation surfaced %d non-fatal error(s); boot continues so the map and physics still load:", #report.errors))
 	for _, err in report.errors do

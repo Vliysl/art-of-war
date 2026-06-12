@@ -258,6 +258,7 @@ function NavalSystem.moveFleet(ownerTag, fleetId, destProvinceId)
 	local fleet = ctx.WorldState.getFleet(fleetId)
 	if not fleet then return false, "unknown fleet" end
 	if fleet.ownerTag ~= ownerTag then return false, "not your fleet" end
+	if fleet.battleId or fleet.status == "battle" then return false, "in_battle" end
 	local dest = ctx.WorldState.getProvince(destProvinceId)
 	if not dest then return false, "unknown destination" end
 
@@ -299,6 +300,10 @@ function NavalSystem.attackFleet(ownerTag, fleetId, targetFleetId)
 	if attacker.ownerTag ~= ownerTag then return false, "not your fleet" end
 	if defender.ownerTag == ownerTag then return false, "cannot attack own fleet" end
 	if attacker.provinceId ~= defender.provinceId then return false, "fleets not co-located" end
+	local dipl = ctx.DiplomacySystem
+	if dipl and dipl.areAtWar and not dipl.areAtWar(attacker.ownerTag, defender.ownerTag) then
+		return false, "not_at_war"
+	end
 
 	local battleId = generateOrderId()
 	battles[battleId] = {
@@ -598,7 +603,9 @@ local function tickMissions(dt)
 					end
 					if def.treasuryEffectPerTick and def.treasuryEffectPerTick ~= 0 then
 						local targetTag = targetProvinceController(fleet.mission.targetProvinceId)
-						if targetTag and targetTag ~= fleet.ownerTag then
+						local dipl = ctx.DiplomacySystem
+						local hostile = targetTag ~= nil and targetTag ~= fleet.ownerTag and (not dipl or not dipl.areAtWar or dipl.areAtWar(fleet.ownerTag, targetTag))
+						if hostile then
 							applyTreasuryDelta(targetTag, def.treasuryEffectPerTick)
 							if def.treasuryEffectGoesToMission then
 								local gain = -def.treasuryEffectPerTick
