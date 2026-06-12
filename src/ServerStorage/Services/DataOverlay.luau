@@ -607,9 +607,36 @@ local function validateRefs(record, source, scalarFields, arrayFields, bundle, l
 	return record
 end
 
+local DELETE_BREAKER_FLOOR = 4
+local DELETE_BREAKER_FRACTION = 1 / 3
+local DELETE_BREAKER_CAP = 200
+
+local function deletesAreSafe(kind)
+	local tombstones, total = 0, 0
+	for _, rec in pairs(cache.data[kind]) do
+		total += 1
+		if isTombstone(rec) then tombstones += 1 end
+	end
+	local allowed = math.min(DELETE_BREAKER_CAP, math.max(DELETE_BREAKER_FLOOR, DELETE_BREAKER_FRACTION * total))
+	if tombstones <= allowed then return true end
+	warn(string.format(
+		"[DataOverlay] mass-deletion breaker TRIPPED for '%s': overlay would delete %d of %d cached records (limit %d). Keeping source data and skipping these deletions — investigate possible tampering.",
+		kind, tombstones, total, math.floor(allowed)))
+	return false
+end
+
 function DataOverlay.applyTo(bundle)
 	ensureLoaded()
 	local healings = {}
+	local allowDelete = {
+		[KIND_PROVINCES]   = deletesAreSafe(KIND_PROVINCES),
+		[KIND_EU4MAP]      = deletesAreSafe(KIND_EU4MAP),
+		[KIND_COUNTRIES]   = deletesAreSafe(KIND_COUNTRIES),
+		[KIND_CULTURES]    = deletesAreSafe(KIND_CULTURES),
+		[KIND_RELIGIONS]   = deletesAreSafe(KIND_RELIGIONS),
+		[KIND_IDEOLOGIES]  = deletesAreSafe(KIND_IDEOLOGIES),
+		[KIND_GOVERNMENTS] = deletesAreSafe(KIND_GOVERNMENTS),
+	}
 
 	local sourceProvinces, sourceCountries = {}, {}
 	if type(bundle.provinces) == "table" then
@@ -623,7 +650,7 @@ function DataOverlay.applyTo(bundle)
 		for id, rec in pairs(cache.data[KIND_PROVINCES]) do
 			local nid = tonumber(id) or id
 			if isTombstone(rec) then
-				bundle.provinces[nid] = nil
+				if allowDelete[KIND_PROVINCES] then bundle.provinces[nid] = nil end
 			else
 				local incoming = rec
 				if type(rec) == "table" then
@@ -644,7 +671,7 @@ function DataOverlay.applyTo(bundle)
 		for id, part in pairs(cache.data[KIND_EU4MAP]) do
 			local nid = tonumber(id) or id
 			if isTombstone(part) then
-				bundle.eu4Map[nid] = nil
+				if allowDelete[KIND_EU4MAP] then bundle.eu4Map[nid] = nil end
 			else
 				bundle.eu4Map[nid] = part
 			end
@@ -653,7 +680,7 @@ function DataOverlay.applyTo(bundle)
 	if bundle.countries then
 		for tag, rec in pairs(cache.data[KIND_COUNTRIES]) do
 			if isTombstone(rec) then
-				bundle.countries[tag] = nil
+				if allowDelete[KIND_COUNTRIES] then bundle.countries[tag] = nil end
 			else
 				bundle.countries[tag] = rawMerge(sourceCountries[tag], rec)
 			end
@@ -662,7 +689,7 @@ function DataOverlay.applyTo(bundle)
 	if bundle.cultures then
 		for id, rec in pairs(cache.data[KIND_CULTURES]) do
 			if isTombstone(rec) then
-				bundle.cultures[id] = nil
+				if allowDelete[KIND_CULTURES] then bundle.cultures[id] = nil end
 			else
 				bundle.cultures[id] = rawMerge(bundle.cultures[id], rec)
 			end
@@ -671,7 +698,7 @@ function DataOverlay.applyTo(bundle)
 	if bundle.religions then
 		for id, rec in pairs(cache.data[KIND_RELIGIONS]) do
 			if isTombstone(rec) then
-				bundle.religions[id] = nil
+				if allowDelete[KIND_RELIGIONS] then bundle.religions[id] = nil end
 			else
 				bundle.religions[id] = rawMerge(bundle.religions[id], rec)
 			end
@@ -680,7 +707,7 @@ function DataOverlay.applyTo(bundle)
 	if bundle.ideologies then
 		for id, rec in pairs(cache.data[KIND_IDEOLOGIES]) do
 			if isTombstone(rec) then
-				bundle.ideologies[id] = nil
+				if allowDelete[KIND_IDEOLOGIES] then bundle.ideologies[id] = nil end
 			else
 				bundle.ideologies[id] = rawMerge(bundle.ideologies[id], rec)
 			end
@@ -689,7 +716,7 @@ function DataOverlay.applyTo(bundle)
 	if bundle.governmentTypes then
 		for id, rec in pairs(cache.data[KIND_GOVERNMENTS]) do
 			if isTombstone(rec) then
-				bundle.governmentTypes[id] = nil
+				if allowDelete[KIND_GOVERNMENTS] then bundle.governmentTypes[id] = nil end
 			else
 				bundle.governmentTypes[id] = rawMerge(bundle.governmentTypes[id], rec)
 			end
