@@ -92,6 +92,11 @@ end
 function ClientStateCache.applyDelta(packet)
 	if type(packet) ~= "table" then return end
 	if packet.fullSnapshot then
+		if packet.revision and cache.revision and packet.revision < cache.revision then
+			initialized = true
+			notify("snapshot", cache)
+			return
+		end
 		cache.provinces = packet.provinces or {}
 		cache.countries = packet.countries or {}
 		cache.markets = packet.markets or {}

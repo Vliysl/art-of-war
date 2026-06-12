@@ -1461,6 +1461,14 @@ function DataEditor.migrateLegacy()
 	}
 end
 
+local function cloneStack(stack)
+	local out = {}
+	for i = 1, #stack do
+		out[i] = stack[i]
+	end
+	return out
+end
+
 function DataEditor.captureFullState()
 	return {
 		countries  = deepClone(countries),
@@ -1471,8 +1479,8 @@ function DataEditor.captureFullState()
 		religions  = deepClone(religions),
 		ideologies = deepClone(ideologies),
 		governments = deepClone(governments),
-		history    = deepClone(history),
-		redoStack  = deepClone(redoStack),
+		history    = cloneStack(history),
+		redoStack  = cloneStack(redoStack),
 		baseline   = baseline and deepClone(baseline) or nil,
 		loaded     = loaded,
 	}
@@ -1488,8 +1496,8 @@ function DataEditor.restoreFullState(state)
 	religions   = deepClone(state.religions or {})
 	ideologies  = deepClone(state.ideologies or {})
 	governments = deepClone(state.governments or {})
-	history     = deepClone(state.history or {})
-	redoStack   = deepClone(state.redoStack or {})
+	history     = cloneStack(state.history or {})
+	redoStack   = cloneStack(state.redoStack or {})
 	baseline    = state.baseline and deepClone(state.baseline) or nil
 	loaded      = state.loaded == true
 	return true

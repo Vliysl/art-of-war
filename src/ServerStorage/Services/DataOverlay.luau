@@ -610,17 +610,49 @@ end
 local DELETE_BREAKER_FLOOR = 4
 local DELETE_BREAKER_FRACTION = 1 / 3
 local DELETE_BREAKER_CAP = 200
+local DELETE_BREAKER_SMALL_KIND = 50
 
-local function deletesAreSafe(kind)
-	local tombstones, total = 0, 0
-	for _, rec in pairs(cache.data[kind]) do
-		total += 1
-		if isTombstone(rec) then tombstones += 1 end
+local BUNDLE_FIELD = {
+	[KIND_PROVINCES] = "provinces",
+	[KIND_EU4MAP] = "eu4Map",
+	[KIND_COUNTRIES] = "countries",
+	[KIND_CULTURES] = "cultures",
+	[KIND_RELIGIONS] = "religions",
+	[KIND_IDEOLOGIES] = "ideologies",
+	[KIND_GOVERNMENTS] = "governmentTypes",
+}
+
+local function deletesAreSafe(kind, bundle)
+	local present = {}
+	local field = BUNDLE_FIELD[kind]
+	local src = field and bundle[field]
+	if type(src) == "table" then
+		for k in pairs(src) do present[tostring(k)] = true end
 	end
-	local allowed = math.min(DELETE_BREAKER_CAP, math.max(DELETE_BREAKER_FLOOR, DELETE_BREAKER_FRACTION * total))
+	local tombstones = 0
+	for k, rec in pairs(cache.data[kind]) do
+		local key = tostring(k)
+		if isTombstone(rec) then
+			if present[key] then
+				tombstones += 1
+				present[key] = nil
+			end
+		else
+			present[key] = true
+		end
+	end
+	local survivors = 0
+	for _ in pairs(present) do survivors += 1 end
+	local total = survivors + tombstones
+	local allowed
+	if total <= DELETE_BREAKER_SMALL_KIND then
+		allowed = math.max(0, total - 1)
+	else
+		allowed = math.min(DELETE_BREAKER_CAP, math.max(DELETE_BREAKER_FLOOR, DELETE_BREAKER_FRACTION * total))
+	end
 	if tombstones <= allowed then return true end
 	warn(string.format(
-		"[DataOverlay] mass-deletion breaker TRIPPED for '%s': overlay would delete %d of %d cached records (limit %d). Keeping source data and skipping these deletions — investigate possible tampering.",
+		"[DataOverlay] mass-deletion breaker TRIPPED for '%s': overlay would delete %d of %d records (limit %d). Keeping source data and skipping these deletions — investigate possible tampering.",
 		kind, tombstones, total, math.floor(allowed)))
 	return false
 end
@@ -629,13 +661,13 @@ function DataOverlay.applyTo(bundle)
 	ensureLoaded()
 	local healings = {}
 	local allowDelete = {
-		[KIND_PROVINCES]   = deletesAreSafe(KIND_PROVINCES),
-		[KIND_EU4MAP]      = deletesAreSafe(KIND_EU4MAP),
-		[KIND_COUNTRIES]   = deletesAreSafe(KIND_COUNTRIES),
-		[KIND_CULTURES]    = deletesAreSafe(KIND_CULTURES),
-		[KIND_RELIGIONS]   = deletesAreSafe(KIND_RELIGIONS),
-		[KIND_IDEOLOGIES]  = deletesAreSafe(KIND_IDEOLOGIES),
-		[KIND_GOVERNMENTS] = deletesAreSafe(KIND_GOVERNMENTS),
+		[KIND_PROVINCES]   = deletesAreSafe(KIND_PROVINCES, bundle),
+		[KIND_EU4MAP]      = deletesAreSafe(KIND_EU4MAP, bundle),
+		[KIND_COUNTRIES]   = deletesAreSafe(KIND_COUNTRIES, bundle),
+		[KIND_CULTURES]    = deletesAreSafe(KIND_CULTURES, bundle),
+		[KIND_RELIGIONS]   = deletesAreSafe(KIND_RELIGIONS, bundle),
+		[KIND_IDEOLOGIES]  = deletesAreSafe(KIND_IDEOLOGIES, bundle),
+		[KIND_GOVERNMENTS] = deletesAreSafe(KIND_GOVERNMENTS, bundle),
 	}
 
 	local sourceProvinces, sourceCountries = {}, {}
