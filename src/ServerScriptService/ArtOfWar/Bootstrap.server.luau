@@ -18,6 +18,7 @@ local DataLoader = require(Framework.DataLoader)
 local UIBridge = require(Framework.UIBridge)
 local InputValidator = require(Framework.InputValidator)
 local ModifierStack = require(Framework.ModifierStack)
+local EditorAdmins = require(ServerStorage:WaitForChild("Dev"):WaitForChild("EditorAdmins"))
 
 UIBridge.init()
 
@@ -971,25 +972,7 @@ bindFunction("RequestFullState", function()
 	return context.StateReplicator.buildSnapshot()
 end)
 
-local function isAdminPlayer(player)
-	if not player or typeof(player) ~= "Instance" or not player:IsA("Player") then return false end
-	local RunService = game:GetService("RunService")
-	if RunService:IsStudio() then return true end
-	local creatorType = game.CreatorType
-	local creatorId = game.CreatorId
-	if creatorType == Enum.CreatorType.User and player.UserId == creatorId then return true end
-	local relayMod = ServerStorage:FindFirstChild("Dev")
-	relayMod = relayMod and relayMod:FindFirstChild("RelayConfig")
-	if not relayMod then return false end
-	local ok, relayCfg = pcall(require, relayMod)
-	if not ok or not relayCfg then return false end
-	if creatorType == Enum.CreatorType.Group then
-		local rankOk, rank = pcall(function() return player:GetRankInGroup(creatorId) end)
-		if rankOk and rank and rank >= (relayCfg.ADMIN_GROUP_RANK or 254) then return true end
-	end
-	if relayCfg.ADMIN_USER_IDS and relayCfg.ADMIN_USER_IDS[player.UserId] then return true end
-	return false
-end
+local isAdminPlayer = EditorAdmins.isAllowed
 
 context.isAdminPlayer = isAdminPlayer
 

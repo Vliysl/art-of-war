@@ -57,6 +57,9 @@
 				"$ignoreUnknownInstances": true,
 				"DataEditor": {
 					"$path": "src/ServerStorage/Dev/DataEditor.luau"
+				},
+				"EditorAdmins": {
+					"$path": "src/ServerStorage/Dev/EditorAdmins.luau"
 				}
 			},
 			"Services": {

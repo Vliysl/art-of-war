@@ -1,10 +1,9 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 
 local Editor = require(ServerStorage:WaitForChild("Dev"):WaitForChild("DataEditor"))
-local RelayConfig = require(ServerStorage:WaitForChild("Dev"):WaitForChild("RelayConfig"))
+local EditorAdmins = require(ServerStorage:WaitForChild("Dev"):WaitForChild("EditorAdmins"))
 
 local STAGING_ENABLED = true
 
@@ -154,19 +153,7 @@ local saveInProgress = false
 local saveOwnerUserId = nil
 local presence = {}
 
-local function isAuthorized(player)
-	if not player or typeof(player) ~= "Instance" or not player:IsA("Player") then return false end
-	if RunService:IsStudio() then return true end
-	local creatorType = game.CreatorType
-	local creatorId = game.CreatorId
-	if creatorType == Enum.CreatorType.User and player.UserId == creatorId then return true end
-	if creatorType == Enum.CreatorType.Group then
-		local ok, rank = pcall(function() return player:GetRankInGroup(creatorId) end)
-		if ok and rank and rank >= (RelayConfig.ADMIN_GROUP_RANK or 254) then return true end
-	end
-	if RelayConfig.ADMIN_USER_IDS and RelayConfig.ADMIN_USER_IDS[player.UserId] then return true end
-	return false
-end
+local isAuthorized = EditorAdmins.isAllowed
 
 local function presenceSnapshot()
 	local list = {}
@@ -896,16 +883,14 @@ print(string.format("[DataEditorService] ready — %d countries, %d provinces lo
 
 local function adminSummary()
 	local parts = { "Studio=always" }
-	if game.CreatorType == Enum.CreatorType.Group then
-		table.insert(parts, string.format("group-rank>=%d", RelayConfig.ADMIN_GROUP_RANK or 100))
-	elseif game.CreatorType == Enum.CreatorType.User then
+	if game.CreatorType == Enum.CreatorType.User then
 		table.insert(parts, string.format("creator-user=%d", game.CreatorId))
 	end
-	local whitelistCount = 0
-	for _ in pairs(RelayConfig.ADMIN_USER_IDS or {}) do whitelistCount += 1 end
-	if whitelistCount > 0 then
-		table.insert(parts, string.format("whitelist=%d", whitelistCount))
+	local allowCount = 0
+	for _ in pairs(EditorAdmins.userIds) do
+		allowCount += 1
 	end
+	table.insert(parts, string.format("allowlist=%d", allowCount))
 	return table.concat(parts, " | ")
 end
 print(string.format("[DataEditorService] auth policy: %s", adminSummary()))
