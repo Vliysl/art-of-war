@@ -14,7 +14,8 @@ local MAX_PANEL_H = 480
 local COUNTRY_HEADER_H = 78
 local GAP_TO_HEADER = 6
 
--- Politics window tab names that legacy callers might pass into setActive(name)
+-- Government tab names that legacy callers might pass into setActive(name); these
+-- redirect to the Diplomacy window's government screen (see setPoliticsRedirect).
 local POLITICS_TABS = {
 	Factions = true,
 	Leaders = true,
@@ -140,7 +141,7 @@ function CountryPanel.create(parent)
 		end
 	end
 
-	-- UIController calls this after PoliticsWindow is created so the redirect can wire up.
+	-- UIController calls this after the Diplomacy window is created so the redirect can wire up.
 	function CountryPanel.setPoliticsRedirect(fn)
 		_politicsRedirect = fn
 	end

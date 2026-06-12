@@ -235,11 +235,13 @@ local function buildCrest(parent, countryColor, tag, size)
 	return frame
 end
 
-local function stripSize(props)
+-- `size` and `flag` are crest options, not instance properties; both must be
+-- stripped before apply() writes the remaining props onto the Frame.
+local function stripCrestOpts(props)
 	if not props then return nil end
 	local out = {}
 	for k, v in props do
-		if k ~= "size" then out[k] = v end
+		if k ~= "size" and k ~= "flag" then out[k] = v end
 	end
 	return out
 end
@@ -264,11 +266,11 @@ function UIBuilder.crest(parent, countryColor, tag, props)
 		img.Parent = frame
 		newCorner(img, math.floor(px * 0.18))
 		newStroke(img, 1, UIStyle.Color.Gold)
-		apply(frame, stripSize(props))
+		apply(frame, stripCrestOpts(props))
 		return frame
 	end
 	local f = buildCrest(parent, countryColor, tag, size)
-	apply(f, stripSize(props))
+	apply(f, stripCrestOpts(props))
 	return f
 end
 

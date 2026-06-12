@@ -7,11 +7,12 @@ local Platform = require(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild
 
 local BottomBar = {}
 
+-- Politics merged into the Diplomacy window (country profiles own the
+-- government pages now), so it no longer gets its own panel button.
 local PANEL_BUTTONS = {
-	{ id = "politics",  label = "Politics",  hint = "G" },
+	{ id = "diplomacy", label = "Diplomacy", hint = "V" },
 	{ id = "economy",   label = "Economy",   hint = "E" },
 	{ id = "research",  label = "Research",  hint = "Y" },
-	{ id = "diplomacy", label = "Diplomacy", hint = "V" },
 }
 
 function BottomBar.create(parent)

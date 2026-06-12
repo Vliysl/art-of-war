@@ -11,6 +11,7 @@ local WorldConstants = require(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitFo
 local EconomyPreview = require(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Modules"):WaitForChild("EconomyPreview"))
 local DebugMode = require(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Modules"):WaitForChild("DebugMode"))
 local SimClock = require(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Modules"):WaitForChild("SimClock"))
+local ClientStateCache = require(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Modules"):WaitForChild("ClientStateCache"))
 local RunService = game:GetService("RunService")
 
 local ProvinceDetailPanel = {}
@@ -277,9 +278,45 @@ function ProvinceDetailPanel.create(parent, onClose, callbacks)
 	header.ZIndex = UIStyle.Z.PanelHeader
 	header.Parent = panel
 
+	-- Owning country's crest: click to open that country's profile in the
+	-- Diplomacy window (callbacks.onViewCountry). Hidden for unowned provinces.
+	local ownerCrestTag = nil
+	local ownerCrestName = nil
+	local ownerCrest = nil
+	local crestBtn = Instance.new("TextButton")
+	crestBtn.Name = "OwnerCrest"
+	crestBtn.Size = UDim2.fromOffset(40, 40)
+	crestBtn.Position = UDim2.fromOffset(14, 12)
+	crestBtn.BackgroundColor3 = UIStyle.Color.PanelHigh
+	crestBtn.BackgroundTransparency = 1
+	crestBtn.BorderSizePixel = 0
+	crestBtn.AutoButtonColor = false
+	crestBtn.Text = ""
+	crestBtn.Visible = false
+	crestBtn.ZIndex = UIStyle.Z.PanelHeader + 1
+	crestBtn.Parent = header
+	UIBuilder.corner(crestBtn, 6)
+	crestBtn.MouseEnter:Connect(function()
+		crestBtn.BackgroundTransparency = 0.55
+	end)
+	crestBtn.MouseLeave:Connect(function()
+		crestBtn.BackgroundTransparency = 1
+	end)
+	crestBtn.MouseButton1Click:Connect(function()
+		if ownerCrestTag and callbacks.onViewCountry then
+			callbacks.onViewCountry(ownerCrestTag)
+		end
+	end)
+	UIBuilder.tooltip(crestBtn, function()
+		return {
+			{ header = ownerCrestName or "Country" },
+			{ body = "View country profile" },
+		}
+	end)
+
 	local titleLbl = Instance.new("TextLabel")
-	titleLbl.Size = UDim2.new(1, -90, 0, 30)
-	titleLbl.Position = UDim2.fromOffset(18, 8)
+	titleLbl.Size = UDim2.new(1, -136, 0, 30)
+	titleLbl.Position = UDim2.fromOffset(64, 8)
 	titleLbl.BackgroundTransparency = 1
 	titleLbl.Text = "Province"
 	titleLbl.TextColor3 = UIStyle.Color.Text
@@ -291,8 +328,8 @@ function ProvinceDetailPanel.create(parent, onClose, callbacks)
 	titleLbl.Parent = header
 
 	local subtitleLbl = Instance.new("TextLabel")
-	subtitleLbl.Size = UDim2.new(1, -90, 0, 16)
-	subtitleLbl.Position = UDim2.fromOffset(18, 38)
+	subtitleLbl.Size = UDim2.new(1, -136, 0, 16)
+	subtitleLbl.Position = UDim2.fromOffset(64, 38)
 	subtitleLbl.BackgroundTransparency = 1
 	subtitleLbl.Text = ""
 	subtitleLbl.TextColor3 = UIStyle.Color.TooltipTertiary
@@ -1451,6 +1488,27 @@ function ProvinceDetailPanel.create(parent, onClose, callbacks)
 				subtitleLbl.Text = ownerName .. "  \u{00B7}  " .. areaName
 			else
 				subtitleLbl.Text = ownerName
+			end
+
+			-- Owner crest: the province's owner, even when viewing someone else's land.
+			local ownerCountry = country
+			if not ownerCountry or ownerCountry.tag ~= province.ownerTag then
+				ownerCountry = province.ownerTag and ClientStateCache.getCountry(province.ownerTag) or nil
+			end
+			if ownerCrest then ownerCrest:Destroy(); ownerCrest = nil end
+			if ownerCountry then
+				ownerCrestTag = ownerCountry.tag or province.ownerTag
+				ownerCrestName = ownerCountry.displayName or ownerCrestTag
+				local c = ownerCountry.color
+				local color = type(c) == "table" and Color3.fromRGB(c[1] or 128, c[2] or 128, c[3] or 128)
+					or UIStyle.Color.PanelAlt
+				ownerCrest = UIBuilder.crest(crestBtn, color, ownerCrestTag,
+					{ size = 40, flag = ownerCountry.flagAssetId })
+				crestBtn.Visible = true
+			else
+				ownerCrestTag = nil
+				ownerCrestName = nil
+				crestBtn.Visible = false
 			end
 		end
 		refreshLinesBar(province, country)

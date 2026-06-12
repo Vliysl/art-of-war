@@ -27,10 +27,10 @@ local SECTIONS = {
 	{
 		title = "Panel Windows",
 		rows = {
-			{ "G",   "Politics" },
+			{ "V",   "Diplomacy / country profiles" },
+			{ "G",   "your country (government)" },
 			{ "E",   "Economy" },
 			{ "Y",   "Research" },
-			{ "V",   "Diplomacy" },
 			{ "F10", "Settings menu" },
 			{ "X",   "Close topmost window" },
 		},

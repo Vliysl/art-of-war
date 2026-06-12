@@ -19,7 +19,6 @@ local BottomBar = require(uiFolder:WaitForChild("BottomBar"))
 local UIKeybindings = require(uiFolder:WaitForChild("UIKeybindings"))
 local NotificationFeed = require(uiFolder:WaitForChild("NotificationFeed"))
 local CountryHeader = require(uiFolder:WaitForChild("CountryHeader"))
-local PoliticsWindow = require(uiFolder:WaitForChild("PoliticsWindow"))
 local DiplomacyWindow = require(uiFolder:WaitForChild("DiplomacyWindow"))
 local EconomyWindow = require(uiFolder:WaitForChild("EconomyWindow"))
 local ResearchWindow = require(uiFolder:WaitForChild("ResearchWindow"))
@@ -31,11 +30,7 @@ local FleetPanel = require(uiFolder:WaitForChild("FleetPanel"))
 
 local tabsFolder = uiFolder:WaitForChild("Tabs")
 local OverviewTab = require(tabsFolder:WaitForChild("OverviewTab"))
-local FactionsTab = require(tabsFolder:WaitForChild("FactionsTab"))
-local LeadersTab = require(tabsFolder:WaitForChild("LeadersTab"))
-local PoliciesTab = require(tabsFolder:WaitForChild("PoliciesTab"))
-local LawsTab = require(tabsFolder:WaitForChild("LawsTab"))
-local DoctrinesTab = require(tabsFolder:WaitForChild("DoctrinesTab"))
+-- (Factions/Leaders/Policies/Laws/Doctrines tabs are required and mounted by DiplomacyWindow.)
 
 local ClientStateCache = require(modulesFolder:WaitForChild("ClientStateCache"))
 local ArmyView = require(aow.Modules:WaitForChild("ArmyView"))
@@ -57,7 +52,7 @@ local claimedTag = nil
 local autoFieldRequested = false
 local lastAutoShownTag = nil
 local tabs = {}
-local topBar, countryPanel, provinceTooltip, provinceDetailPanel, armyPanel, claimScreen, bottomBar, notifFeed, diplomacyWindow, economyWindow, researchWindow, settingsMenu, keybindsWindow, minimap, mapModesBar, shortcutsOverlay, fleetPanel, countryHeader, politicsWindow
+local topBar, countryPanel, provinceTooltip, provinceDetailPanel, armyPanel, claimScreen, bottomBar, notifFeed, diplomacyWindow, economyWindow, researchWindow, settingsMenu, keybindsWindow, minimap, mapModesBar, shortcutsOverlay, fleetPanel, countryHeader
 local selectedProvinceId = nil
 local pendingCommand = nil
 local lastWaterName = nil
@@ -126,6 +121,10 @@ local function buildBundleFromData()
 	countries = bundle.countries or {}
 end
 
+-- Header widgets rebuild their crest/badges on setCountry; skip the call when
+-- nothing they display has changed (stats below still update every pass).
+local lastHeaderSig = nil
+
 local function refreshTopBar()
 	if not topBar then return end
 	if claimedTag then
@@ -141,23 +140,35 @@ local function refreshTopBar()
 				local i = bundle.ideologies[country.ideology]
 				ideologyName = i and i.displayName or tostring(country.ideology):gsub("_", " ")
 			end
-			topBar.setCountry(claimedTag, country.displayName, country.color, govName, ideologyName, country.flagAssetId)
+			local c = country.color
+			local headerSig = table.concat({
+				tostring(claimedTag), tostring(country.displayName),
+				tostring(govName), tostring(ideologyName), tostring(country.flagAssetId),
+				type(c) == "table" and ((c[1] or 0) .. "," .. (c[2] or 0) .. "," .. (c[3] or 0)) or "nocolor",
+			}, "|")
+			if headerSig ~= lastHeaderSig then
+				lastHeaderSig = headerSig
+				topBar.setCountry(claimedTag, country.displayName, country.color, govName, ideologyName, country.flagAssetId)
+				if countryHeader and countryHeader.setCountry then
+					countryHeader.setCountry(claimedTag, country.displayName, country.color, govName, ideologyName, country.flagAssetId)
+				end
+			end
 			topBar.setStat("treasury", country.treasury, country.lastIncome)
 			topBar.setStat("manpower", country.manpower, country.manpowerDelta)
 			topBar.setStat("pp", country.politicalPower, country.politicalPowerGain)
 			topBar.setStat("stability", country.stability)
 			topBar.setStat("legitimacy", country.legitimacy)
 			topBar.setStatColor("stability", UIStyle.stateColor(country.stability or 0))
-			if countryHeader and countryHeader.setCountry then
-				countryHeader.setCountry(claimedTag, country.displayName, country.color, govName, ideologyName, country.flagAssetId)
-			end
 			if countryHeader and countryHeader.setOpenState and countryPanel and countryPanel.isOpen then
 				countryHeader.setOpenState(countryPanel.isOpen())
 			end
 		end
 	else
-		topBar.setCountry(nil, "Unclaimed", nil)
-		if countryHeader and countryHeader.setCountry then countryHeader.setCountry(nil) end
+		if lastHeaderSig ~= "unclaimed" then
+			lastHeaderSig = "unclaimed"
+			topBar.setCountry(nil, "Unclaimed", nil)
+			if countryHeader and countryHeader.setCountry then countryHeader.setCountry(nil) end
+		end
 	end
 
 	if countryPanel then
@@ -201,25 +212,82 @@ local function refreshTopBar()
 	end
 end
 
+-- Tab updates destroy-and-rebuild their whole page, so hidden hosts skip the
+-- rebuild and mark themselves stale; ensure*Fresh re-runs the update on reveal.
+-- (The five politics tabs gate themselves inside DiplomacyWindow the same way.)
+local lastTabCountry = nil
+local overviewStale = false
+local economyStale = false
+
 local function refreshTabs()
 	if not claimedTag then return end
 	local country = ClientStateCache.getCountry(claimedTag) or countries[claimedTag]
 	if not country then return end
-	for _, tab in tabs do
+	lastTabCountry = country
+	for name, tab in tabs do
 		if tab and tab.update then
-			local ok, err = pcall(tab.update, country, bundle)
-			if not ok then warn("[UIController] tab update errored: " .. tostring(err)) end
+			if name == "Overview" and countryPanel and countryPanel.isOpen and not countryPanel.isOpen() then
+				overviewStale = true
+			else
+				local ok, err = pcall(tab.update, country, bundle)
+				if not ok then warn("[UIController] tab update errored: " .. tostring(err)) end
+				if name == "Overview" then overviewStale = false end
+			end
 		end
 	end
 	if economyWindow and economyWindow.update then
-		local ok, err = pcall(economyWindow.update, country)
-		if not ok then warn("[UIController] economyWindow update errored: " .. tostring(err)) end
+		if economyWindow.isOpen and economyWindow.isOpen() then
+			local ok, err = pcall(economyWindow.update, country)
+			if not ok then warn("[UIController] economyWindow update errored: " .. tostring(err)) end
+			economyStale = false
+		else
+			economyStale = true
+		end
+	end
+end
+
+local function ensureOverviewFresh()
+	if not overviewStale or not lastTabCountry then return end
+	if not (countryPanel and countryPanel.isOpen and countryPanel.isOpen()) then return end
+	if tabs.Overview and tabs.Overview.update then
+		overviewStale = false
+		local ok, err = pcall(tabs.Overview.update, lastTabCountry, bundle)
+		if not ok then warn("[UIController] overview refresh errored: " .. tostring(err)) end
+	end
+end
+
+local function ensureEconomyFresh()
+	if not economyStale or not lastTabCountry then return end
+	if not (economyWindow and economyWindow.isOpen and economyWindow.isOpen()) then return end
+	if economyWindow.update then
+		economyStale = false
+		local ok, err = pcall(economyWindow.update, lastTabCountry)
+		if not ok then warn("[UIController] economy refresh errored: " .. tostring(err)) end
 	end
 end
 
 local function refresh()
 	refreshTopBar()
 	refreshTabs()
+end
+
+-- Open the diplomacy window via `openFn`, first closing the other movable windows
+-- (mirrors toggleWindow's one-window-at-a-time rule), then sync bottom-bar state.
+local function focusDiplomacyWindow(openFn)
+	if not diplomacyWindow then return end
+	local others = { economy = economyWindow, research = researchWindow }
+	for id, w in pairs(others) do
+		if w and w.isOpen() then
+			w.toggle()
+			if bottomBar and bottomBar.setActiveWindow then
+				bottomBar.setActiveWindow(id, false)
+			end
+		end
+	end
+	openFn()
+	if bottomBar and bottomBar.setActiveWindow then
+		bottomBar.setActiveWindow("diplomacy", diplomacyWindow.isOpen())
+	end
 end
 
 local function recordForPart(part)
@@ -606,33 +674,37 @@ function UIController.start()
 	countryPanel = CountryPanel.create(commandLayer)
 
 	tabs.Overview = OverviewTab.mount(countryPanel.getPage("Overview"))
-	-- Politics window owns Factions/Leaders/Policies/Laws/Doctrines
-	politicsWindow = PoliticsWindow.create({
-		fireDismiss     = function(slot)         invokeRemote("DismissLeader", slot) end,
-		fireAppoint     = function(slot, idx)    invokeRemote("AppointLeader", slot, idx) end,
-		fireEnact       = function(policyId)     invokeRemote("EnactPolicy", policyId) end,
-		fireRepeal      = function(policyId)     invokeRemote("RepealPolicy", policyId) end,
-		fireCancel      = function()             invokeRemote("CancelLaw") end,
-		fireSetDoctrine = function(doctrineId)   invokeRemote("SetDoctrine", doctrineId) end,
+	-- The Diplomacy window is the consolidated country-profile window: it owns the
+	-- country list + profile view AND hosts the politics pages
+	-- (Factions/Leaders/Policies/Laws/Doctrines) on its embedded government screen.
+	diplomacyWindow = DiplomacyWindow.create({
+		getMyTag         = function() return claimedTag end,
+		onDeclareWar     = function(targetTag)        invokeRemote("DeclareWar", targetTag) end,
+		onProposePeace   = function(targetTag, terms) invokeRemote("ProposePeace", targetTag, terms) end,
+		onAcceptPeace    = function(proposalId)        invokeRemote("AcceptPeace", proposalId) end,
+		onRejectPeace    = function(proposalId)        invokeRemote("RejectPeace", proposalId) end,
+		onCancelProposal = function(proposalId)        invokeRemote("CancelPeaceProposal", proposalId) end,
+		fireDismiss      = function(slot)         invokeRemote("DismissLeader", slot) end,
+		fireAppoint      = function(slot, idx)    invokeRemote("AppointLeader", slot, idx) end,
+		fireEnact        = function(policyId)     invokeRemote("EnactPolicy", policyId) end,
+		fireRepeal       = function(policyId)     invokeRemote("RepealPolicy", policyId) end,
+		fireCancel       = function()             invokeRemote("CancelLaw") end,
+		fireSetDoctrine  = function(doctrineId)   invokeRemote("SetDoctrine", doctrineId) end,
 	})
-	tabs.Factions  = politicsWindow.tabImpls.Factions
-	tabs.Leaders   = politicsWindow.tabImpls.Leaders
-	tabs.Policies  = politicsWindow.tabImpls.Policies
-	tabs.Laws      = politicsWindow.tabImpls.Laws
-	tabs.Doctrines = politicsWindow.tabImpls.Doctrines
+	tabs.Factions  = diplomacyWindow.tabImpls.Factions
+	tabs.Leaders   = diplomacyWindow.tabImpls.Leaders
+	tabs.Policies  = diplomacyWindow.tabImpls.Policies
+	tabs.Laws      = diplomacyWindow.tabImpls.Laws
+	tabs.Doctrines = diplomacyWindow.tabImpls.Doctrines
 
-	-- Legacy callers that did countryPanel.setActive("Policies") etc. now redirect to PoliticsWindow.
-	if countryPanel and countryPanel.setActive == nil then
-		-- exposed via the module table (CountryPanel.setPoliticsRedirect)
-	end
+	-- Legacy callers that did countryPanel.setActive("Policies") etc. now land on the
+	-- consolidated window's government screen.
 	local CountryPanelMod = require(uiFolder:WaitForChild("CountryPanel"))
 	if CountryPanelMod.setPoliticsRedirect then
 		CountryPanelMod.setPoliticsRedirect(function(tabName)
-			politicsWindow.setActiveTab(tabName)
-			if not politicsWindow.isOpen() then politicsWindow.open() end
-			if bottomBar and bottomBar.setActiveWindow then
-				bottomBar.setActiveWindow("politics", politicsWindow.isOpen())
-			end
+			focusDiplomacyWindow(function()
+				diplomacyWindow.openPoliticsTab(tabName)
+			end)
 		end)
 	end
 
@@ -654,6 +726,12 @@ function UIController.start()
 		end,
 		onCancelBuilding = function(ticketId)
 			invokeRemote("CancelBuilding", ticketId)
+		end,
+		onViewCountry = function(tag)
+			if not tag or not diplomacyWindow then return end
+			focusDiplomacyWindow(function()
+				diplomacyWindow.openCountry(tag)
+			end)
 		end,
 	})
 	armyPanel = ArmyPanel.create(clusterLayer, {
@@ -772,6 +850,7 @@ function UIController.start()
 	countryHeader = CountryHeader.create(commandLayer, function()
 		if countryPanel and countryPanel.toggle then
 			countryPanel.toggle()
+			ensureOverviewFresh()
 			if countryHeader and countryHeader.setOpenState then
 				countryHeader.setOpenState(countryPanel.isOpen())
 			end
@@ -781,7 +860,6 @@ function UIController.start()
 	-- BottomBar panel-button click → toggle the matching MovableWindow
 	local function toggleWindow(id)
 		local windows = {
-			politics = politicsWindow,
 			economy = economyWindow,
 			research = researchWindow,
 			diplomacy = diplomacyWindow,
@@ -799,6 +877,7 @@ function UIController.start()
 			end
 		end
 		w.toggle()
+		if id == "economy" then ensureEconomyFresh() end
 		if bottomBar and bottomBar.setActiveWindow then
 			bottomBar.setActiveWindow(id, w.isOpen())
 		end
@@ -809,14 +888,6 @@ function UIController.start()
 	local modalLayer = UIRoot.layer("Modal", UIStyle.Z.Modal)
 	economyWindow = EconomyWindow.create({ getBundle = function() return bundle end })
 	researchWindow = ResearchWindow.create()
-	diplomacyWindow = DiplomacyWindow.create({
-		getMyTag         = function() return claimedTag end,
-		onDeclareWar     = function(targetTag)        invokeRemote("DeclareWar", targetTag) end,
-		onProposePeace   = function(targetTag, terms) invokeRemote("ProposePeace", targetTag, terms) end,
-		onAcceptPeace    = function(proposalId)        invokeRemote("AcceptPeace", proposalId) end,
-		onRejectPeace    = function(proposalId)        invokeRemote("RejectPeace", proposalId) end,
-		onCancelProposal = function(proposalId)        invokeRemote("CancelPeaceProposal", proposalId) end,
-	})
 	keybindsWindow = KeybindsWindow.create()
 	settingsMenu = SettingsMenu.create(modalLayer, {
 		onSetKeybinds = function() keybindsWindow.toggle() end,
@@ -965,6 +1036,7 @@ function UIController.start()
 				if not claimedTag or not countryPanel then return false end
 				if not countryPanel.isOpen() then countryPanel.openPanel() end
 				countryPanel.setActive(def.name)
+				ensureOverviewFresh()
 			end,
 		})
 	end
@@ -983,7 +1055,6 @@ function UIController.start()
 			if top and top.close then
 				top.close()
 				if bottomBar and bottomBar.setActiveWindow then
-					bottomBar.setActiveWindow("politics",  politicsWindow and politicsWindow.isOpen())
 					bottomBar.setActiveWindow("economy",   economyWindow and economyWindow.isOpen())
 					bottomBar.setActiveWindow("research",  researchWindow and researchWindow.isOpen())
 					bottomBar.setActiveWindow("diplomacy", diplomacyWindow and diplomacyWindow.isOpen())
@@ -1018,11 +1089,18 @@ function UIController.start()
 		end,
 	})
 	UIKeybindings.registerAction({
-		id = "togglePolitics", label = "Toggle Politics",
+		id = "togglePolitics", label = "Your Country (Government)",
 		defaultKey = Enum.KeyCode.G, contextId = "global",
 		fn = function()
-			if not claimedTag or not politicsWindow then return end
-			toggleWindow("politics")
+			if not claimedTag or not diplomacyWindow then return end
+			-- Already looking at your own profile -> close; otherwise jump to it.
+			if diplomacyWindow.isShowingOwn() then
+				toggleWindow("diplomacy")
+			else
+				focusDiplomacyWindow(function()
+					diplomacyWindow.openOwnProfile()
+				end)
+			end
 		end,
 	})
 	UIKeybindings.registerAction({
@@ -1059,7 +1137,6 @@ function UIController.start()
 			if top and top.close then
 				top.close()
 				if bottomBar and bottomBar.setActiveWindow then
-					bottomBar.setActiveWindow("politics",  politicsWindow and politicsWindow.isOpen())
 					bottomBar.setActiveWindow("economy",   economyWindow and economyWindow.isOpen())
 					bottomBar.setActiveWindow("research",  researchWindow and researchWindow.isOpen())
 					bottomBar.setActiveWindow("diplomacy", diplomacyWindow and diplomacyWindow.isOpen())
@@ -1074,6 +1151,7 @@ function UIController.start()
 			if claimedTag and countryPanel then
 				if not countryPanel.isOpen() then countryPanel.openPanel() end
 				countryPanel.setActive("Policies")
+				ensureOverviewFresh()
 			end
 		end,
 	})
