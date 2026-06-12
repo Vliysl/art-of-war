@@ -157,11 +157,6 @@ local function onProvinceMutated()
 	table.clear(cachedCountryConsumption)
 end
 
-local function onDateAdvanced(payload)
-	if not payload then return end
-	applyDays(payload.daysAdvanced or 1)
-end
-
 ManufactorySystem.applyDays = function(...) return applyDays(...) end
 ManufactorySystem.dailyProductionOf = function(...) return dailyProductionOf(...) end
 ManufactorySystem.dailyConsumptionOf = function(...) return dailyConsumptionOf(...) end

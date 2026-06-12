@@ -120,19 +120,6 @@ local mb2DownProvince = nil
 local mb2Moved = false
 local mb2Accum = 0
 local rightClickArmed = function() return true end
-local mapModeRef
-local function inCommandMode()
-	if mapModeRef == nil then
-		local ok, mod = pcall(function()
-			return require(game:GetService("ReplicatedStorage").ArtOfWar.Modules.MapModeController)
-		end)
-		mapModeRef = (ok and mod) or false
-	end
-	if mapModeRef and mapModeRef.current then
-		return mapModeRef.current() == "command"
-	end
-	return true
-end
 
 local function getProvinceAtMouse(skipUiCheck)
 	local cam = activeCamera()

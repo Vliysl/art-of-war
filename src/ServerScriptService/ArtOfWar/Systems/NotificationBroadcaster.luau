@@ -1,10 +1,7 @@
-local Players = game:GetService("Players")
-
 local NotificationBroadcaster = {}
 
 local ctx
 local remote
-local pending = {}
 
 local function displayName(tag)
 	if not tag then return "?" end

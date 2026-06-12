@@ -31,7 +31,6 @@ local function initFactions(country)
 	local bundle = ctx.Bundle
 	if not bundle or not bundle.factions then return end
 	country.factions = country.factions or {}
-	local raw = {}
 	for factionId, def in bundle.factions do
 		local target = targetClout(def, country)
 		country.factions[factionId] = {
@@ -40,7 +39,6 @@ local function initFactions(country)
 			tier = tierOf(target),
 			lastDelta = 0,
 		}
-		raw[factionId] = target
 	end
 	normalizeClouts(country.factions)
 	for _, record in country.factions do

@@ -38,17 +38,6 @@ local function provinceBelongsTo(province, tag)
 	return province and province.ownerTag == tag
 end
 
-local function fleetStrength(fleet)
-	local total = 0
-	for _, ship in ipairs(fleet.ships or {}) do
-		local spec = shipSpec(ship.typeId)
-		if spec then
-			total += spec.gunpower * (ship.hullFraction or 1)
-		end
-	end
-	return total
-end
-
 local function fleetHullPool(fleet)
 	local total = 0
 	for _, ship in ipairs(fleet.ships or {}) do
