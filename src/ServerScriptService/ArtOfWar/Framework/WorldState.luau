@@ -105,6 +105,7 @@ function WorldState.allUnits()
 end
 
 function WorldState.setFleet(id, record)
+	if record == nil then tombstone("fleets", id); return end
 	store.fleets[id] = record
 	mark("fleets", id)
 	bump()
@@ -161,6 +162,10 @@ function WorldState.allLeaders()
 end
 
 function WorldState.setArmy(id, record)
+	-- nil record == removal: tombstone so the delta carries it in `removed` (a plain
+	-- dirty mark would just emit a nil value that vanishes from the packet, leaving
+	-- the army stranded on every client -- this was the broken disband path).
+	if record == nil then tombstone("armies", id); return end
 	store.armies[id] = record
 	mark("armies", id)
 	bump()
@@ -175,6 +180,7 @@ function WorldState.allArmies()
 end
 
 function WorldState.setBattle(id, record)
+	if record == nil then tombstone("battles", id); return end
 	store.battles[id] = record
 	mark("battles", id)
 	bump()

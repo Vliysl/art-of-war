@@ -98,6 +98,7 @@ local combatAnimGen = {}             -- [armyId] = generation counter — increm
 local lastKnownState = {}
 local dirtyArmies = {}
 local hopState = {}                 -- [armyId] = { from = Vector3, to = Vector3, t0 = os.clock() } (arrival hop)
+local lastFacing = {}               -- [armyId] = Vector3 (unit, horizontal) heading the model faces
 local provinceCenterCache = {}
 local stackInfo = {}                -- [provinceId..":"..ownerTag] = { armyIds (sorted), strongestId }
 local pulseTweens = {}
@@ -276,6 +277,7 @@ local function destroyModelFor(armyId)
 	armyParts[armyId] = nil
 	lastKnownState[armyId] = nil
 	hopState[armyId] = nil
+	lastFacing[armyId] = nil
 	animTracks[armyId] = nil
 	animState[armyId] = nil
 	if pulseTweens[armyId] then pulseTweens[armyId]:Cancel(); pulseTweens[armyId] = nil end
@@ -776,6 +778,35 @@ local function computePosition(army, state)
 	return Vector3.new(x, y, z)
 end
 
+-- Heading: a moving/retreating unit faces its destination; an attacking unit faces
+-- the contested tile it's pushing into. Horizontal only (no pitch). Returns a unit
+-- Vector3 or nil. facingCFrame applies it, falling back to the army's last heading
+-- so an idle unit keeps facing where it last marched.
+local function facingDirFor(army, state)
+	if (state == "moving" or state == "retreating") and army.movement then
+		local from = provinceCenter(army.movement.fromProvinceId)
+		local to = provinceCenter(army.movement.toProvinceId)
+		if from and to then
+			local d = Vector3.new(to.x - from.x, 0, to.z - from.z)
+			if d.Magnitude > 0.01 then return d.Unit end
+		end
+	elseif state == "attacking" and army.originProvinceId then
+		local from = provinceCenter(army.originProvinceId)
+		local here = provinceCenter(army.provinceId)
+		if from and here then
+			local d = Vector3.new(here.x - from.x, 0, here.z - from.z)
+			if d.Magnitude > 0.01 then return d.Unit end
+		end
+	end
+	return nil
+end
+
+local function facingCFrame(armyId, pos, dir)
+	local f = dir or lastFacing[armyId]
+	if f then return CFrame.lookAt(pos, pos + f) end
+	return CFrame.new(pos)
+end
+
 local function reconcileOne(armyId)
 	local army = ClientStateCache.allArmies()[armyId]
 	if not army then
@@ -923,19 +954,24 @@ local function reconcileOne(armyId)
 	-- with no movement record, so we key off the province change itself (cosmetic
 	-- only -- no server mechanic is involved). Otherwise pivot instantly (unless a
 	-- hop is already in flight, which the render loop is driving).
+	-- Facing: a moving unit turns to face its destination (so it rotates the moment
+	-- it's ordered, while waiting at origin), and keeps that heading once idle.
+	local faceDir = facingDirFor(army, state)
+	if faceDir then lastFacing[armyId] = faceDir end
+
 	local moved = (not newlyCreated) and last.provinceId ~= nil and last.provinceId ~= army.provinceId
 	if moved then
 		local fromPos = model:GetPivot().Position
 		if (fromPos - pos).Magnitude > 1 then
 			hopState[armyId] = { from = fromPos, to = pos, t0 = os.clock() }
 		else
-			model:PivotTo(CFrame.new(pos))
+			model:PivotTo(facingCFrame(armyId, pos, faceDir))
 		end
 	elseif hopState[armyId] then
 		-- a hop is animating; don't fight it with an instant pivot
 		hopState[armyId].to = pos
 	else
-		model:PivotTo(CFrame.new(pos))
+		model:PivotTo(facingCFrame(armyId, pos, faceDir))
 	end
 
 	local hl = model:FindFirstChild("Selection")
@@ -1184,9 +1220,17 @@ function ArmyView.init()
 				local a = math.clamp((now - hop.t0) / HOP_TIME, 0, 1)
 				local p = hop.from:Lerp(hop.to, a)
 				p = Vector3.new(p.X, p.Y + math.sin(a * math.pi) * HOP_ARC, p.Z)
-				model:PivotTo(CFrame.new(p))
+				-- Face the direction of travel during the hop, and keep that heading.
+				local flat = Vector3.new(hop.to.X - hop.from.X, 0, hop.to.Z - hop.from.Z)
+				if flat.Magnitude > 0.01 then
+					local dir = flat.Unit
+					lastFacing[armyId] = dir
+					model:PivotTo(CFrame.lookAt(p, p + dir))
+				else
+					model:PivotTo(facingCFrame(armyId, p, nil))
+				end
 				if a >= 1 then
-					model:PivotTo(CFrame.new(hop.to))
+					model:PivotTo(facingCFrame(armyId, hop.to, nil))
 					hopState[armyId] = nil
 				end
 			end
@@ -1220,6 +1264,7 @@ function ArmyView.destroy()
 	lastKnownState = {}
 	dirtyArmies = {}
 	hopState = {}
+	lastFacing = {}
 	provinceCenterCache = {}
 	stackInfo = {}
 	pulseTweens = {}
