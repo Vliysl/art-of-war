@@ -63,6 +63,18 @@ end
 local BASE_LIFT = 1
 local MOVING_LIFT = 4
 local RETREAT_LIFT = 6
+-- HOI4-style movement: the token WAITS at its origin while the move arrow fills
+-- (server-timed), then plays this quick cosmetic "hop" into the new tile on arrival.
+local HOP_TIME = 0.35
+local HOP_ARC = 7
+
+-- On-map vitals strip normalization + tier colouring (matches ArmyPanel's bars).
+local ARMY_MORALE_MAX = 100
+local function tierColor(pct)
+	if pct >= 0.6 then return Color3.fromRGB(110, 180, 80) end   -- green
+	if pct >= 0.3 then return Color3.fromRGB(214, 178, 70) end   -- amber
+	return Color3.fromRGB(200, 70, 56)                            -- red
+end
 
 -- Reduced sizes — disc fits comfortably inside an ~86-stud province.
 -- The Base cylinder is laid flat: Cylinder shape's axis is along its X-axis.
@@ -85,7 +97,7 @@ local combatAnimConns = {}           -- [armyId] = { shoot = conn, reload = conn
 local combatAnimGen = {}             -- [armyId] = generation counter — increments to invalidate pending task.delay callbacks
 local lastKnownState = {}
 local dirtyArmies = {}
-local movingSet = {}
+local hopState = {}                 -- [armyId] = { from = Vector3, to = Vector3, t0 = os.clock() } (arrival hop)
 local provinceCenterCache = {}
 local stackInfo = {}                -- [provinceId..":"..ownerTag] = { armyIds (sorted), strongestId }
 local pulseTweens = {}
@@ -100,7 +112,6 @@ local stateSub, battleSub, countriesSub, snapshotSub
 local cameraSub
 local cameraMode = "field"
 local onArmySelectedListeners = {}
-local movementFirstSeen = {}
 local recentRetryArmies = {}
 local hoverProvinceId = nil
 local bundleRef = nil               -- set by ArmyView.setBundle for unit-type names
@@ -264,8 +275,7 @@ local function destroyModelFor(armyId)
 	if model and model.Parent then model:Destroy() end
 	armyParts[armyId] = nil
 	lastKnownState[armyId] = nil
-	movingSet[armyId] = nil
-	movementFirstSeen[armyId] = nil
+	hopState[armyId] = nil
 	animTracks[armyId] = nil
 	animState[armyId] = nil
 	if pulseTweens[armyId] then pulseTweens[armyId]:Cancel(); pulseTweens[armyId] = nil end
@@ -279,7 +289,7 @@ local function buildBannerGui(adornee, studsOffset, factionColor)
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "Label"
 	bb.Adornee = adornee
-	bb.Size = UDim2.fromOffset(220, 28)
+	bb.Size = UDim2.fromOffset(220, 42)
 	bb.StudsOffset = studsOffset
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
@@ -331,7 +341,7 @@ local function buildBannerGui(adornee, studsOffset, factionColor)
 	-- Single-line caption: "[TAG] UnitType (#Count)" in serif.
 	local caption = Instance.new("TextLabel")
 	caption.Name = "UnitName"  -- name kept so reconcileOne :FindFirstChild("UnitName") still works
-	caption.Size = UDim2.new(1, -28, 1, 0)  -- leave room for the right-side state pip
+	caption.Size = UDim2.new(1, -28, 0, 22)  -- top row; bottom reserved for the vitals strip
 	caption.Position = UDim2.fromOffset(8, 0)
 	caption.BackgroundTransparency = 1
 	caption.Text = ""
@@ -353,6 +363,44 @@ local function buildBannerGui(adornee, studsOffset, factionColor)
 	countLine.Text = ""
 	countLine.Visible = false
 	countLine.Parent = bg
+
+	-- Vitals strip: stacked mini-bars (organization / morale / entrenchment),
+	-- updated by reconcileOne. Found by name, like UnitName/StateIcon.
+	local function miniBar(name, yOff, baseColor)
+		local track = Instance.new("Frame")
+		track.Name = name .. "Track"
+		track.Size = UDim2.new(1, -34, 0, 3)
+		track.Position = UDim2.fromOffset(8, yOff)
+		track.BackgroundColor3 = Color3.fromRGB(40, 30, 18)
+		track.BackgroundTransparency = 0.25
+		track.BorderSizePixel = 0
+		track.Parent = bg
+		local fill = Instance.new("Frame")
+		fill.Name = name
+		fill.Size = UDim2.fromScale(0, 1)
+		fill.BackgroundColor3 = baseColor
+		fill.BorderSizePixel = 0
+		fill.Parent = track
+		return fill
+	end
+	miniBar("OrgFill", 24, Color3.fromRGB(120, 180, 90))
+	miniBar("MoraleFill", 29, Color3.fromRGB(120, 180, 90))
+	miniBar("EntFill", 34, Color3.fromRGB(218, 168, 84))
+
+	-- Supply pip (right of the bars): hidden when adequate, amber crowded, red starving.
+	local supplyPip = Instance.new("TextLabel")
+	supplyPip.Name = "SupplyPip"
+	supplyPip.AnchorPoint = Vector2.new(1, 1)
+	supplyPip.Position = UDim2.new(1, -6, 1, -2)
+	supplyPip.Size = UDim2.fromOffset(18, 14)
+	supplyPip.BackgroundTransparency = 1
+	supplyPip.Text = ""
+	supplyPip.TextColor3 = Color3.fromRGB(220, 176, 80)
+	supplyPip.Font = Enum.Font.GothamBold
+	supplyPip.TextSize = 12
+	supplyPip.TextStrokeTransparency = 0
+	supplyPip.TextStrokeColor3 = Color3.fromRGB(20, 12, 8)
+	supplyPip.Parent = bg
 
 	return bb, bg, stateIcon, caption
 end
@@ -704,17 +752,9 @@ local function computePosition(army, state)
 	local lift = 0
 
 	if state == "moving" or state == "retreating" then
-		local from = army.movement and provinceCenter(army.movement.fromProvinceId)
-		local to = army.movement and provinceCenter(army.movement.toProvinceId)
-		if from and to then
-			local firstSeen = movementFirstSeen[army.id] or tick()
-			movementFirstSeen[army.id] = firstSeen
-			local dur = math.max(0.5, (army.movement.completesAt or 0) - (army.movement.startedAt or 0))
-			local t = math.clamp((tick() - firstSeen) / dur, 0, 1)
-			x = from.x + (to.x - from.x) * t
-			z = from.z + (to.z - from.z) * t
-			topY = from.topY + (to.topY - from.topY) * t
-		end
+		-- The token holds at its ORIGIN province while the move arrow fills (the
+		-- army's provinceId stays the origin until the server relocates it on
+		-- completion, which then triggers the arrival hop). No continuous slide.
 		lift = state == "retreating" and RETREAT_LIFT or MOVING_LIFT
 	elseif state == "attacking" then
 		local origin = army.originProvinceId and provinceCenter(army.originProvinceId)
@@ -842,15 +882,61 @@ local function reconcileOne(armyId)
 		setAnimState(armyId, state)
 	end
 
-	if state == "moving" or state == "retreating" then
-		movingSet[armyId] = true
-		movementFirstSeen[armyId] = movementFirstSeen[armyId] or tick()
-	else
-		movingSet[armyId] = nil
-		movementFirstSeen[armyId] = nil
+	-- On-map vitals strip: org / morale / entrenchment mini-bars + supply pip.
+	-- Cheap (a few Size/Color writes); refreshed every reconcile so it tracks deltas.
+	do
+		local vlabel = (model:FindFirstChild("Pole") and model.Pole:FindFirstChild("Label"))
+			or (model:FindFirstChild("Head") and model.Head:FindFirstChild("Label"))
+		local vbg = vlabel and vlabel:FindFirstChild("Bg")
+		if vbg then
+			local orgTrack = vbg:FindFirstChild("OrgFillTrack")
+			local moraleTrack = vbg:FindFirstChild("MoraleFillTrack")
+			local entTrack = vbg:FindFirstChild("EntFillTrack")
+			local orgFill = orgTrack and orgTrack:FindFirstChild("OrgFill")
+			local moraleFill = moraleTrack and moraleTrack:FindFirstChild("MoraleFill")
+			local entFill = entTrack and entTrack:FindFirstChild("EntFill")
+			local supplyPip = vbg:FindFirstChild("SupplyPip")
+			local baseOrg = army.baseOrganization or 10
+			local orgPct = baseOrg > 0 and math.clamp((army.organization or baseOrg) / baseOrg, 0, 1) or 0
+			local moralePct = math.clamp((army.morale or 0) / ARMY_MORALE_MAX, 0, 1)
+			local entMax = army.entrenchmentMax or 5
+			local entPct = entMax > 0 and math.clamp((army.entrenchment or 0) / entMax, 0, 1) or 0
+			if orgFill then orgFill.Size = UDim2.fromScale(orgPct, 1); orgFill.BackgroundColor3 = tierColor(orgPct) end
+			if moraleFill then moraleFill.Size = UDim2.fromScale(moralePct, 1); moraleFill.BackgroundColor3 = tierColor(moralePct) end
+			if entFill then entFill.Size = UDim2.fromScale(entPct, 1) end
+			if supplyPip then
+				local s = army.supplyStatus
+				if s == "starving" then
+					supplyPip.Text = "\u{26A0}"; supplyPip.TextColor3 = Color3.fromRGB(230, 70, 60)
+				elseif s == "crowded" then
+					supplyPip.Text = "\u{26A0}"; supplyPip.TextColor3 = Color3.fromRGB(230, 180, 80)
+				else
+					supplyPip.Text = ""
+				end
+			end
+		end
 	end
 
-	model:PivotTo(CFrame.new(pos))
+	-- Arrival hop: the army's province changed (move completed, retreat, or a
+	-- post-battle advance). Animate a quick cosmetic hop from where the token is
+	-- into the new tile instead of snapping. Retreat is an instant server relocate
+	-- with no movement record, so we key off the province change itself (cosmetic
+	-- only -- no server mechanic is involved). Otherwise pivot instantly (unless a
+	-- hop is already in flight, which the render loop is driving).
+	local moved = (not newlyCreated) and last.provinceId ~= nil and last.provinceId ~= army.provinceId
+	if moved then
+		local fromPos = model:GetPivot().Position
+		if (fromPos - pos).Magnitude > 1 then
+			hopState[armyId] = { from = fromPos, to = pos, t0 = os.clock() }
+		else
+			model:PivotTo(CFrame.new(pos))
+		end
+	elseif hopState[armyId] then
+		-- a hop is animating; don't fight it with an instant pivot
+		hopState[armyId].to = pos
+	else
+		model:PivotTo(CFrame.new(pos))
+	end
 
 	local hl = model:FindFirstChild("Selection")
 	if hl then hl.Enabled = (selectedArmyId == armyId) or (selectedArmyIds[armyId] == true) end
@@ -1088,15 +1174,21 @@ function ArmyView.init()
 	end)
 
 	renderConn = RunService.RenderStepped:Connect(function()
-		if not next(movingSet) then return end
-		for armyId in pairs(movingSet) do
-			local army = ClientStateCache.allArmies()[armyId]
+		if not next(hopState) then return end
+		local now = os.clock()
+		for armyId, hop in pairs(hopState) do
 			local model = armyParts[armyId]
-			if army and model and army.movement then
-				local pos = computePosition(army, deriveState(army))
-				if pos then model:PivotTo(CFrame.new(pos)) end
+			if not model or not model.Parent then
+				hopState[armyId] = nil
 			else
-				movingSet[armyId] = nil
+				local a = math.clamp((now - hop.t0) / HOP_TIME, 0, 1)
+				local p = hop.from:Lerp(hop.to, a)
+				p = Vector3.new(p.X, p.Y + math.sin(a * math.pi) * HOP_ARC, p.Z)
+				model:PivotTo(CFrame.new(p))
+				if a >= 1 then
+					model:PivotTo(CFrame.new(hop.to))
+					hopState[armyId] = nil
+				end
 			end
 		end
 	end)
@@ -1114,16 +1206,27 @@ function ArmyView.destroy()
 	if countriesSub then countriesSub() end
 	if snapshotSub then snapshotSub() end
 	if cameraSub then cameraSub() end
-	for armyId, model in pairs(armyParts) do
+	for _, model in pairs(armyParts) do
 		if model.Parent then model:Destroy() end
+	end
+	-- Disconnect the per-army combat-animation signal handles before dropping the tables.
+	for _, conns in pairs(combatAnimConns) do
+		if type(conns) == "table" then
+			if conns.shoot then conns.shoot:Disconnect() end
+			if conns.reload then conns.reload:Disconnect() end
+		end
 	end
 	armyParts = {}
 	lastKnownState = {}
 	dirtyArmies = {}
-	movingSet = {}
+	hopState = {}
 	provinceCenterCache = {}
 	stackInfo = {}
 	pulseTweens = {}
+	combatAnimConns = {}
+	combatAnimGen = {}
+	animTracks = {}
+	animState = {}
 	selectedArmyId = nil
 	selectedArmyIds = {}
 end

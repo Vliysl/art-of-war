@@ -135,12 +135,16 @@ local function muted(c)
 end
 
 local function occupiedTint(c)
-	local avg = (c.R + c.G + c.B) / 3
-	local mix = 0.4
-	local r = c.R * (1 - mix) + avg * mix
-	local g = c.G * (1 - mix) + avg * mix
-	local b = c.B * (1 - mix) + avg * mix
-	return Color3.new(r * 0.85, g * 0.85, b * 0.85)
+	-- Occupied = a LIGHTER shade of the OCCUPIER's colour (lerp toward white), so a
+	-- held province reads as "controlled by the occupier" and is clearly distinct
+	-- from a normally-owned province (muted, near-original). Previously this darkened
+	-- the colour, which was the bug.
+	local mix = 0.45
+	return Color3.new(
+		c.R + (1 - c.R) * mix,
+		c.G + (1 - c.G) * mix,
+		c.B + (1 - c.B) * mix
+	)
 end
 
 local function isOwned(owner)

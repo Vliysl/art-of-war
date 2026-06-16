@@ -502,6 +502,64 @@ local function mergeArmies(primaryId, otherIds)
 	return true
 end
 
+-- Split: detach a sub-composition into a NEW army at the same province (inverse of
+-- mergeArmies). The new army inherits the source's morale; its organization is
+-- inherited too but capped at its own baseOrganization (which its composition sets),
+-- because organization may never exceed baseOrganization -- exactly how mergeArmies
+-- treats org. The source keeps the remainder. Invariants mirror merge: source not in
+-- battle/motion, each requested count <= available, and the source keeps >=1 regiment.
+-- Returns true, newArmyId on success; false, reason on failure.
+local function splitArmy(sourceId, splitComposition)
+	local source = ctx.WorldState.getArmy(sourceId)
+	if not source then return false, "unknown_army" end
+	if source.battleId then return false, "in_battle" end
+	if source.movement then return false, "in_motion" end
+	if type(splitComposition) ~= "table" then return false, "bad_composition" end
+	source.composition = source.composition or {}
+
+	-- Validate + clamp the requested split against what the source actually has.
+	local take = {}
+	local takeTotal = 0
+	for unitTypeId, count in pairs(splitComposition) do
+		if type(unitTypeId) == "string" and type(count) == "number" then
+			local avail = source.composition[unitTypeId] or 0
+			local n = math.min(math.floor(count), avail)
+			if n > 0 then
+				take[unitTypeId] = n
+				takeTotal += n
+			end
+		end
+	end
+	if takeTotal <= 0 then return false, "empty_split" end
+	if takeTotal >= totalRegimentCount(source.composition) then return false, "would_empty_source" end
+
+	-- New detached army at the same province: inherit morale; inherit org but clamp to
+	-- the new army's own baseOrganization (org <= baseOrg invariant).
+	local newArmy = createArmy(source.ownerTag, source.provinceId, take, { domain = source.domain })
+	if not newArmy then return false, "create_failed" end
+	newArmy.morale = source.morale or newArmy.morale
+	newArmy.organization = math.min(source.organization or newArmy.organization or 0, newArmy.baseOrganization or newArmy.organization or 0)
+	ctx.WorldState.setArmy(newArmy.id, newArmy)
+
+	-- Subtract the detached regiments from the source.
+	for unitTypeId, n in pairs(take) do
+		local remaining = (source.composition[unitTypeId] or 0) - n
+		if remaining > 0 then
+			source.composition[unitTypeId] = remaining
+		else
+			source.composition[unitTypeId] = nil
+		end
+	end
+	refreshBaseOrganization(source)
+	source.organization = math.min(source.organization or source.baseOrganization or 0, source.baseOrganization or 0)
+	ctx.WorldState.setArmy(sourceId, source)
+
+	ctx.EventBus.publish(ctx.Channels.ArmyStateChanged, {
+		armyId = sourceId, tag = source.ownerTag, state = source.state or "idle", split = true,
+	})
+	return true, newArmy.id
+end
+
 local function reassignOfficer(armyId, traitIds)
 	local army = ctx.WorldState.getArmy(armyId)
 	if not army then return false, "no_army" end
@@ -619,6 +677,7 @@ function ArmySystem.register(context)
 		setState = setState,
 		setOriginProvinceId = setOriginProvinceId,
 		mergeArmies = mergeArmies,
+		splitArmy = splitArmy,
 		reassignOfficer = reassignOfficer,
 		regenTick = regenTick,
 		effectiveMoraleMax = effectiveMoraleMax,

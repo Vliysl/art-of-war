@@ -382,6 +382,8 @@ export type ArmyRecord = {
 	entrenchment: number?,
 	state: ArmyState?,
 	originProvinceId: ProvinceId?,
+	supplyStatus: string?,   -- "adequate" | "crowded" | "starving" (display only; set by AttritionSystem)
+	movementPath: { steps: { ProvinceId }, finalProvinceId: ProvinceId }?,  -- remaining legs of a multi-tile order
 }
 
 export type RecruitTicket = {

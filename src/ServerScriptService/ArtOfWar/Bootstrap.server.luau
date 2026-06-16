@@ -251,6 +251,10 @@ if context.SeaAdjacencyGraph and context.SeaAdjacencyGraph.build then
 	context.SeaAdjacencyGraph.build()
 end
 
+if context.SeaZoneGraph and context.SeaZoneGraph.build then
+	context.SeaZoneGraph.build()
+end
+
 local remotesFolder = ReplicatedStorage.ArtOfWar:FindFirstChild("Remotes")
 if not remotesFolder then
 	remotesFolder = Instance.new("Folder")
@@ -397,6 +401,20 @@ InputValidator.register("MergeArmies", {
 	},
 	rate = { count = 4, window = 15 },
 })
+InputValidator.register("SplitArmy", {
+	schema = {
+		{ name = "armyId", type = "string" },
+		{ name = "composition", type = "shallowTable" },
+	},
+	rate = { count = 6, window = 15 },
+})
+InputValidator.register("Reinforce", {
+	schema = {
+		{ name = "armyId", type = "string" },
+		{ name = "provinceId", type = "integer" },
+	},
+	rate = { count = 6, window = 10 },
+})
 InputValidator.register("SetDoctrine", {
 	schema = { { name = "doctrineId", type = "policyId" } },
 	rate = { count = 3, window = 15 },
@@ -457,6 +475,10 @@ InputValidator.register("BuildBuilding", {
 InputValidator.register("CancelBuilding", {
 	schema = { { name = "ticketId", type = "string" } },
 	rate = { count = 6, window = 15 },
+})
+InputValidator.register("CancelMove", {
+	schema = { { name = "armyId", type = "string" } },
+	rate = { count = 20, window = 10 },
 })
 
 InputValidator.register("DeclareWar", {
@@ -733,6 +755,17 @@ bindEvent("MoveArmyPath", function(player, armyId, finalProvinceId)
 	if not ok and reason then notifyMoveRejected(tag, reason) end
 end)
 
+bindEvent("CancelMove", function(player, armyId)
+	local auth = authority()
+	local system = loadedSystems.MovementSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	local army = context.WorldState.getArmy(armyId)
+	if not army or army.ownerTag ~= tag then return end
+	system.cancelMovement(armyId, "player_cancelled")
+end)
+
 bindEvent("AttackProvince", function(player, armyId, targetProvinceId)
 	local auth = authority()
 	local system = loadedSystems.CombatSystem
@@ -788,6 +821,38 @@ bindEvent("MergeArmies", function(player, primaryId, otherIds)
 	end
 	if #cleaned == 0 then return end
 	armySys.mergeArmies(primaryId, cleaned)
+end)
+
+bindEvent("SplitArmy", function(player, armyId, composition)
+	local auth = authority()
+	local armySys = loadedSystems.ArmySystem
+	if not auth or not armySys or not armySys.splitArmy then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	local army = context.WorldState.getArmy(armyId)
+	if not army or army.ownerTag ~= tag then return end
+	-- Defensive: only string keys -> positive integer counts.
+	local cleaned = {}
+	if type(composition) == "table" then
+		for unitTypeId, count in pairs(composition) do
+			if type(unitTypeId) == "string" and type(count) == "number" and count >= 1 then
+				cleaned[unitTypeId] = math.floor(count)
+			end
+		end
+	end
+	if next(cleaned) == nil then return end
+	armySys.splitArmy(armyId, cleaned)
+end)
+
+bindEvent("Reinforce", function(player, armyId, provinceId)
+	local auth = authority()
+	local bm = loadedSystems.BattleManager
+	if not auth or not bm or not bm.reinforce then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	local army = context.WorldState.getArmy(armyId)
+	if not army or army.ownerTag ~= tag then return end
+	bm.reinforce(armyId, provinceId)
 end)
 
 bindEvent("SetDoctrine", function(player, doctrineId)

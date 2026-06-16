@@ -1,3 +1,5 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
 local PathPreview = {}
 
 local ADJACENCY_THRESHOLD = 300
@@ -32,39 +34,73 @@ local function bucketKey(x, z)
 	return tostring(x) .. ":" .. tostring(z)
 end
 
-local function buildAdjacency()
-	if builtAdjacency then return end
-	if not ensurePreviewFolder() or not provincesFolder then return end
-
+-- Render-only position scan (always runs; the path line needs province centroids).
+-- Returns the list of province ids found.
+local function scanPositions()
 	positions = {}
-	neighbors = {}
 	local ids = {}
-	local buckets = {}
-	local cellSize = ADJACENCY_THRESHOLD
-
+	if not provincesFolder then return ids end
 	for _, part in provincesFolder:GetChildren() do
 		if part:IsA("BasePart") then
 			local pid = part:GetAttribute("province_id")
 			if pid then
-				local pos = Vector3.new(part.Position.X, part.Position.Y + part.Size.Y * 0.5, part.Position.Z)
-				positions[pid] = pos
-				neighbors[pid] = {}
+				positions[pid] = Vector3.new(part.Position.X, part.Position.Y + part.Size.Y * 0.5, part.Position.Z)
 				ids[#ids + 1] = pid
-				local gx = math.floor(pos.X / cellSize)
-				local gz = math.floor(pos.Z / cellSize)
-				local key = bucketKey(gx, gz)
-				local bucket = buckets[key]
-				if not bucket then
-					bucket = {}
-					buckets[key] = bucket
-				end
-				bucket[#bucket + 1] = pid
 			end
 		end
 	end
+	return ids
+end
 
-	if #ids == 0 then return end
+-- Consume the same baked true-adjacency table the server uses (land neighbors),
+-- so the preview line matches the server's movement gate exactly. Returns true
+-- if the baked table was present, non-empty, and matched the local provinces.
+local function loadBakedNeighbors()
+	local dataFolder = ReplicatedStorage:FindFirstChild("ArtOfWar")
+	dataFolder = dataFolder and dataFolder:FindFirstChild("Data")
+	local moduleScript = dataFolder and dataFolder:FindFirstChild("ProvinceAdjacency")
+	if not moduleScript then return false end
+	local ok, baked = pcall(require, moduleScript)
+	if not ok or type(baked) ~= "table" then return false end
+	local bakedCount = 0
+	for _ in baked do bakedCount += 1 end
+	if bakedCount == 0 then return false end
 
+	local nbrs = {}
+	local total = 0
+	for pid in positions do nbrs[pid] = {}; total += 1 end
+	local matched = 0
+	for id, entry in baked do
+		if positions[id] ~= nil and type(entry) == "table" then
+			matched += 1
+			local list = nbrs[id]
+			for _, n in ipairs(entry.land or {}) do
+				if positions[n] ~= nil then list[#list + 1] = n end
+			end
+		end
+	end
+	-- Parity with AdjacencyGraph: a too-stale table falls back to legacy.
+	if total > 0 and (matched / total) < 0.5 then return false end
+	neighbors = nbrs
+	return true
+end
+
+-- Legacy 300-stud centroid rebuild. Fallback only (mirrors AdjacencyGraph's
+-- legacy path so client and server agree when baked data is absent/stale).
+local function computeLegacyNeighbors(ids)
+	neighbors = {}
+	local buckets = {}
+	local cellSize = ADJACENCY_THRESHOLD
+	for _, pid in ipairs(ids) do
+		neighbors[pid] = {}
+		local pos = positions[pid]
+		local gx = math.floor(pos.X / cellSize)
+		local gz = math.floor(pos.Z / cellSize)
+		local key = bucketKey(gx, gz)
+		local bucket = buckets[key]
+		if not bucket then bucket = {}; buckets[key] = bucket end
+		bucket[#bucket + 1] = pid
+	end
 	local thresholdSq = ADJACENCY_THRESHOLD * ADJACENCY_THRESHOLD
 	for _, idA in ipairs(ids) do
 		local pa = positions[idA]
@@ -90,7 +126,16 @@ local function buildAdjacency()
 			end
 		end
 	end
+end
 
+local function buildAdjacency()
+	if builtAdjacency then return end
+	if not ensurePreviewFolder() or not provincesFolder then return end
+	local ids = scanPositions()
+	if #ids == 0 then return end
+	if not loadBakedNeighbors() then
+		computeLegacyNeighbors(ids)
+	end
 	builtAdjacency = true
 end
 

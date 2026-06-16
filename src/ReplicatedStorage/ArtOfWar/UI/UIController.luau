@@ -35,6 +35,47 @@ local OverviewTab = require(tabsFolder:WaitForChild("OverviewTab"))
 local ClientStateCache = require(modulesFolder:WaitForChild("ClientStateCache"))
 local ArmyView = require(aow.Modules:WaitForChild("ArmyView"))
 local PathPreview = require(aow.Modules:WaitForChild("PathPreview"))
+local MovementArrow = require(aow.Modules:WaitForChild("MovementArrow"))
+-- Baked land-adjacency (for the contextual Reinforce action). Optional: if absent,
+-- reinforce simply never offers (pcall so a missing/old bake never errors the client).
+local ProvinceAdjacencyData = nil
+do
+	local dataFolder = aow:FindFirstChild("Data")
+	local mod = dataFolder and dataFolder:FindFirstChild("ProvinceAdjacency")
+	if mod then
+		local ok, data = pcall(require, mod)
+		if ok and type(data) == "table" then ProvinceAdjacencyData = data end
+	end
+end
+
+-- Returns the province id of an active battle this army may reinforce (it borders
+-- the battle province, or is in it, and its owner is a belligerent), else nil.
+local function reinforceableBattleProvince(armyId)
+	local army = ClientStateCache.getArmy(armyId)
+	if not army or army.battleId or army.movement then return nil end
+	local entry = ProvinceAdjacencyData and ProvinceAdjacencyData[army.provinceId]
+	local neighbors = entry and entry.land
+	local function sideHas(ids)
+		for _, id in ipairs(ids or {}) do
+			local a = ClientStateCache.getArmy(id)
+			if a and a.ownerTag == army.ownerTag then return true end
+		end
+		return false
+	end
+	for _, battle in pairs(ClientStateCache.allBattles()) do
+		local bp = battle.provinceId
+		local adjacent = bp == army.provinceId
+		if not adjacent and neighbors then
+			for _, n in ipairs(neighbors) do
+				if n == bp then adjacent = true; break end
+			end
+		end
+		if adjacent and (sideHas(battle.attackerArmyIds) or sideHas(battle.defenderArmyIds)) then
+			return bp
+		end
+	end
+	return nil
+end
 local MapModeController = require(modulesFolder:WaitForChild("MapModeController"))
 local ProvinceInteraction = require(modulesFolder:WaitForChild("ProvinceInteraction"))
 local WaterBodies = require(modulesFolder:WaitForChild("WaterBodies"))
@@ -638,9 +679,12 @@ function UIController.start()
 	remotes.RecruitUnit = aow.Remotes:WaitForChild("RecruitUnit", 10)
 	remotes.MoveArmyPath = aow.Remotes:WaitForChild("MoveArmyPath", 10)
 	remotes.MoveArmy = aow.Remotes:WaitForChild("MoveArmy", 10)
+	remotes.CancelMove = aow.Remotes:WaitForChild("CancelMove", 10)
 	remotes.AttackProvince = aow.Remotes:WaitForChild("AttackProvince", 10)
 	remotes.DisbandArmy = aow.Remotes:WaitForChild("DisbandArmy", 10)
 	remotes.MergeArmies = aow.Remotes:WaitForChild("MergeArmies", 10)
+	remotes.SplitArmy = aow.Remotes:WaitForChild("SplitArmy", 10)
+	remotes.Reinforce = aow.Remotes:WaitForChild("Reinforce", 10)
 	remotes.DeclareWar = aow.Remotes:WaitForChild("DeclareWar", 10)
 	remotes.ProposePeace = aow.Remotes:WaitForChild("ProposePeace", 10)
 	remotes.AcceptPeace = aow.Remotes:WaitForChild("AcceptPeace", 10)
@@ -750,6 +794,15 @@ function UIController.start()
 				invokeRemote("MergeArmies", primaryId, otherIds)
 			end
 		end,
+		onSplit = function(armyId, composition)
+			if armyId and type(composition) == "table" and next(composition) then
+				invokeRemote("SplitArmy", armyId, composition)
+			end
+		end,
+		canReinforce = reinforceableBattleProvince,
+		onReinforce = function(armyId, provinceId)
+			if armyId and provinceId then invokeRemote("Reinforce", armyId, provinceId) end
+		end,
 		onOfficerReassign = function(armyId, traitIds)
 			if armyId and type(traitIds) == "table" and #traitIds > 0 then
 				invokeRemote("ReassignOfficer", armyId, traitIds)
@@ -831,6 +884,8 @@ function UIController.start()
 	end
 	-- Hover over a province while armies selected: draw path preview line
 	if PathPreview and PathPreview.init then PathPreview.init() end
+	-- HOI4-style filling move arrows for the local player's in-progress moves
+	if MovementArrow and MovementArrow.init then MovementArrow.init() end
 	if ProvinceInteraction and ProvinceInteraction.addHoverListener then
 		local lastHoverPid = nil
 		ProvinceInteraction.addHoverListener(function(provincePart)
@@ -1146,6 +1201,30 @@ function UIController.start()
 					bottomBar.setActiveWindow("diplomacy", diplomacyWindow and diplomacyWindow.isOpen())
 				end
 			end
+		end,
+	})
+	UIKeybindings.registerAction({
+		id = "cancelOrders",
+		label = "Cancel Move Orders",
+		defaultKey = Enum.KeyCode.C,
+		contextId = "global",
+		fn = function()
+			if not ArmyView or not ArmyView.getSelectedArmyIds then return false end
+			local ids = ArmyView.getSelectedArmyIds()
+			if not ids or #ids == 0 then return false end
+			local any = false
+			for _, armyId in ipairs(ids) do
+				local army = ClientStateCache.getArmy(armyId)
+				-- movementPath only ever exists alongside an active movement (it holds
+				-- the remaining legs), and the server's cancelMovement requires movement,
+				-- so gating on movement alone is sufficient.
+				if army and army.movement then
+					invokeRemote("CancelMove", armyId)
+					if MovementArrow and MovementArrow.clearArmy then MovementArrow.clearArmy(armyId) end
+					any = true
+				end
+			end
+			return any
 		end,
 	})
 	UIKeybindings.registerAction({

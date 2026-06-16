@@ -791,6 +791,11 @@ function ArmyPanel.create(parent, callbacks)
 	actionPad.PaddingRight = UDim.new(0, 92)
 	actionPad.Parent = actionRow
 
+	-- Contextual: only shown when the selected army borders an active battle it can
+	-- join (UIController.canReinforce decides). Hidden otherwise to keep the row clean.
+	local reinforceBtn = makeActionButton(actionRow, { size = UDim2.fromOffset(92, 32), text = "Reinforce", layoutOrder = 0 })
+	reinforceBtn.Visible = false
+	local splitBtn, setSplitEnabled = makeActionButton(actionRow, { size = UDim2.fromOffset(58, 32), text = "Split", layoutOrder = 1 })
 	local mergeBtn, setMergeEnabled = makeActionButton(actionRow, { size = UDim2.fromOffset(64, 32), text = "Merge", layoutOrder = 2 })
 	local reassignBtn = makeActionButton(actionRow, { size = UDim2.fromOffset(80, 32), text = "Reassign", layoutOrder = 3 })
 	local disbandBtn = makeActionButton(actionRow, { size = UDim2.fromOffset(76, 32), text = "Disband", layoutOrder = 4, variant = "destructive" })
@@ -1061,6 +1066,11 @@ function ArmyPanel.create(parent, callbacks)
 		end
 
 		updateMergeBtnState()
+		-- Split needs >=2 regiments and a stationary, non-fighting army.
+		setSplitEnabled(info.total >= 2 and not army.battleId and not army.movement)
+		-- Reinforce surfaces only when this army borders a battle it may join.
+		local canRe = callbacks.canReinforce and callbacks.canReinforce(army.id) or nil
+		reinforceBtn.Visible = canRe ~= nil
 	end
 
 	local function show(armies, bundle, provinceName, country)
@@ -1182,6 +1192,33 @@ function ArmyPanel.create(parent, callbacks)
 		if #others > 0 then
 			callbacks.onMerge(primary, others)
 		end
+	end)
+
+	reinforceBtn.MouseButton1Click:Connect(function()
+		local army = getActiveArmy()
+		if not army then return end
+		local prov = callbacks.canReinforce and callbacks.canReinforce(army.id)
+		if prov and callbacks.onReinforce then callbacks.onReinforce(army.id, prov) end
+	end)
+
+	splitBtn.MouseButton1Click:Connect(function()
+		if not callbacks.onSplit then return end
+		local army = getActiveArmy()
+		if not army or not army.composition or army.battleId or army.movement then return end
+		-- Default: detach half of each regiment type (floor). If every type is a
+		-- single regiment, detach one of the first so a 2+ stack always splits.
+		local half = {}
+		local any = false
+		for unitTypeId, count in pairs(army.composition) do
+			local n = math.floor(count / 2)
+			if n > 0 then half[unitTypeId] = n; any = true end
+		end
+		if not any then
+			for unitTypeId, count in pairs(army.composition) do
+				if count >= 1 then half[unitTypeId] = 1; any = true; break end
+			end
+		end
+		if any then callbacks.onSplit(army.id, half) end
 	end)
 
 	disbandBtn.MouseButton1Click:Connect(function()

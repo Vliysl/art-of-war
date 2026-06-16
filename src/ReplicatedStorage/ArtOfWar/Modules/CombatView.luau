@@ -7,6 +7,7 @@ local CombatView = {}
 
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
 
 local aow = ReplicatedStorage:WaitForChild("ArtOfWar")
 local ClientStateCache = require(aow:WaitForChild("Modules"):WaitForChild("ClientStateCache"))
@@ -20,6 +21,9 @@ local MUTED     = Color3.fromRGB(206, 180, 120)
 local TRACK     = Color3.fromRGB(44, 32, 18)
 local FALLBACK  = Color3.fromRGB(150, 150, 150)
 local SWORDS    = Color3.fromRGB(224, 120, 96)
+local GOOD      = Color3.fromRGB(75, 183, 52)   -- local player winning
+local BAD       = Color3.fromRGB(190, 36, 26)   -- local player losing
+local NEUTRAL   = Color3.fromRGB(218, 168, 84)  -- gold (uninvolved / even)
 
 local LIFT = 52
 local REQUIRED = WorldConstants.OccupationProgressRequired or 12
@@ -122,6 +126,43 @@ local function hasBattleAt(provinceId)
 	return false
 end
 
+local function localTag()
+	local lp = Players.LocalPlayer
+	return lp and lp:GetAttribute("CountryTag") or nil
+end
+
+-- Where the attack comes FROM (for the bubble's position + direction arrow).
+local function attackerOriginId(battle)
+	local first = battle.attackerArmyIds and battle.attackerArmyIds[1]
+	if first and battle.attackerOriginByArmyId and battle.attackerOriginByArmyId[first] then
+		return battle.attackerOriginByArmyId[first]
+	end
+	if first then
+		local a = ClientStateCache.getArmy and ClientStateCache.getArmy(first)
+		if a and a.provinceId then return a.provinceId end
+	end
+	return battle.provinceId
+end
+
+-- Tide from the LOCAL player's perspective: +1 my side dominating, -1 losing.
+-- Returns (perspectiveTide, role) where role is "attacker"|"defender"|"neutral".
+local function playerTide(battle)
+	local tide = battle.tide or 0
+	local me = localTag()
+	if not me then return tide, "neutral" end
+	local function sideHas(ids)
+		if type(ids) ~= "table" then return false end
+		for _, id in ipairs(ids) do
+			local a = ClientStateCache.getArmy and ClientStateCache.getArmy(id)
+			if a and a.ownerTag == me then return true end
+		end
+		return false
+	end
+	if sideHas(battle.attackerArmyIds) then return tide, "attacker" end
+	if sideHas(battle.defenderArmyIds) then return -tide, "defender" end
+	return tide, "neutral"
+end
+
 local function txt(parent, props)
 	local l = Instance.new("TextLabel")
 	l.BackgroundTransparency = 1
@@ -178,48 +219,62 @@ end
 
 local function buildBattleMarker(center)
 	local anchor = makeAnchor(center)
-	local _, bg = makePlate(anchor, 168, 46)
+	local _, bg = makePlate(anchor, 132, 50)
+	bg.BackgroundTransparency = 0.1
 
-	txt(bg, {
-		Text = "\u{2694} BATTLE", TextColor3 = SWORDS, TextSize = 11,
-		Size = UDim2.new(1, -12, 0, 12), Position = UDim2.fromOffset(6, 2),
+	-- Direction chevron: rotated per-frame to point in the on-screen attack direction.
+	local chevron = txt(bg, {
+		Text = "\u{25B6}", TextColor3 = SWORDS, TextSize = 14, Font = Enum.Font.GothamBold,
+		Size = UDim2.fromOffset(16, 14), Position = UDim2.new(0.5, 0, 0, 1), AnchorPoint = Vector2.new(0.5, 0),
 		TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center,
 	})
 	local leftCount = txt(bg, {
-		Text = "0", TextSize = 15, Font = Enum.Font.GothamBold,
-		Size = UDim2.new(0.5, -10, 0, 18), Position = UDim2.fromOffset(8, 13),
+		Text = "0", TextSize = 14, Font = Enum.Font.GothamBold,
+		Size = UDim2.new(0.5, -10, 0, 16), Position = UDim2.fromOffset(8, 15),
 		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center,
 	})
 	local rightCount = txt(bg, {
-		Text = "0", TextSize = 15, Font = Enum.Font.GothamBold,
-		Size = UDim2.new(0.5, -10, 0, 18), Position = UDim2.new(1, -8, 0, 13),
+		Text = "0", TextSize = 14, Font = Enum.Font.GothamBold,
+		Size = UDim2.new(0.5, -10, 0, 16), Position = UDim2.new(1, -8, 0, 15),
 		AnchorPoint = Vector2.new(1, 0),
 		TextXAlignment = Enum.TextXAlignment.Right, TextYAlignment = Enum.TextYAlignment.Center,
 	})
 
 	local track = Instance.new("Frame")
 	track.Size = UDim2.new(1, -16, 0, 9)
-	track.Position = UDim2.fromOffset(8, 33)
+	track.Position = UDim2.fromOffset(8, 35)
 	track.BackgroundColor3 = TRACK
 	track.BorderSizePixel = 0
 	track.Parent = bg
+	local trackCorner = Instance.new("UICorner")
+	trackCorner.CornerRadius = UDim.new(0, 4)
+	trackCorner.Parent = track
 
-	local attFill = Instance.new("Frame")
-	attFill.AnchorPoint = Vector2.new(0, 0)
-	attFill.Position = UDim2.fromScale(0, 0)
-	attFill.Size = UDim2.fromScale(0.5, 1)
-	attFill.BorderSizePixel = 0
-	attFill.Parent = track
+	-- Single tide bar: fills toward the local player's favour, coloured green/red.
+	local fill = Instance.new("Frame")
+	fill.AnchorPoint = Vector2.new(0, 0)
+	fill.Position = UDim2.fromScale(0, 0)
+	fill.Size = UDim2.fromScale(0.5, 1)
+	fill.BorderSizePixel = 0
+	fill.BackgroundColor3 = NEUTRAL
+	fill.Parent = track
+	local fillCorner = Instance.new("UICorner")
+	fillCorner.CornerRadius = UDim.new(0, 4)
+	fillCorner.Parent = fill
 
-	local defFill = Instance.new("Frame")
-	defFill.AnchorPoint = Vector2.new(1, 0)
-	defFill.Position = UDim2.fromScale(1, 0)
-	defFill.Size = UDim2.fromScale(0.5, 1)
-	defFill.BorderSizePixel = 0
-	defFill.Parent = track
+	-- Centre tick marking the even point.
+	local tick = Instance.new("Frame")
+	tick.AnchorPoint = Vector2.new(0.5, 0.5)
+	tick.Position = UDim2.fromScale(0.5, 0.5)
+	tick.Size = UDim2.new(0, 1, 1, 2)
+	tick.BackgroundColor3 = CREAM
+	tick.BackgroundTransparency = 0.4
+	tick.BorderSizePixel = 0
+	tick.ZIndex = 3
+	tick.Parent = track
 
-	return { kind = "battle", anchor = anchor, leftCount = leftCount, rightCount = rightCount,
-		attFill = attFill, defFill = defFill, sig = nil }
+	return { kind = "battle", anchor = anchor, chevron = chevron, leftCount = leftCount,
+		rightCount = rightCount, fill = fill, sig = nil, atkWorld = nil, defWorld = nil }
 end
 
 local function buildSiegeMarker(center)
@@ -272,24 +327,26 @@ local function updateBattle(marker, battle)
 	local defTag = firstOwner(battle.defenderArmyIds)
 	local attMen = sideStrength(battle.attackerArmyIds)
 	local defMen = sideStrength(battle.defenderArmyIds)
-	local sig = string.format("%d,%d,%s,%s", attMen, defMen, tostring(attTag), tostring(defTag))
+	local pTide, role = playerTide(battle)
+	local sig = string.format("%d,%d,%s,%s,%.3f,%s", attMen, defMen, tostring(attTag), tostring(defTag), pTide, role)
 	if marker.sig == sig then return end
 	marker.sig = sig
 
-	local attColor = ownerColor(attTag)
-	local defColor = ownerColor(defTag)
 	marker.leftCount.Text = tostring(attMen)
-	marker.leftCount.TextColor3 = attColor
+	marker.leftCount.TextColor3 = ownerColor(attTag)
 	marker.rightCount.Text = tostring(defMen)
-	marker.rightCount.TextColor3 = defColor
+	marker.rightCount.TextColor3 = ownerColor(defTag)
 
-	local total = attMen + defMen
-	local frac = total > 0 and (attMen / total) or 0.5
-	frac = math.clamp(frac, 0.06, 0.94)
-	marker.attFill.Size = UDim2.fromScale(frac, 1)
-	marker.attFill.BackgroundColor3 = attColor
-	marker.defFill.Size = UDim2.fromScale(1 - frac, 1)
-	marker.defFill.BackgroundColor3 = defColor
+	-- Bar fills toward the viewer's advantage; colour green winning / red losing,
+	-- gold when the local player isn't involved (or it's dead even).
+	local advantage = math.clamp((pTide + 1) * 0.5, 0.04, 0.96)
+	marker.fill.Size = UDim2.fromScale(advantage, 1)
+	local col = NEUTRAL
+	if role ~= "neutral" then
+		if pTide > 0.03 then col = GOOD
+		elseif pTide < -0.03 then col = BAD end
+	end
+	marker.fill.BackgroundColor3 = col
 end
 
 local function updateSiege(marker, occ)
@@ -325,12 +382,18 @@ local function reconcileBattle(battleId)
 		return
 	end
 	if not ensureFolders() then return end
-	local center = provinceCenter(battle.provinceId)
-	if not center then scheduleRetry("battle", battleId); return end
+	local defCenter = provinceCenter(battle.provinceId)
+	if not defCenter then scheduleRetry("battle", battleId); return end
+	-- Bubble sits on the front line: midpoint of attacker origin -> defender province.
+	local atkCenter = provinceCenter(attackerOriginId(battle))
+	local center = (atkCenter and (atkCenter + defCenter) * 0.5) or defCenter
 	if not marker then
 		marker = buildBattleMarker(center)
 		battleMarkers[battleId] = marker
 	end
+	if marker.anchor and marker.anchor.Parent then marker.anchor.Position = center end
+	marker.atkWorld = atkCenter or defCenter
+	marker.defWorld = defCenter
 	updateBattle(marker, battle)
 	-- A battle suspends siege accrual on its province; hide any siege meter there.
 	dirtySieges[battle.provinceId] = true
@@ -391,6 +454,22 @@ function CombatView.init()
 		if next(dirtySieges) then
 			for id in pairs(dirtySieges) do reconcileSiege(id) end
 			table.clear(dirtySieges)
+		end
+		-- Keep each battle bubble's chevron pointing in the on-screen attack
+		-- direction (attacker origin -> defender) as the camera moves. Cheap: a
+		-- handful of battles at most.
+		local cam = workspace.CurrentCamera
+		if cam and next(battleMarkers) then
+			for _, marker in pairs(battleMarkers) do
+				if marker.chevron and marker.atkWorld and marker.defWorld then
+					local a = cam:WorldToViewportPoint(marker.atkWorld)
+					local d = cam:WorldToViewportPoint(marker.defWorld)
+					local dx, dy = d.X - a.X, d.Y - a.Y
+					if (dx * dx + dy * dy) > 1 then
+						marker.chevron.Rotation = math.deg(math.atan2(dy, dx))
+					end
+				end
+			end
 		end
 	end)
 

@@ -557,6 +557,21 @@ local function tickBattle(record)
 	record.round = (record.round or 0) + 1
 	record.lastDamageRoll = { attacker = result.attacker.damageTaken, defender = result.defender.damageTaken }
 
+	-- Battle "tide" in -1..1 (attacker advantage), replicated for the combat bubble.
+	-- Blends remaining strength and organization fractions vs. start; org weighted
+	-- higher because org collapse, not raw losses, decides a battle. Read-only —
+	-- never feeds back into resolution.
+	do
+		local atkStr = totalSideStrength(record.attackerArmyIds)
+		local defStr = totalSideStrength(record.defenderArmyIds)
+		local atkOrg = totalSideOrg(record.attackerArmyIds)
+		local defOrg = totalSideOrg(record.defenderArmyIds)
+		local function frac(cur, start) return (start and start > 0) and (cur / start) or 0 end
+		local atkScore = 0.4 * frac(atkStr, record.attackerStrengthStart) + 0.6 * frac(atkOrg, record.attackerOrgStart)
+		local defScore = 0.4 * frac(defStr, record.defenderStrengthStart) + 0.6 * frac(defOrg, record.defenderOrgStart)
+		record.tide = math.clamp(atkScore - defScore, -1, 1)
+	end
+
 	local activeSpec = phaseSpec or CombatPhases.getPhase(record.phaseCycle, record.phaseIndex or 1)
 	local phaseDuration = math.max(1, (activeSpec and activeSpec.duration) or 1)
 	record.phaseElapsed = (record.phaseElapsed or 0) + 1
@@ -595,11 +610,73 @@ local function tickBattle(record)
 	ctx.WorldState.setBattle(record.id, record)
 end
 
+local function findBattleAtProvince(provinceId)
+	for _, b in ctx.WorldState.allBattles() do
+		if b.provinceId == provinceId then return b end
+	end
+	return nil
+end
+
+-- A bordering, idle friendly army joins an ongoing battle in an adjacent province
+-- as a flanking reinforcement: it stays in its own province (origin recorded for the
+-- combat-width bonus) rather than relocating. Requires true bordering adjacency and
+-- that the army belongs to a belligerent on one side. Returns true on success.
+local function reinforce(armyId, targetProvinceId)
+	local army = ctx.WorldState.getArmy(armyId)
+	if not army then return false, "no_army" end
+	if army.battleId then return false, "in_battle" end
+	if army.movement then return false, "in_motion" end
+
+	local battle = findBattleAtProvince(targetProvinceId)
+	if not battle then return false, "no_battle" end
+
+	-- Reinforcement is strictly from a BORDERING province (flanking). An army already
+	-- in the battle province isn't reinforcing -- and allowing it would record the
+	-- battle province as a distinct attacker origin and wrongly inflate combat width.
+	if army.provinceId == targetProvinceId then return false, "already_in_province" end
+	local adj = ctx.AdjacencyGraph
+	if not (adj and adj.areNeighbors and adj.areNeighbors(army.provinceId, targetProvinceId)) then
+		return false, "not_adjacent"
+	end
+
+	local function ownerOf(ids)
+		local first = ids and ids[1]
+		local a = first and ctx.WorldState.getArmy(first)
+		return a and a.ownerTag or nil
+	end
+	local attackerTag = ownerOf(battle.attackerArmyIds)
+	local defenderTag = ownerOf(battle.defenderArmyIds)
+	local me = army.ownerTag
+	local role
+	if me == attackerTag then
+		role = "attacker"
+	elseif me == defenderTag then
+		role = "defender"
+	else
+		-- No alliance system yet: a third party may only join the side fighting an
+		-- enemy it is itself at war with.
+		local atWar = ctx.DiplomacySystem and ctx.DiplomacySystem.areAtWar
+		if atWar and defenderTag and atWar(me, defenderTag) then
+			role = "attacker"
+		elseif atWar and attackerTag and atWar(me, attackerTag) then
+			role = "defender"
+		else
+			return false, "not_belligerent"
+		end
+	end
+
+	army.originProvinceId = army.provinceId
+	ctx.WorldState.setArmy(armyId, army)
+	return joinBattle(battle.id, armyId, role)
+end
+
 function BattleManager.register(context)
 	ctx = context
 	local api = {
 		startBattle = startBattle,
 		joinBattle = joinBattle,
+		reinforce = reinforce,
+		findBattleAtProvince = findBattleAtProvince,
 		tickBattle = tickBattle,
 		endBattle = endBattle,
 		effectiveWidthFor = effectiveWidthFor,

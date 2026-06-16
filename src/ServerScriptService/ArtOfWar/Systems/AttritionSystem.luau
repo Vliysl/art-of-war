@@ -72,7 +72,58 @@ local function runAttrition(months)
 	end
 end
 
+-- Per-tick (not month-gated): stamp a replicated supply status on each ground army
+-- for the UI to show ("adequate" | "crowded" | "starving"). Read-only annotation —
+-- the actual casualty application stays monthly in runAttrition. Only writes when the
+-- status changes, to avoid replication churn.
+local function computeSupplyStatus()
+	local C = ctx.WorldConstants
+	local AS = ctx.ArmySystem
+	if not AS or not AS.compositionStrength then return end
+
+	local byProv = {}
+	for _, army in ctx.WorldState.allArmies() do
+		-- Match runAttrition's exemptions: naval formations and armies in active
+		-- battle are not subject to supply, so they get no status stamp either.
+		if army.domain ~= "naval" and not army.battleId and army.provinceId then
+			local g = byProv[army.provinceId]
+			if not g then g = { armies = {}, strength = 0 }; byProv[army.provinceId] = g end
+			table.insert(g.armies, army)
+			g.strength += AS.compositionStrength(army.composition)
+		end
+	end
+
+	local base = C.ProvinceSupplyLimitBase or 5000
+	local perDev = C.ProvinceSupplyLimitPerDev or 500
+	local terrFree = C.AttritionTerrainFreeSupply or 8
+
+	for pid, g in pairs(byProv) do
+		local prov = ctx.WorldState.getProvince(pid)
+		if prov then
+			local supply = base + (prov.devTier or 1) * perDev
+			local overCrowded = supply > 0 and g.strength > supply
+			local terr = terrainOf(prov)
+			local tsupply = terr and terr.supplyLimit
+			local harsh = (tsupply and tsupply > 0 and (terrFree - tsupply) > 0) or prov.isWasteland or prov.winter or false
+			for _, army in ipairs(g.armies) do
+				local friendly = (prov.controllerTag == army.ownerTag)
+				local status = "adequate"
+				if not friendly and harsh then
+					status = "starving"
+				elseif overCrowded then
+					status = "crowded"
+				end
+				if army.supplyStatus ~= status then
+					army.supplyStatus = status
+					ctx.WorldState.setArmy(army.id, army)
+				end
+			end
+		end
+	end
+end
+
 local function attritionTick(sysCtx)
+	computeSupplyStatus()
 	local gd = (sysCtx and sysCtx.gameDate) or (ctx.TickScheduler.getGameDate and ctx.TickScheduler.getGameDate())
 	if not gd then return end
 	local mi = gd.year * 12 + (gd.month - 1)

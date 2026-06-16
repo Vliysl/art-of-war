@@ -2,6 +2,13 @@ local MovementSystem = {}
 
 local ctx
 
+-- All units take one in-game week (7 ticks) per province step for now. Centralised
+-- so per-unit/per-composition speeds can vary this later in one place.
+local MOVE_TICKS = 7
+local function moveTicksFor(_army)
+	return MOVE_TICKS
+end
+
 local function combatCap()
 	return ctx.WorldConstants.MultiplierCapCombatStat or 2
 end
@@ -73,11 +80,12 @@ local function beginMove(armyId, toProvinceId, options)
 	end
 
 	local distance = adjacency.distance(army.provinceId, toProvinceId)
-	if distance == math.huge or distance <= 0 then return false, "bad_distance" end
+	if distance == math.huge then return false, "bad_distance" end
 
-	local speed = effectiveSpeed(army)
-	if speed <= 0 then return false, "no_speed" end
-	local duration = distance / speed
+	-- Fixed cadence: one province step = 7 ticks (one week), independent of stud
+	-- distance. The client draws a filling arrow over this window. (effectiveSpeed
+	-- is retained/exported for future per-unit speeds.)
+	local duration = moveTicksFor(army) * (ctx.WorldConstants.SecondsPerSimTick or 1.5)
 
 	local now = ctx.TickScheduler.getSimTime()
 	army.movement = {

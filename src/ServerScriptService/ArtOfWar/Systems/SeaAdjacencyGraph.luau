@@ -11,7 +11,11 @@ local function scan()
 	if not adjacency or not adjacency.position then return end
 	local provinces = ctx.WorldState.allProvinces()
 	for id, prov in provinces do
-		if prov.coastal == true then
+		-- Prefer the geometric coastal flag derived by AdjacencyGraph (open-water
+		-- frontage); fall back to the authored province.coastal so nothing regresses
+		-- if the baked table is absent and AdjacencyGraph is on its legacy path.
+		local coastal = (adjacency.isCoastal and adjacency.isCoastal(id)) or (prov.coastal == true)
+		if coastal then
 			local pos = adjacency.position(id)
 			if pos then
 				positions[id] = pos
