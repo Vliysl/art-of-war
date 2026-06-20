@@ -405,6 +405,7 @@ function DataEditor.addCountry(tag, opts)
 		historicalFriends = opts.historicalFriends or {},
 		color = opts.color or { 128, 128, 128 },
 		flagAssetId = normalizeFlag(opts.flagAssetId),
+		startingTechs = opts.startingTechs or {},
 	}
 	return countries[tag]
 end
@@ -420,6 +421,35 @@ function DataEditor.updateCountry(tag, opts)
 			countries[tag][k] = v
 		end
 	end
+	return countries[tag]
+end
+
+-- Per-country starting technologies. techMap is a { [techId] = true } set; every id is validated
+-- against the Technologies registry and the call errors on the first invalid id (never silently
+-- ignored). Stores a clean { [id] = true } map on the country record (the persisted data field),
+-- distinct from the runtime country.techs set granted at boot by ResearchSystem.seedAll.
+function DataEditor.setCountryStartingTechs(tag, techMap)
+	ensureLoaded()
+	requireKey(countries, tag, "Country")
+	if type(techMap) ~= "table" then
+		error("startingTechs must be a table of { [techId] = true }")
+	end
+	local technologies = loadClone(dataFolder():WaitForChild("Technologies"))
+	local validated, count = {}, 0
+	for id, on in pairs(techMap) do
+		if on then
+			if type(id) ~= "string" or not technologies[id] then
+				error(string.format("Technology %q does not exist", tostring(id)))
+			end
+			validated[id] = true
+			count += 1
+			if count > 200 then
+				error("Too many starting technologies (max 200)")
+			end
+		end
+	end
+	pushHistory("setStartingTechs " .. tag)
+	countries[tag].startingTechs = validated
 	return countries[tag]
 end
 

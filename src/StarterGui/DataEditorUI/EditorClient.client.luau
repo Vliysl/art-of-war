@@ -2169,6 +2169,110 @@ local function rebuildCountryForm()
 		return makeTextBox(row, "SPA", country and table.concat(country.historicalFriends or {}, ", ") or "")
 	end)
 
+	makeSection(countryForm, "STARTING TECHNOLOGIES", 60)
+	do
+		local techList = (s.registries and s.registries.technologies) or {}
+		local owned = (country and type(country.startingTechs) == "table") and country.startingTechs or {}
+		local selected = {}
+		newInstance("TextLabel", {
+			Size = UDim2.new(1, 0, 0, 15),
+			BackgroundTransparency = 1,
+			Text = "Granted at game start, on top of the global default set. Gold = granted.",
+			TextColor3 = PALETTE.textMuted,
+			Font = Enum.Font.Gotham,
+			TextSize = 11,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			LayoutOrder = 61,
+		}, countryForm)
+		local listScroll = newInstance("ScrollingFrame", {
+			Size = UDim2.new(1, 0, 0, 200),
+			BackgroundColor3 = PALETTE.bgInput,
+			BorderSizePixel = 0,
+			ScrollBarThickness = 5,
+			ScrollBarImageColor3 = PALETTE.border,
+			CanvasSize = UDim2.new(),
+			AutomaticCanvasSize = Enum.AutomaticSize.Y,
+			LayoutOrder = 62,
+		}, countryForm)
+		addCorner(listScroll, 6)
+		local listLayout = Instance.new("UIListLayout")
+		listLayout.Padding = UDim.new(0, 2)
+		listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+		listLayout.Parent = listScroll
+		local listPad = Instance.new("UIPadding")
+		listPad.PaddingTop = UDim.new(0, 4)
+		listPad.PaddingBottom = UDim.new(0, 4)
+		listPad.PaddingLeft = UDim.new(0, 6)
+		listPad.PaddingRight = UDim.new(0, 6)
+		listPad.Parent = listScroll
+		local rowOrder, currentTab = 0, nil
+		for _, def in ipairs(techList) do
+			if def.tab ~= currentTab then
+				currentTab = def.tab
+				rowOrder += 1
+				newInstance("TextLabel", {
+					Size = UDim2.new(1, 0, 0, 18),
+					BackgroundTransparency = 1,
+					Text = string.upper(tostring(def.tab or "other")),
+					TextColor3 = PALETTE.accent,
+					Font = Enum.Font.GothamBold,
+					TextSize = 11,
+					TextXAlignment = Enum.TextXAlignment.Left,
+					LayoutOrder = rowOrder,
+				}, listScroll)
+			end
+			rowOrder += 1
+			local isGlobal = def.starting == true
+			local check = (not isGlobal) and owned[def.id] == true
+			if check then selected[def.id] = true end
+			local row = newInstance("Frame", {
+				Size = UDim2.new(1, 0, 0, 22),
+				BackgroundTransparency = 1,
+				LayoutOrder = rowOrder,
+			}, listScroll)
+			local toggle = newInstance("TextButton", {
+				Size = UDim2.fromOffset(18, 18),
+				Position = UDim2.fromOffset(0, 2),
+				BackgroundColor3 = (isGlobal or check) and PALETTE.accent or PALETTE.bgPanel,
+				AutoButtonColor = false,
+				Text = "",
+			}, row)
+			addCorner(toggle, 4)
+			addStroke(toggle, PALETTE.border, 1)
+			newInstance("TextLabel", {
+				Position = UDim2.fromOffset(26, 0),
+				Size = UDim2.new(1, -26, 1, 0),
+				BackgroundTransparency = 1,
+				Text = tostring(def.name or def.id) .. (isGlobal and "   (default)" or ""),
+				TextColor3 = isGlobal and PALETTE.textMuted or PALETTE.text,
+				Font = Enum.Font.Gotham,
+				TextSize = 12,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				TextTruncate = Enum.TextTruncate.AtEnd,
+			}, row)
+			if not isGlobal then
+				toggle.MouseButton1Click:Connect(function()
+					if selected[def.id] then
+						selected[def.id] = nil
+						toggle.BackgroundColor3 = PALETTE.bgPanel
+					else
+						selected[def.id] = true
+						toggle.BackgroundColor3 = PALETTE.accent
+					end
+				end)
+			end
+		end
+		countryFields.startingTechs = {
+			getValue = function()
+				local out = {}
+				for id in pairs(selected) do
+					out[id] = true
+				end
+				return out
+			end,
+		}
+	end
+
 	local applyBtn = makeButton(countryForm, isNew and "Create Country" or "Apply Changes", PALETTE.accent)
 	applyBtn.Size = UDim2.fromOffset(200, 32)
 	applyBtn.LayoutOrder = 99
@@ -2209,6 +2313,7 @@ local function rebuildCountryForm()
 			politicalPower = tonumber(countryFields.politicalPower.Text) or 80,
 			historicalRivals = parseList(countryFields.historicalRivals.Text),
 			historicalFriends = parseList(countryFields.historicalFriends.Text),
+			startingTechs = (countryFields.startingTechs and countryFields.startingTechs.getValue()) or {},
 		}
 		local tag = countryFields.tag.Text:upper():gsub("%s", "")
 		if isNew and (#tag < 2 or #tag > 4 or not tag:match("^[A-Z]+$")) then

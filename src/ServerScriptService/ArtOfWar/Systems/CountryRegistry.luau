@@ -59,6 +59,7 @@ function CountryRegistry.hydrate(countries)
 		clone.historicalRivals = cloneOr(record.historicalRivals, {})
 		clone.historicalFriends = cloneOr(record.historicalFriends, {})
 		clone.color = cloneOr(record.color, { 128, 128, 128 })
+		clone.startingTechs = cloneOr(record.startingTechs, {})
 		ctx.WorldState.setCountry(tag, clone)
 	end
 	indexCountries()

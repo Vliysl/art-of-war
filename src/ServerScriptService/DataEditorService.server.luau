@@ -9,29 +9,46 @@ local STAGING_ENABLED = true
 
 local function tryRequire(path)
 	local ok, mod = pcall(require, path)
-	if ok then return mod end
+	if ok then
+		return mod
+	end
 	return nil
 end
 
-local WorldState = tryRequire(game.ServerScriptService:WaitForChild("ArtOfWar"):WaitForChild("Framework"):WaitForChild("WorldState"))
-local EventBus   = tryRequire(game.ServerScriptService.ArtOfWar.Framework:FindFirstChild("EventBus"))
-local Channels   = tryRequire(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Events"):WaitForChild("Channels"))
+local WorldState =
+	tryRequire(game.ServerScriptService:WaitForChild("ArtOfWar"):WaitForChild("Framework"):WaitForChild("WorldState"))
+local EventBus = tryRequire(game.ServerScriptService.ArtOfWar.Framework:FindFirstChild("EventBus"))
+local Channels = tryRequire(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Events"):WaitForChild("Channels"))
 
 local function syncProvinceToWorld(id)
-	if not WorldState then return end
+	if not WorldState then
+		return
+	end
 	id = tonumber(id) or id
 	local rec = Editor.getState().provinces[id]
-	if not rec then return end
+	if not rec then
+		return
+	end
 	local existing = WorldState.getProvince(id)
 	if existing then
-		for k, v in pairs(rec) do existing[k] = v end
-		if type(rec.cores) == "table" then existing.cores = table.clone(rec.cores) end
-		if type(rec.goods) == "table" then existing.goods = table.clone(rec.goods) end
+		for k, v in pairs(rec) do
+			existing[k] = v
+		end
+		if type(rec.cores) == "table" then
+			existing.cores = table.clone(rec.cores)
+		end
+		if type(rec.goods) == "table" then
+			existing.goods = table.clone(rec.goods)
+		end
 		WorldState.setProvince(id, existing)
 	else
 		local clone = table.clone(rec)
-		if type(rec.cores) == "table" then clone.cores = table.clone(rec.cores) end
-		if type(rec.goods) == "table" then clone.goods = table.clone(rec.goods) end
+		if type(rec.cores) == "table" then
+			clone.cores = table.clone(rec.cores)
+		end
+		if type(rec.goods) == "table" then
+			clone.goods = table.clone(rec.goods)
+		end
 		WorldState.setProvince(id, clone)
 	end
 	if EventBus and Channels and Channels.ProvinceOwnershipChanged then
@@ -40,23 +57,34 @@ local function syncProvinceToWorld(id)
 end
 
 local function syncCountryToWorld(tag)
-	if not WorldState then return end
-	if type(tag) ~= "string" or tag == "" then return end
+	if not WorldState then
+		return
+	end
+	if type(tag) ~= "string" or tag == "" then
+		return
+	end
 	local rec = Editor.getState().countries[tag]
-	if not rec then return end
+	if not rec then
+		return
+	end
 	local existing = WorldState.getCountry(tag)
 	if existing then
-		for k, v in pairs(rec) do existing[k] = v end
+		for k, v in pairs(rec) do
+			existing[k] = v
+		end
 		WorldState.setCountry(tag, existing)
 	else
 		WorldState.setCountry(tag, table.clone(rec))
 	end
 end
 
-local ProvinceCodes = tryRequire(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Modules"):WaitForChild("ProvinceCodes"))
+local ProvinceCodes =
+	tryRequire(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Modules"):WaitForChild("ProvinceCodes"))
 
 local function stampTileAttributes(part, ownerTag, partName, map)
-	if not part then return end
+	if not part then
+		return
+	end
 	local effectiveTag = "NONE"
 	if type(ownerTag) == "string" and ownerTag ~= "" and ownerTag ~= "NONE" then
 		local state = Editor.getState()
@@ -87,7 +115,9 @@ local function stampTileAttributes(part, ownerTag, partName, map)
 	if ProvinceCodes and part:GetAttribute("province_code") == nil then
 		part:SetAttribute("province_code", ProvinceCodes.fromPartName(partName or part.Name))
 	end
-	if not map then return end
+	if not map then
+		return
+	end
 	for _, wrapName in { "LeftWrap", "RightWrap" } do
 		local w = map:FindFirstChild(wrapName)
 		local wf = w and w:FindFirstChild("Provinces")
@@ -95,9 +125,15 @@ local function stampTileAttributes(part, ownerTag, partName, map)
 		if wp then
 			wp:SetAttribute("owner", effectiveTag)
 			wp:SetAttribute("controller", effectiveTag)
-			if part:GetAttribute("culture") then wp:SetAttribute("culture", part:GetAttribute("culture")) end
-			if part:GetAttribute("religion") then wp:SetAttribute("religion", part:GetAttribute("religion")) end
-			if part:GetAttribute("province_code") then wp:SetAttribute("province_code", part:GetAttribute("province_code")) end
+			if part:GetAttribute("culture") then
+				wp:SetAttribute("culture", part:GetAttribute("culture"))
+			end
+			if part:GetAttribute("religion") then
+				wp:SetAttribute("religion", part:GetAttribute("religion"))
+			end
+			if part:GetAttribute("province_code") then
+				wp:SetAttribute("province_code", part:GetAttribute("province_code"))
+			end
 		end
 	end
 end
@@ -107,8 +143,12 @@ local api = ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Remotes"):W
 local function ensureRemote(name, className)
 	local remotesFolder = ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Remotes")
 	local existing = remotesFolder:FindFirstChild(name)
-	if existing and existing.ClassName == className then return existing end
-	if existing then existing:Destroy() end
+	if existing and existing.ClassName == className then
+		return existing
+	end
+	if existing then
+		existing:Destroy()
+	end
 	local r = Instance.new(className)
 	r.Name = name
 	r.Parent = remotesFolder
@@ -121,31 +161,50 @@ local Presence = ensureRemote("DataEditorPresence", "RemoteEvent")
 local MAX_PAYLOAD_DEPTH = 8
 local MAX_STRING_LENGTH = 4096
 local MAX_TABLE_ENTRIES = 2000
-local CALL_COOLDOWN     = 0.2
-local WRITE_COOLDOWN    = 2.5
-local PAINT_COOLDOWN    = 0.05
+local CALL_COOLDOWN = 0.2
+local WRITE_COOLDOWN = 2.5
+local PAINT_COOLDOWN = 0.05
 local SNAPSHOT_COOLDOWN = 1.0
 
 local WRITE_COMMANDS = {
-	addCountry = true, updateCountry = true, removeCountry = true,
-	addProvince = true, updateProvince = true, removeProvince = true,
-	addCulture = true, updateCulture = true, removeCulture = true,
-	addReligion = true, updateReligion = true, removeReligion = true,
-	addIdeology = true, updateIdeology = true, removeIdeology = true,
-	addGovernmentType = true, updateGovernmentType = true, removeGovernmentType = true,
+	addCountry = true,
+	updateCountry = true,
+	removeCountry = true,
+	addProvince = true,
+	updateProvince = true,
+	removeProvince = true,
+	addCulture = true,
+	updateCulture = true,
+	removeCulture = true,
+	addReligion = true,
+	updateReligion = true,
+	removeReligion = true,
+	addIdeology = true,
+	updateIdeology = true,
+	removeIdeology = true,
+	addGovernmentType = true,
+	updateGovernmentType = true,
+	removeGovernmentType = true,
 	mapProvinceToPart = true,
 	promoteTile = true,
-	assignProvinceField = true, assignProvinceFieldBatch = true,
-	save = true, exportToLua = true,
-	migrateLegacy = true, undo = true, redo = true,
+	assignProvinceField = true,
+	assignProvinceFieldBatch = true,
+	save = true,
+	exportToLua = true,
+	migrateLegacy = true,
+	undo = true,
+	redo = true,
 }
 
 local PAINT_COMMANDS = {
-	assignProvince = true, setTileOwner = true, assignBatch = true,
+	assignProvince = true,
+	setTileOwner = true,
+	assignBatch = true,
 }
 
 local SNAPSHOT_COMMANDS = {
-	dumpDataStore = true, reloadState = true,
+	dumpDataStore = true,
+	reloadState = true,
 }
 
 local lastCallByPlayer = {}
@@ -185,7 +244,9 @@ end)
 
 local function validatePayload(payload)
 	local function walk(value, depth)
-		if depth > MAX_PAYLOAD_DEPTH then return false end
+		if depth > MAX_PAYLOAD_DEPTH then
+			return false
+		end
 		local vtype = type(value)
 		if vtype == "string" then
 			return #value <= MAX_STRING_LENGTH
@@ -195,11 +256,19 @@ local function validatePayload(payload)
 			local count = 0
 			for k, v in pairs(value) do
 				count += 1
-				if count > MAX_TABLE_ENTRIES then return false end
+				if count > MAX_TABLE_ENTRIES then
+					return false
+				end
 				local ktype = type(k)
-				if ktype ~= "string" and ktype ~= "number" then return false end
-				if ktype == "string" and #k > 256 then return false end
-				if not walk(v, depth + 1) then return false end
+				if ktype ~= "string" and ktype ~= "number" then
+					return false
+				end
+				if ktype == "string" and #k > 256 then
+					return false
+				end
+				if not walk(v, depth + 1) then
+					return false
+				end
 			end
 			return true
 		end
@@ -216,18 +285,26 @@ local function rateLimit(player, command)
 	end
 	local now = os.clock()
 	if PAINT_COMMANDS[command] then
-		if now - (entry.paint or 0) < PAINT_COOLDOWN then return false, "painting too fast — slow down a bit" end
+		if now - (entry.paint or 0) < PAINT_COOLDOWN then
+			return false, "painting too fast — slow down a bit"
+		end
 		entry.paint = now
 		entry.call = now
 		return true
 	end
-	if now - entry.call < CALL_COOLDOWN then return false, "too many calls — slow down" end
+	if now - entry.call < CALL_COOLDOWN then
+		return false, "too many calls — slow down"
+	end
 	entry.call = now
 	if WRITE_COMMANDS[command] then
-		if now - entry.write < WRITE_COOLDOWN then return false, "writes are rate-limited; wait a moment" end
+		if now - entry.write < WRITE_COOLDOWN then
+			return false, "writes are rate-limited; wait a moment"
+		end
 		entry.write = now
 	elseif SNAPSHOT_COMMANDS[command] then
-		if now - entry.snapshot < SNAPSHOT_COOLDOWN then return false, "snapshot cooldown" end
+		if now - entry.snapshot < SNAPSHOT_COOLDOWN then
+			return false, "snapshot cooldown"
+		end
 		entry.snapshot = now
 	end
 	return true
@@ -243,18 +320,36 @@ end
 
 local function readState(kind, key)
 	local state = Editor.getState()
-	if kind == "country"    then return state.countries[key]   end
-	if kind == "province"   then return state.provinces[tonumber(key) or key] end
-	if kind == "culture"    then return state.cultures[key]    end
-	if kind == "religion"   then return state.religions[key]   end
-	if kind == "tile"       then return state.tileOwners[key]  end
-	if kind == "eu4Map"     then return state.eu4Map[tonumber(key) or key] end
-	if kind == "ideology"   then return state.ideologies[key]  end
-	if kind == "government" then return state.governments[key] end
+	if kind == "country" then
+		return state.countries[key]
+	end
+	if kind == "province" then
+		return state.provinces[tonumber(key) or key]
+	end
+	if kind == "culture" then
+		return state.cultures[key]
+	end
+	if kind == "religion" then
+		return state.religions[key]
+	end
+	if kind == "tile" then
+		return state.tileOwners[key]
+	end
+	if kind == "eu4Map" then
+		return state.eu4Map[tonumber(key) or key]
+	end
+	if kind == "ideology" then
+		return state.ideologies[key]
+	end
+	if kind == "government" then
+		return state.governments[key]
+	end
 end
 
 local function broadcastDelta(originPlayer, kind, key)
-	if STAGING_ENABLED then return end
+	if STAGING_ENABLED then
+		return
+	end
 	local payload = {
 		kind = kind,
 		key = key,
@@ -270,7 +365,9 @@ local function broadcastDelta(originPlayer, kind, key)
 end
 
 local function broadcastBatch(originPlayer, items)
-	if STAGING_ENABLED then return end
+	if STAGING_ENABLED then
+		return
+	end
 	local payload = {
 		batch = true,
 		originUserId = originPlayer and originPlayer.UserId or nil,
@@ -280,7 +377,9 @@ local function broadcastBatch(originPlayer, items)
 	for _, entry in ipairs(items) do
 		table.insert(payload.items, { kind = entry.kind, key = entry.key, value = readState(entry.kind, entry.key) })
 	end
-	if #payload.items == 0 then return end
+	if #payload.items == 0 then
+		return
+	end
 	for _, plr in ipairs(Players:GetPlayers()) do
 		if plr ~= originPlayer and isAuthorized(plr) then
 			LiveSync:FireClient(plr, payload)
@@ -289,11 +388,15 @@ local function broadcastBatch(originPlayer, items)
 end
 
 Presence.OnServerEvent:Connect(function(player, action, data)
-	if not isAuthorized(player) then return end
+	if not isAuthorized(player) then
+		return
+	end
 	if action == "update" and type(data) == "table" then
 		local kind = type(data.kind) == "string" and data.kind or nil
 		local key = data.key
-		if not kind or key == nil then return end
+		if not kind or key == nil then
+			return
+		end
 		presence[player.UserId] = {
 			kind = kind,
 			key = key,
@@ -316,9 +419,14 @@ local function snapshotState()
 	local function fromEditorWithGov(tbl)
 		local list = {}
 		for id, def in pairs(tbl or {}) do
-			table.insert(list, { id = id, name = def.displayName or id, allowedIdeologies = def.allowedIdeologies or {} })
+			table.insert(
+				list,
+				{ id = id, name = def.displayName or id, allowedIdeologies = def.allowedIdeologies or {} }
+			)
 		end
-		table.sort(list, function(a, b) return a.name < b.name end)
+		table.sort(list, function(a, b)
+			return a.name < b.name
+		end)
 		return list
 	end
 	local function keys(modName)
@@ -327,7 +435,9 @@ local function snapshotState()
 		for id, def in pairs(mod) do
 			table.insert(list, { id = id, name = def.displayName or id })
 		end
-		table.sort(list, function(a, b) return a.name < b.name end)
+		table.sort(list, function(a, b)
+			return a.name < b.name
+		end)
 		return list
 	end
 	local function fromEditor(tbl)
@@ -335,7 +445,35 @@ local function snapshotState()
 		for id, def in pairs(tbl or {}) do
 			table.insert(list, { id = id, name = def.displayName or id })
 		end
-		table.sort(list, function(a, b) return a.name < b.name end)
+		table.sort(list, function(a, b)
+			return a.name < b.name
+		end)
+		return list
+	end
+	-- Technologies use `name` (not displayName) and carry tab/category/starting/prerequisites, so
+	-- they need a dedicated builder (the generic keys() would drop those + mislabel the name).
+	local function techList()
+		local mod = require(ReplicatedStorage.ArtOfWar.Data:FindFirstChild("Technologies"))
+		local list = {}
+		for id, def in pairs(mod) do
+			table.insert(list, {
+				id = id,
+				name = def.name or id,
+				tab = def.tab,
+				category = def.category,
+				starting = def.starting == true,
+				prerequisites = def.prerequisites or {},
+			})
+		end
+		table.sort(list, function(a, b)
+			if a.tab ~= b.tab then
+				return tostring(a.tab) < tostring(b.tab)
+			end
+			if a.category ~= b.category then
+				return tostring(a.category) < tostring(b.category)
+			end
+			return a.name < b.name
+		end)
 		return list
 	end
 	local function deriveReligionGroups(tbl)
@@ -347,31 +485,34 @@ local function snapshotState()
 				table.insert(list, { id = g, name = g })
 			end
 		end
-		table.sort(list, function(a, b) return a.name < b.name end)
+		table.sort(list, function(a, b)
+			return a.name < b.name
+		end)
 		return list
 	end
 	return {
-		countries       = state.countries,
-		provinces       = state.provinces,
-		eu4Map          = state.eu4Map,
-		tileOwners      = state.tileOwners,
-		cultures        = state.cultures,
-		religions       = state.religions,
-		ideologies      = state.ideologies,
+		countries = state.countries,
+		provinces = state.provinces,
+		eu4Map = state.eu4Map,
+		tileOwners = state.tileOwners,
+		cultures = state.cultures,
+		religions = state.religions,
+		ideologies = state.ideologies,
 		governmentTypes = state.governments,
 		registries = {
-			governments    = fromEditorWithGov(state.governments),
-			ideologies     = fromEditor(state.ideologies),
-			cultures       = fromEditor(state.cultures),
-			religions      = fromEditor(state.religions),
+			governments = fromEditorWithGov(state.governments),
+			ideologies = fromEditor(state.ideologies),
+			cultures = fromEditor(state.cultures),
+			religions = fromEditor(state.religions),
 			religionGroups = deriveReligionGroups(state.religions),
-			tradeGoods     = keys("TradeGoods"),
-			terrains       = keys("Terrains"),
-			climates       = keys("Climates"),
-			areas          = keys("Areas"),
-			regions        = keys("Regions"),
-			superRegions   = keys("SuperRegions"),
-			cultureGroups  = keys("CultureGroups"),
+			tradeGoods = keys("TradeGoods"),
+			terrains = keys("Terrains"),
+			climates = keys("Climates"),
+			areas = keys("Areas"),
+			regions = keys("Regions"),
+			superRegions = keys("SuperRegions"),
+			cultureGroups = keys("CultureGroups"),
+			technologies = techList(),
 		},
 	}
 end
@@ -411,7 +552,9 @@ api.OnServerInvoke = function(player, command, payload)
 				culture = opts.primaryCulture,
 				religion = opts.stateReligion,
 			})
-			if not promote.ok then return promote end
+			if not promote.ok then
+				return promote
+			end
 			opts.capitalProvinceId = promote.result.id
 			promotedId = promote.result.id
 		end
@@ -428,6 +571,16 @@ api.OnServerInvoke = function(player, command, payload)
 		return result
 	elseif command == "updateCountry" then
 		local opts = payload.opts or {}
+		-- Route per-country starting techs through the validating setter (rejects unknown ids)
+		-- rather than the generic field loop in updateCountry.
+		local startingTechs = opts.startingTechs
+		if startingTechs ~= nil then
+			opts.startingTechs = nil
+			local techResult = safeCall(Editor.setCountryStartingTechs, payload.tag, startingTechs)
+			if not techResult.ok then
+				return techResult
+			end
+		end
 		local promotedId
 		if type(opts.promoteCapitalFromTile) == "string" and opts.promoteCapitalFromTile ~= "" then
 			local tile = opts.promoteCapitalFromTile
@@ -437,13 +590,34 @@ api.OnServerInvoke = function(player, command, payload)
 				culture = opts.primaryCulture,
 				religion = opts.stateReligion,
 			})
-			if not promote.ok then return promote end
+			if not promote.ok then
+				return promote
+			end
 			opts.capitalProvinceId = promote.result.id
 			promotedId = promote.result.id
 		end
 		local result = safeCall(Editor.updateCountry, payload.tag, opts)
 		if result.ok then
 			syncCountryToWorld(payload.tag)
+			-- Grant newly-set starting techs into the LIVE WorldState country.techs (seedAll ran
+			-- once at boot and will not re-run). WorldState only -- never the editor record.
+			if startingTechs ~= nil and WorldState then
+				local Technologies = require(ReplicatedStorage.ArtOfWar.Data:FindFirstChild("Technologies"))
+				local wc = WorldState.getCountry(payload.tag)
+				if wc then
+					wc.techs = wc.techs or {}
+					for id, on in pairs(startingTechs) do
+						local def = on and Technologies[id]
+						if def then
+							wc.techs[id] = true
+							for _, g in ipairs(def.gates or {}) do
+								wc.techs[g] = true
+							end
+						end
+					end
+					WorldState.setCountry(payload.tag, wc)
+				end
+			end
 			broadcastDelta(player, "country", payload.tag)
 			if promotedId then
 				pcall(Editor.assignProvince, promotedId, payload.tag)
@@ -463,7 +637,9 @@ api.OnServerInvoke = function(player, command, payload)
 				end
 			end
 			for partName, owner in pairs(pre.tileOwners) do
-				if owner == tag then table.insert(affectedTiles, partName) end
+				if owner == tag then
+					table.insert(affectedTiles, partName)
+				end
 			end
 		end
 		local result = safeCall(Editor.removeCountry, tag)
@@ -481,7 +657,9 @@ api.OnServerInvoke = function(player, command, payload)
 			if main then
 				for _, partName in ipairs(affectedTiles) do
 					local part = main:FindFirstChild(partName)
-					if part then stampTileAttributes(part, "NONE", partName, map) end
+					if part then
+						stampTileAttributes(part, "NONE", partName, map)
+					end
 					table.insert(items, { kind = "tile", key = partName })
 				end
 			end
@@ -490,51 +668,75 @@ api.OnServerInvoke = function(player, command, payload)
 		return result
 	elseif command == "addCulture" then
 		local result = safeCall(Editor.addCulture, payload.id, payload.opts or {})
-		if result.ok then broadcastDelta(player, "culture", payload.id) end
+		if result.ok then
+			broadcastDelta(player, "culture", payload.id)
+		end
 		return result
 	elseif command == "updateCulture" then
 		local result = safeCall(Editor.updateCulture, payload.id, payload.opts or {})
-		if result.ok then broadcastDelta(player, "culture", payload.id) end
+		if result.ok then
+			broadcastDelta(player, "culture", payload.id)
+		end
 		return result
 	elseif command == "removeCulture" then
 		local result = safeCall(Editor.removeCulture, payload.id)
-		if result.ok then broadcastDelta(player, "culture", payload.id) end
+		if result.ok then
+			broadcastDelta(player, "culture", payload.id)
+		end
 		return result
 	elseif command == "addReligion" then
 		local result = safeCall(Editor.addReligion, payload.id, payload.opts or {})
-		if result.ok then broadcastDelta(player, "religion", payload.id) end
+		if result.ok then
+			broadcastDelta(player, "religion", payload.id)
+		end
 		return result
 	elseif command == "updateReligion" then
 		local result = safeCall(Editor.updateReligion, payload.id, payload.opts or {})
-		if result.ok then broadcastDelta(player, "religion", payload.id) end
+		if result.ok then
+			broadcastDelta(player, "religion", payload.id)
+		end
 		return result
 	elseif command == "removeReligion" then
 		local result = safeCall(Editor.removeReligion, payload.id)
-		if result.ok then broadcastDelta(player, "religion", payload.id) end
+		if result.ok then
+			broadcastDelta(player, "religion", payload.id)
+		end
 		return result
 	elseif command == "addIdeology" then
 		local result = safeCall(Editor.addIdeology, payload.id, payload.opts or {})
-		if result.ok then broadcastDelta(player, "ideology", payload.id) end
+		if result.ok then
+			broadcastDelta(player, "ideology", payload.id)
+		end
 		return result
 	elseif command == "updateIdeology" then
 		local result = safeCall(Editor.updateIdeology, payload.id, payload.opts or {})
-		if result.ok then broadcastDelta(player, "ideology", payload.id) end
+		if result.ok then
+			broadcastDelta(player, "ideology", payload.id)
+		end
 		return result
 	elseif command == "removeIdeology" then
 		local result = safeCall(Editor.removeIdeology, payload.id)
-		if result.ok then broadcastDelta(player, "ideology", payload.id) end
+		if result.ok then
+			broadcastDelta(player, "ideology", payload.id)
+		end
 		return result
 	elseif command == "addGovernmentType" then
 		local result = safeCall(Editor.addGovernmentType, payload.id, payload.opts or {})
-		if result.ok then broadcastDelta(player, "government", payload.id) end
+		if result.ok then
+			broadcastDelta(player, "government", payload.id)
+		end
 		return result
 	elseif command == "updateGovernmentType" then
 		local result = safeCall(Editor.updateGovernmentType, payload.id, payload.opts or {})
-		if result.ok then broadcastDelta(player, "government", payload.id) end
+		if result.ok then
+			broadcastDelta(player, "government", payload.id)
+		end
 		return result
 	elseif command == "removeGovernmentType" then
 		local result = safeCall(Editor.removeGovernmentType, payload.id)
-		if result.ok then broadcastDelta(player, "government", payload.id) end
+		if result.ok then
+			broadcastDelta(player, "government", payload.id)
+		end
 		return result
 	elseif command == "addProvince" then
 		local result = safeCall(Editor.addProvince, payload.id, payload.opts or {})
@@ -592,7 +794,9 @@ api.OnServerInvoke = function(player, command, payload)
 		local items = type(payload) == "table" and payload.items
 		local field = type(payload) == "table" and payload.field
 		local value = type(payload) == "table" and payload.value
-		if type(items) ~= "table" then return { ok = false, error = "items must be a table of province ids" } end
+		if type(items) ~= "table" then
+			return { ok = false, error = "items must be a table of province ids" }
+		end
 		if type(field) ~= "string" or (field ~= "culture" and field ~= "religion") then
 			return { ok = false, error = "field must be 'culture' or 'religion'" }
 		end
@@ -618,7 +822,9 @@ api.OnServerInvoke = function(player, command, payload)
 		end)
 	elseif command == "mapProvinceToPart" then
 		local result = safeCall(Editor.mapProvinceToPart, payload.id, payload.btPartId)
-		if result.ok then broadcastDelta(player, "eu4Map", payload.id) end
+		if result.ok then
+			broadcastDelta(player, "eu4Map", payload.id)
+		end
 		return result
 	elseif command == "promoteTile" then
 		local result = safeCall(Editor.promoteTile, payload or {})
@@ -709,8 +915,12 @@ api.OnServerInvoke = function(player, command, payload)
 				if stamperMod then
 					local stamperOk, stamper = pcall(require, stamperMod)
 					if stamperOk and stamper then
-						if stamper.refreshEU4Mappings then pcall(stamper.refreshEU4Mappings) end
-						if stamper.applyTileOwnership then pcall(stamper.applyTileOwnership) end
+						if stamper.refreshEU4Mappings then
+							pcall(stamper.refreshEU4Mappings)
+						end
+						if stamper.applyTileOwnership then
+							pcall(stamper.applyTileOwnership)
+						end
 					end
 				end
 				local promotedList = promoteResult.result and promoteResult.result.promoted or {}
@@ -722,7 +932,9 @@ api.OnServerInvoke = function(player, command, payload)
 						pcall(syncCountryToWorld, d.key)
 					end
 					synced += 1
-					if synced % 200 == 0 then task.wait() end
+					if synced % 200 == 0 then
+						task.wait()
+					end
 				end
 			end
 			local promoted = promoteResult.result and promoteResult.result.promoted or {}
@@ -735,16 +947,20 @@ api.OnServerInvoke = function(player, command, payload)
 					promotedCount = #promoted,
 					draftSaved = draftResult.ok ~= false,
 					writes = { failures = flush.failures or 0 },
-					message = promoteResult.ok
-						and string.format("Saved \u{2713} %d change%s published to the live map", #promoted, #promoted == 1 and "" or "s")
-						or ("Save failed: " .. tostring(promoteResult.error or "promote error")),
+					message = promoteResult.ok and string.format(
+						"Saved \u{2713} %d change%s published to the live map",
+						#promoted,
+						#promoted == 1 and "" or "s"
+					) or ("Save failed: " .. tostring(promoteResult.error or "promote error")),
 				},
 				promotedCount = #promoted,
 				draftSaved = draftResult.ok ~= false,
 				writes = { failures = flush.failures or 0 },
-				message = promoteResult.ok
-					and string.format("Saved \u{2713} %d change%s published to the live map", #promoted, #promoted == 1 and "" or "s")
-					or ("Save failed: " .. tostring(promoteResult.error or "promote error")),
+				message = promoteResult.ok and string.format(
+					"Saved \u{2713} %d change%s published to the live map",
+					#promoted,
+					#promoted == 1 and "" or "s"
+				) or ("Save failed: " .. tostring(promoteResult.error or "promote error")),
 				error = (not promoteResult.ok) and tostring(promoteResult.error or "promote error") or nil,
 			}
 		end
@@ -758,13 +974,19 @@ api.OnServerInvoke = function(player, command, payload)
 		local ok, result = pcall(safeCall, Editor.save)
 		saveInProgress = false
 		saveOwnerUserId = nil
-		if not ok then return { ok = false, error = "save crashed: " .. tostring(result) } end
+		if not ok then
+			return { ok = false, error = "save crashed: " .. tostring(result) }
+		end
 		local stamperMod = game.ServerScriptService.ArtOfWar.Systems:FindFirstChild("ProvinceStamper")
 		if stamperMod then
 			local stamperOk, stamper = pcall(require, stamperMod)
 			if stamperOk and stamper then
-				if stamper.refreshEU4Mappings then pcall(stamper.refreshEU4Mappings) end
-				if stamper.applyTileOwnership then pcall(stamper.applyTileOwnership) end
+				if stamper.refreshEU4Mappings then
+					pcall(stamper.refreshEU4Mappings)
+				end
+				if stamper.applyTileOwnership then
+					pcall(stamper.applyTileOwnership)
+				end
 			end
 		end
 		return result
@@ -788,7 +1010,15 @@ api.OnServerInvoke = function(player, command, payload)
 				snap.result.redoDepth = result.result.redoDepth
 				for _, plr in ipairs(Players:GetPlayers()) do
 					if plr ~= player and isAuthorized(plr) then
-						LiveSync:FireClient(plr, { reload = true, originUserId = player.UserId, originName = player.DisplayName or player.Name, reason = "undo" })
+						LiveSync:FireClient(
+							plr,
+							{
+								reload = true,
+								originUserId = player.UserId,
+								originName = player.DisplayName or player.Name,
+								reason = "undo",
+							}
+						)
 					end
 				end
 				return snap
@@ -808,7 +1038,15 @@ api.OnServerInvoke = function(player, command, payload)
 				snap.result.redoDepth = result.result.redoDepth
 				for _, plr in ipairs(Players:GetPlayers()) do
 					if plr ~= player and isAuthorized(plr) then
-						LiveSync:FireClient(plr, { reload = true, originUserId = player.UserId, originName = player.DisplayName or player.Name, reason = "redo" })
+						LiveSync:FireClient(
+							plr,
+							{
+								reload = true,
+								originUserId = player.UserId,
+								originName = player.DisplayName or player.Name,
+								reason = "redo",
+							}
+						)
 					end
 				end
 				return snap
@@ -820,10 +1058,14 @@ api.OnServerInvoke = function(player, command, payload)
 			return { diff = Editor.diffAgainstBaseline(), historyDepth = Editor.historyDepth() }
 		end)
 	elseif command == "saveDraft" then
-		if not STAGING_ENABLED then return { ok = false, error = "staging disabled" } end
+		if not STAGING_ENABLED then
+			return { ok = false, error = "staging disabled" }
+		end
 		return safeCall(Editor.saveDraft)
 	elseif command == "loadDraft" then
-		if not STAGING_ENABLED then return { ok = false, error = "staging disabled" } end
+		if not STAGING_ENABLED then
+			return { ok = false, error = "staging disabled" }
+		end
 		local result = safeCall(Editor.loadDraft)
 		if result.ok then
 			local snap = safeCall(snapshotState)
@@ -834,25 +1076,35 @@ api.OnServerInvoke = function(player, command, payload)
 		end
 		return result
 	elseif command == "discardDraft" then
-		if not STAGING_ENABLED then return { ok = false, error = "staging disabled" } end
+		if not STAGING_ENABLED then
+			return { ok = false, error = "staging disabled" }
+		end
 		local result = safeCall(Editor.discardDraft)
 		if result.ok then
 			local snap = safeCall(snapshotState)
-			if snap.ok then return snap end
+			if snap.ok then
+				return snap
+			end
 		end
 		return result
 	elseif command == "pullFromShared" then
-		if not STAGING_ENABLED then return { ok = false, error = "staging disabled" } end
+		if not STAGING_ENABLED then
+			return { ok = false, error = "staging disabled" }
+		end
 		local result = safeCall(Editor.pullFromShared)
 		if result.ok then
 			return safeCall(snapshotState)
 		end
 		return result
 	elseif command == "computeDiffVsShared" then
-		if not STAGING_ENABLED then return { ok = false, error = "staging disabled" } end
+		if not STAGING_ENABLED then
+			return { ok = false, error = "staging disabled" }
+		end
 		return safeCall(Editor.computeDiffVsShared)
 	elseif command == "promote" then
-		if not STAGING_ENABLED then return { ok = false, error = "staging disabled" } end
+		if not STAGING_ENABLED then
+			return { ok = false, error = "staging disabled" }
+		end
 		local selections = (type(payload) == "table" and payload.selections) or nil
 		local result = safeCall(Editor.promote, selections)
 		if result.ok then
@@ -876,10 +1128,20 @@ end
 
 Editor.load()
 local function countTable(t)
-	local n = 0 for _ in pairs(t) do n += 1 end return n
+	local n = 0
+	for _ in pairs(t) do
+		n += 1
+	end
+	return n
 end
 local st = Editor.getState()
-print(string.format("[DataEditorService] ready — %d countries, %d provinces loaded", countTable(st.countries), countTable(st.provinces)))
+print(
+	string.format(
+		"[DataEditorService] ready — %d countries, %d provinces loaded",
+		countTable(st.countries),
+		countTable(st.provinces)
+	)
+)
 
 local function adminSummary()
 	local parts = { "Studio=always" }
