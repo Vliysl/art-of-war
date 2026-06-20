@@ -129,6 +129,7 @@ function DataLoader.loadBundle()
 		officerTraits = pull("OfficerTraits"),
 		officerNames = pull("OfficerNames"),
 		navalMissions = pull("NavalMissions"),
+		technologies = pull("Technologies"),
 	}
 	local overlayModule = game:GetService("ServerStorage"):FindFirstChild("Services")
 	overlayModule = overlayModule and overlayModule:FindFirstChild("DataOverlay")

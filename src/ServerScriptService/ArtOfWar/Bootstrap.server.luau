@@ -201,8 +201,15 @@ do
 			if overlay.onMigrated then
 				overlay.onMigrated(function()
 					local stamper = context.ProvinceStamper
-					if stamper and stamper.applyTileOwnership then
-						pcall(stamper.applyTileOwnership)
+					if stamper then
+						if stamper.refreshEU4Mappings then
+							pcall(stamper.refreshEU4Mappings)
+						end
+						if stamper.stamp then
+							pcall(stamper.stamp)
+						elseif stamper.applyTileOwnership then
+							pcall(stamper.applyTileOwnership)
+						end
 					end
 					if context.StateReplicator and context.StateReplicator.broadcast then
 						pcall(context.StateReplicator.broadcast)
@@ -228,9 +235,10 @@ task.spawn(function()
 		local recovered = 0
 		pcall(function() recovered = stamper.refreshEU4Mappings() or 0 end)
 		if recovered > 0 then
+			-- Keep healing across the whole window: mappings can trickle in over several
+			-- throttled reads, so re-stamp on each recovery rather than bailing on the first.
 			if type(stamper.stamp) == "function" then pcall(stamper.stamp) end
 			print(string.format("[ArtOfWar] map self-healed: recovered %d province tile mappings after a throttled boot and re-stamped", recovered))
-			break
 		end
 	end
 end)
@@ -322,6 +330,10 @@ InputValidator.register("CancelTransition", {
 InputValidator.register("EnactPolicy", {
 	schema = { { name = "policyId", type = "policyId" } },
 	rate = { count = 3, window = 15 },
+})
+InputValidator.register("SetResearch", {
+	schema = { { name = "techId", type = "policyId" } },
+	rate = { count = 4, window = 10 },
 })
 InputValidator.register("RepealPolicy", {
 	schema = { { name = "policyId", type = "policyId" } },
@@ -613,6 +625,15 @@ bindEvent("RepealPolicy", function(player, policyId)
 	local tag = auth.tagFor(player)
 	if not tag then return end
 	system.repeal(tag, policyId, "voluntary")
+end)
+
+bindEvent("SetResearch", function(player, techId)
+	local auth = authority()
+	local system = loadedSystems.ResearchSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.startResearch(tag, techId)
 end)
 
 bindEvent("CancelLaw", function(player)
