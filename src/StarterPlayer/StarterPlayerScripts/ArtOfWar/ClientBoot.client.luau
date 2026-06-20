@@ -86,22 +86,27 @@ else
 	warn(string.format("[ArtOfWar] StateSync wire failed: StateSync=%s cache=%s", tostring(StateSync), tostring(ClientStateCache)))
 end
 
+local Hud = nil
+do
+	local uiFolder = aow:FindFirstChild("UI")
+	local hudMod = uiFolder and uiFolder:FindFirstChild("Hud")
+	if hudMod then
+		local ok, loaded = pcall(require, hudMod)
+		if ok then Hud = loaded end
+	end
+end
+
 local NotificationChannel = Remotes and Remotes:WaitForChild("NotificationChannel", 120)
 if NotificationChannel then
 	NotificationChannel.OnClientEvent:Connect(function(payload)
 		if type(payload) ~= "table" then return end
-		local uiFolder = aow:FindFirstChild("UI")
-		local uiModule = uiFolder and uiFolder:FindFirstChild("UIController")
-		if uiModule then
-			local ok, UI = pcall(require, uiModule)
-			if ok and UI and UI.notify then
-				UI.notify({
-					title = payload.title,
-					body = payload.body,
-					kind = payload.kind,
-					ttl = payload.ttl,
-				})
-			end
+		if Hud and Hud.notify then
+			Hud.notify({
+				title = payload.title,
+				body = payload.body,
+				kind = payload.kind,
+				ttl = payload.ttl,
+			})
 		end
 	end)
 end
@@ -111,26 +116,31 @@ safeCall(SprintController, "start")
 safeCall(MapModeController, "start")
 safeCall(ChatCommands, "start")
 
-local UIController = nil
-local uiFolder = aow:FindFirstChild("UI")
-if uiFolder then
-	local uiModule = uiFolder:FindFirstChild("UIController")
-	if uiModule then
-		local ok, loaded = pcall(require, uiModule)
-		if ok then UIController = loaded end
+do
+	local uiFolder = aow:FindFirstChild("UI")
+	local wiringMod = uiFolder and uiFolder:FindFirstChild("HudWiring")
+	if wiringMod then
+		local ok, HudWiring = pcall(require, wiringMod)
+		if ok and HudWiring and HudWiring.start then
+			local started, err = pcall(function()
+				HudWiring.start({
+					ClientStateCache = ClientStateCache,
+					MapModeController = MapModeController,
+					ProvinceInteraction = ProvinceInteraction,
+					ProvinceCodes = safeRequire("ProvinceCodes"),
+					ArmyView = ArmyView,
+					PathPreview = safeRequire("PathPreview"),
+					WaterBodies = safeRequire("WaterBodies"),
+				})
+			end)
+			if not started then
+				warn("[ArtOfWar] HudWiring.start failed: " .. tostring(err))
+			end
+		else
+			warn("[ArtOfWar] HudWiring require failed: " .. tostring(HudWiring))
+		end
 	end
 end
-safeCall(UIController, "start")
-
-task.spawn(function()
-	local uiFolder = aow:FindFirstChild("UI")
-	local builderMod = uiFolder and uiFolder:FindFirstChild("UIBuilder")
-	if not builderMod then return end
-	local ok, builder = pcall(require, builderMod)
-	if ok and builder and builder.preloadHoverAssets then
-		builder.preloadHoverAssets()
-	end
-end)
 
 task.defer(function()
 	if RequestFullState and ClientStateCache then

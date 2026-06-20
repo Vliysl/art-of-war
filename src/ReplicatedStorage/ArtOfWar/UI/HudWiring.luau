@@ -1,0 +1,624 @@
+local Players = game:GetService("Players")
+
+local UI = script.Parent
+local ArtOfWar = UI.Parent
+local Hud = require(UI.Hud)
+local Registries = require(UI.Registries)
+local ProvinceTooltip = require(UI.Components.ProvinceTooltip)
+
+local HudWiring = {}
+
+local nationSelectActive = false
+local nationSelectApi = nil
+
+local BOOT_DEBUG = true
+local function nslog(...)
+	if BOOT_DEBUG then
+		print("[AoW NationSelect]", ...)
+	end
+end
+
+function HudWiring.setNationSelectActive(v)
+	nationSelectActive = v == true
+end
+
+function HudWiring.setNationSelectApi(api)
+	nationSelectApi = api
+end
+
+local MONTHS = {
+	"January",
+	"February",
+	"March",
+	"April",
+	"May",
+	"June",
+	"July",
+	"August",
+	"September",
+	"October",
+	"November",
+	"December",
+}
+local MAP_MODES = {
+	{ key = "political", icon = "MapPolitical", label = "Political" },
+	{ key = "terrain", icon = "MapTerrain", label = "Terrain" },
+	{ key = "culture", icon = "MapCulture", label = "Culture" },
+	{ key = "religion", icon = "MapReligion", label = "Religion" },
+	{ key = "trade", icon = "MapTrade", label = "Trade Goods" },
+}
+
+local function prettify(id)
+	if type(id) ~= "string" or id == "" then
+		return nil
+	end
+	local out = {}
+	for word in id:gmatch("[^_%s]+") do
+		out[#out + 1] = word:sub(1, 1):upper() .. word:sub(2)
+	end
+	return table.concat(out, " ")
+end
+
+local function abbreviate(n)
+	if type(n) ~= "number" then
+		return nil
+	end
+	local sign = n < 0 and "-" or ""
+	local a = math.abs(n)
+	if a >= 1e9 then
+		return string.format("%s%.2fB", sign, a / 1e9)
+	elseif a >= 1e6 then
+		return string.format("%s%.2fM", sign, a / 1e6)
+	elseif a >= 1e3 then
+		return string.format("%s%.1fK", sign, a / 1e3)
+	end
+	return string.format("%s%d", sign, math.floor(a + 0.5))
+end
+
+local function money(n)
+	local a = abbreviate(n)
+	return a and ("\u{00A3}" .. a) or "\u{2014}"
+end
+
+local function delta(n)
+	if type(n) ~= "number" or n == 0 then
+		return nil
+	end
+	return (n > 0 and "+" or "") .. abbreviate(n)
+end
+
+local function signed(n)
+	if type(n) ~= "number" then
+		return "\u{2014}"
+	end
+	local mag = math.floor(math.abs(n) + 0.5)
+	if mag == 0 then
+		return "0"
+	end
+	return (n < 0 and "-" or "+") .. tostring(mag)
+end
+
+local function colorOf(arr)
+	if type(arr) == "table" and arr[1] then
+		return Color3.fromRGB(arr[1], arr[2], arr[3])
+	end
+	return nil
+end
+
+function HudWiring.start(modules)
+	modules = modules or {}
+	local ClientStateCache = modules.ClientStateCache
+	local MapModeController = modules.MapModeController
+	local ProvinceInteraction = modules.ProvinceInteraction
+	if not ClientStateCache then
+		return
+	end
+
+	local localPlayer = Players.LocalPlayer
+	local Remotes = ArtOfWar:FindFirstChild("Remotes")
+	local function fire(name, ...)
+		local r = Remotes and Remotes:FindFirstChild(name)
+		if r then
+			r:FireServer(...)
+		end
+	end
+
+	local claimedTag = nil
+	local nationSelectShown = false
+
+	local function aggregateArmies(tag)
+		local regiments = 0
+		for _, a in pairs(ClientStateCache.allArmies() or {}) do
+			if a.ownerTag == tag then
+				for _, n in pairs(a.composition or {}) do
+					regiments += n
+				end
+			end
+		end
+		return regiments, regiments * 1000
+	end
+
+	local function provinceTotals()
+		local totals = {}
+		for _, p in pairs(ClientStateCache.allProvinces() or {}) do
+			local owner = p.ownerTag
+			if owner then
+				local t = totals[owner]
+				if not t then
+					t = { count = 0, dev = 0 }
+					totals[owner] = t
+				end
+				t.count += 1
+				t.dev += (p.devTier or 0)
+			end
+		end
+		return totals
+	end
+
+	local function normalizeCountry(tag)
+		local c = ClientStateCache.getCountry(tag)
+		if not c then
+			return nil
+		end
+		return {
+			code = tag,
+			name = c.displayName or tag,
+			color = colorOf(c.color),
+			government = prettify(c.governmentForm),
+			culture = prettify(c.primaryCulture),
+			resources = {
+				treasury = money(c.treasury),
+				treasuryDelta = delta(c.lastIncome),
+				treasuryDeltaNum = c.lastIncome or 0,
+				manpower = abbreviate(c.manpower) or "\u{2014}",
+				pp = abbreviate(c.politicalPower or 0) or "0",
+				stability = signed(c.stability),
+				legitimacy = tostring(math.floor((c.legitimacy or 0) + 0.5)),
+			},
+		}
+	end
+
+	local function tagOrNil(t)
+		if t == nil or t == "" or t == "NONE" then
+			return nil
+		end
+		return t
+	end
+
+	local function recordFromPart(part, id)
+		local owner = tagOrNil(part:GetAttribute("owner"))
+		local rawName = part:GetAttribute("province_name") or part.Name
+		local name = tostring(rawName):gsub("^prov_%d+_", ""):gsub("_", " ")
+		return {
+			id = id,
+			name = name,
+			displayCityName = name,
+			ownerTag = owner,
+			controllerTag = tagOrNil(part:GetAttribute("controller")) or owner,
+			terrain = part:GetAttribute("terrain"),
+			climate = part:GetAttribute("climate"),
+			culture = part:GetAttribute("culture"),
+			religion = part:GetAttribute("religion"),
+			tradeGood = part:GetAttribute("trade_good"),
+			baseTax = part:GetAttribute("base_tax"),
+			baseProduction = part:GetAttribute("base_production"),
+			baseManpower = part:GetAttribute("base_manpower"),
+			devTier = part:GetAttribute("dev_tier"),
+			infraTier = part:GetAttribute("infra_tier"),
+			fortTier = part:GetAttribute("fort_tier"),
+			population = part:GetAttribute("population"),
+			isCity = part:GetAttribute("is_city"),
+			unrest = part:GetAttribute("unrest"),
+			autonomy = part:GetAttribute("autonomy"),
+		}
+	end
+
+	-- Resolve a hovered/clicked province PART to a record without depending solely on the
+	-- province_id attribute (only ~45% of land parts carry it). Order: live cache record by
+	-- id -> build from the part's own stamped attributes (covers cache-miss and parts that
+	-- were ownership-painted but never id-mapped) -> nil for genuinely empty/sea land. The
+	-- returned id is numeric (or nil); callers that need a server target no-op when it is nil.
+	local function provinceFromPart(part)
+		if not part then
+			return nil
+		end
+		if part:GetAttribute("is_sea") == true then
+			return nil
+		end
+		local id = part:GetAttribute("province_id")
+		if id then
+			local cached = ClientStateCache.getProvince(id)
+			if cached then
+				return cached, id
+			end
+			return recordFromPart(part, id), id
+		end
+		if not tagOrNil(part:GetAttribute("owner")) then
+			return nil
+		end
+		return recordFromPart(part, nil), nil
+	end
+
+	local function normalizeProvince(p, id)
+		if not p then
+			return nil
+		end
+		id = id or p.id
+		local ownerCountry = p.ownerTag and ClientStateCache.getCountry(p.ownerTag)
+		return {
+			id = id,
+			name = p.displayCityName or p.name or (id and ("Province #" .. tostring(id))) or "Province",
+			ownerTag = p.ownerTag,
+			ownerName = ownerCountry and ownerCountry.displayName or p.ownerTag,
+			ownerColor = ownerCountry and colorOf(ownerCountry.color) or nil,
+			terrain = prettify(p.terrain),
+			devTotal = (p.baseTax or 0) + (p.baseProduction or 0) + (p.baseManpower or 0),
+			devAdm = p.baseTax,
+			devDip = p.baseProduction,
+			devMil = p.baseManpower,
+			tradeGood = prettify(p.tradeGood),
+			fortLevel = p.fortLevel or p.fortTier or p.infraTier,
+			culture = prettify(p.culture),
+			religion = prettify(p.religion),
+			unrest = p.unrest or 0,
+			autonomy = p.autonomy or 0,
+			tax = abbreviate(p.baseTax),
+			production = abbreviate(p.baseProduction),
+			manpower = abbreviate(p.baseManpower),
+			isOwn = p.ownerTag == claimedTag,
+		}
+	end
+
+	local function buildClaimable()
+		local nations = {}
+		local totals = provinceTotals()
+		for tag, c in pairs(ClientStateCache.allCountries() or {}) do
+			if not c.claimedBy then
+				local t = totals[tag]
+				nations[#nations + 1] = {
+					tag = tag,
+					name = c.displayName or tag,
+					color = colorOf(c.color),
+					government = prettify(c.governmentForm),
+					treasury = money(c.treasury),
+					manpower = abbreviate(c.manpower),
+					provinces = t and t.count or 0,
+					development = t and t.dev or 0,
+					regiments = (aggregateArmies(tag)),
+				}
+			end
+		end
+		table.sort(nations, function(a, b)
+			return (a.name or "") < (b.name or "")
+		end)
+		return nations
+	end
+
+	local function resolveTag()
+		for tag, c in pairs(ClientStateCache.allCountries() or {}) do
+			if c.claimedBy == localPlayer.UserId then
+				return tag
+			end
+		end
+		return nil
+	end
+
+	Hud.bind({
+		onMapMode = function(mode)
+			if MapModeController then
+				MapModeController.requestMode(mode)
+			end
+		end,
+		action = function(name, payload)
+			HudWiring.action(name, payload, fire, claimedTag)
+		end,
+	})
+
+	Hud.start({ mapModes = MAP_MODES, parentGui = modules.parentGui })
+
+	Hud.setContext({
+		tag = claimedTag,
+		cache = ClientStateCache,
+		fire = fire,
+		registries = Registries,
+		openArmyPanel = Hud.openArmyPanel,
+		openFleetPanel = Hud.openFleetPanel,
+	})
+
+	local function countryCount()
+		local n = 0
+		for _ in pairs(ClientStateCache.allCountries() or {}) do
+			n += 1
+		end
+		return n
+	end
+
+	local function showNationSelection()
+		nslog("showNationSelection() called; countries=" .. countryCount())
+		if MapModeController then
+			MapModeController.requestMode("political")
+		end
+		local handle = Hud.openNationSelection({
+			nations = buildClaimable(),
+			onPlay = function(tag)
+				fire("ClaimCountry", tag)
+			end,
+		})
+		-- Arm the map-routing flag and hide the HUD AFTER the screen mounts: Hud.openNationSelection
+		-- closes any stale screen first, and that destroy() resets nationSelectActive + re-enables the
+		-- HUD layer -- doing this last makes the final state independent of that ordering.
+		nationSelectActive = true
+		local hudLayer = Hud.getLayer("Hud")
+		if hudLayer then
+			hudLayer.Enabled = false
+		end
+		local root = handle and handle.root
+		nslog(
+			"nation selection mounted: handle="
+				.. tostring(handle ~= nil)
+				.. " rootParent="
+				.. tostring(root and root.Parent and root.Parent.Name)
+		)
+	end
+
+	-- State-based: reconciles the UI to whatever the CURRENT claimed/unclaimed state is, rather
+	-- than only reacting to a claimed<->unclaimed transition. This is what makes the screen open
+	-- for a freshly-loaded unclaimed player once country data lands (newTag stays nil, so the old
+	-- transition gate never fired).
+	local countryDirty = false
+	local function scheduleCountryRefresh()
+		if countryDirty then
+			return
+		end
+		countryDirty = true
+		task.defer(function()
+			countryDirty = false
+			claimedTag = resolveTag()
+			Hud.setContext({ tag = claimedTag })
+			if claimedTag then
+				if nationSelectShown or nationSelectActive then
+					nslog("claimed as " .. tostring(claimedTag) .. " -> closing selection, restoring HUD")
+					nationSelectShown = false
+					nationSelectActive = false
+					nationSelectApi = nil
+					Hud.closeNationSelection()
+				end
+				local restoreHud = Hud.getLayer("Hud")
+				if restoreHud and not restoreHud.Enabled then
+					restoreHud.Enabled = true
+				end
+				local data = normalizeCountry(claimedTag)
+				if data then
+					Hud.setCountry(data)
+				end
+			elseif not nationSelectShown and countryCount() > 0 then
+				nationSelectShown = true
+				showNationSelection()
+			end
+		end)
+	end
+
+	ClientStateCache.onChangePrefix("countries", scheduleCountryRefresh)
+	ClientStateCache.onChangePrefix("armies", scheduleCountryRefresh)
+	ClientStateCache.onChange("snapshot", scheduleCountryRefresh)
+
+	local timeSync = Remotes and Remotes:FindFirstChild("TimeSync")
+	if timeSync then
+		timeSync.OnClientEvent:Connect(function(packet)
+			if type(packet) ~= "table" then
+				return
+			end
+			if packet.year and packet.month then
+				Hud.setClock(string.format("%d %s %d", packet.day or 1, MONTHS[packet.month] or "", packet.year))
+			end
+		end)
+	end
+
+	if MapModeController then
+		MapModeController.onChange(function(mode)
+			Hud.setMapMode(mode)
+		end)
+	end
+
+	local ArmyView = modules.ArmyView
+	local PathPreview = modules.PathPreview
+	local WaterBodies = modules.WaterBodies
+	local tooltip = ProvinceTooltip.create(Hud.getLayer("Tooltips"))
+
+	local function selectedArmies()
+		if ArmyView and ArmyView.getSelectedArmyIds then
+			return ArmyView.getSelectedArmyIds()
+		end
+		return nil
+	end
+
+	local function tooltipInfo(prov)
+		local owner = "Unclaimed"
+		if prov.ownerTag then
+			local oc = ClientStateCache.getCountry(prov.ownerTag)
+			owner = (oc and oc.displayName) or prov.ownerTag
+			if prov.controllerTag and prov.controllerTag ~= prov.ownerTag then
+				local cc = ClientStateCache.getCountry(prov.controllerTag)
+				owner = owner .. " (occupied by " .. ((cc and cc.displayName) or prov.controllerTag) .. ")"
+			end
+		end
+		local terrain = prettify(prov.terrain)
+		local climate = prettify(prov.climate)
+		local culture = prettify(prov.culture)
+		local religion = prettify(prov.religion)
+		local dev = string.format("Dev %d  \u{00B7}  Infra %d", prov.devTier or 0, prov.infraTier or 0)
+		if prov.population then
+			dev = dev .. "  \u{00B7}  Pop " .. tostring(prov.population)
+		end
+		return {
+			name = prov.displayCityName or prov.name or ("Province #" .. tostring(prov.id or "?")),
+			owner = owner,
+			terrain = (terrain and climate) and (terrain .. "  \u{00B7}  " .. climate) or terrain,
+			society = (culture and religion) and (culture .. "  \u{00B7}  " .. religion) or culture or religion,
+			dev = dev,
+		}
+	end
+
+	local function updatePathPreview(part)
+		if not (PathPreview and PathPreview.show) then
+			return
+		end
+		local sel = selectedArmies()
+		local toId = part and part:GetAttribute("province_id")
+		if sel and #sel > 0 and toId then
+			local army = ClientStateCache.getArmy(sel[1])
+			if army and army.provinceId then
+				pcall(PathPreview.show, army.provinceId, toId, ClientStateCache, claimedTag)
+				return
+			end
+		end
+		if PathPreview.clear then
+			PathPreview.clear()
+		end
+	end
+
+	if ProvinceInteraction then
+		ProvinceInteraction.addSelectListener(function(part)
+			if nationSelectActive then
+				if part then
+					local rec = provinceFromPart(part)
+					if nationSelectApi then
+						nationSelectApi.setCandidateFromMap(rec and rec.ownerTag)
+					end
+					ProvinceInteraction.clearSelectionSilent()
+				end
+				return
+			end
+			if not part then
+				Hud.closeContext()
+				return
+			end
+			local rec, id = provinceFromPart(part)
+			if rec then
+				Hud.openProvince(normalizeProvince(rec, id))
+			else
+				Hud.closeContext()
+			end
+		end)
+
+		ProvinceInteraction.addHoverListener(function(part)
+			if nationSelectActive then
+				tooltip.hide()
+				if nationSelectApi then
+					local rec = part and provinceFromPart(part)
+					nationSelectApi.hoverCountry(rec and rec.ownerTag)
+				end
+				return
+			end
+			local rec = part and provinceFromPart(part)
+			if rec then
+				tooltip.showProvince(tooltipInfo(rec))
+			else
+				tooltip.hide()
+			end
+			updatePathPreview(part)
+		end)
+
+		if ProvinceInteraction.onWater then
+			ProvinceInteraction.onWater(function(wx, wz)
+				if nationSelectActive then
+					tooltip.hide()
+					if nationSelectApi then
+						nationSelectApi.hoverCountry(nil)
+					end
+					return
+				end
+				if wx and wz then
+					local name = WaterBodies and WaterBodies.getWaterBodyAt and WaterBodies.getWaterBodyAt(wx, wz)
+					tooltip.showWater(name or "Open Water")
+				else
+					tooltip.hide()
+				end
+			end)
+		end
+
+		if ArmyView and ProvinceInteraction.onRightClick then
+			if ProvinceInteraction.setRightClickPredicate then
+				ProvinceInteraction.setRightClickPredicate(function()
+					local sel = selectedArmies()
+					return sel ~= nil and #sel > 0
+				end)
+			end
+			ProvinceInteraction.onRightClick(function(part)
+				local sel = selectedArmies()
+				if not sel or #sel == 0 then
+					return
+				end
+				local _, id = provinceFromPart(part)
+				if not id then
+					return
+				end
+				for _, armyId in ipairs(sel) do
+					fire("MoveArmyPath", armyId, id)
+				end
+				if PathPreview and PathPreview.clear then
+					PathPreview.clear()
+				end
+			end)
+		end
+	end
+
+	if ArmyView and ArmyView.onArmySelected then
+		ArmyView.onArmySelected(function(armyId)
+			if not armyId then
+				return
+			end
+			local army = ClientStateCache.getArmy(armyId)
+			local provinceId = army and army.provinceId
+			local ids = {}
+			for id, a in pairs(ClientStateCache.allArmies() or {}) do
+				if a.ownerTag == claimedTag and a.provinceId == provinceId then
+					table.insert(ids, id)
+				end
+			end
+			if #ids == 0 then
+				ids = { armyId }
+			end
+			Hud.openArmyPanel({ armyId = armyId, armyIds = ids, provinceId = provinceId })
+		end)
+	end
+
+	claimedTag = resolveTag()
+	Hud.setContext({ tag = claimedTag })
+	nslog("boot: claimedTag=" .. tostring(claimedTag) .. " countries=" .. countryCount())
+	if claimedTag then
+		local data = normalizeCountry(claimedTag)
+		if data then
+			Hud.setCountry(data)
+		end
+	else
+		scheduleCountryRefresh()
+		task.spawn(function()
+			local deadline = os.clock() + 30
+			while not nationSelectShown and not claimedTag and os.clock() < deadline do
+				task.wait(0.25)
+				if countryCount() > 0 then
+					scheduleCountryRefresh()
+				end
+			end
+			if not nationSelectShown and not claimedTag then
+				warn("[AoW NationSelect] selection screen did not open within 30s -- no country data received")
+			end
+		end)
+	end
+
+	return Hud
+end
+
+function HudWiring.action(name, payload, fire, claimedTag)
+	payload = payload or {}
+	if name == "acceptPeace" and payload.proposalId then
+		fire("AcceptPeace", payload.proposalId)
+	elseif name == "rejectPeace" and payload.proposalId then
+		fire("RejectPeace", payload.proposalId)
+	elseif name == "releaseNation" then
+		fire("ReleaseCountry")
+	end
+end
+
+return HudWiring

@@ -1,0 +1,274 @@
+local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
+local Colors = DesignSystem.Colors
+local Typography = DesignSystem.Typography
+local Spacing = DesignSystem.Spacing
+local Icons = DesignSystem.Icons
+local Shells = DesignSystem.Shells
+local CountryBadge = require(script.Parent.Parent.Components.CountryBadge)
+local Tooltip = require(script.Parent.Parent.Components.Tooltip)
+
+local CountryBar = {}
+
+local MENUS = { "Politics", "Economy", "Military", "Diplomacy", "Research", "Missions" }
+local PILL_W = 104
+local NAME_W = 200
+local PILLS_RESERVE = 300
+
+local STAT_TIPS = {
+	Treasury = { title = "Treasury", body = "Gold in your treasury. The green value is your monthly income." },
+	Manpower = { title = "Manpower", body = "Recruits available to raise and reinforce regiments." },
+	PowerProj = { title = "Political Power", body = "Spent on laws, policies, diplomacy, and national actions." },
+	Stability = {
+		title = "Stability",
+		body = "National stability. Higher stability improves income and lowers unrest.",
+	},
+	Legitimacy = {
+		title = "Legitimacy",
+		body = "Government legitimacy. Low legitimacy raises unrest and weakens your rule.",
+	},
+}
+
+local function text(parent, str, role, color, props)
+	local l = Instance.new("TextLabel")
+	l.BackgroundTransparency = 1
+	l.Text = str or ""
+	l.TextColor3 = color or Colors.TextPrimary
+	l.TextXAlignment = Enum.TextXAlignment.Left
+	l.TextYAlignment = Enum.TextYAlignment.Center
+	l.TextTruncate = Enum.TextTruncate.AtEnd
+	Typography.apply(l, role)
+	for k, v in props or {} do
+		l[k] = v
+	end
+	if not (props and props.Parent) then
+		l.Parent = parent
+	end
+	return l
+end
+
+local function statPill(parent, iconKey, value, delta, deltaColor, order, tooltipLayer)
+	local pill = Shells.create("stat_pill_shell", {
+		Size = UDim2.fromOffset(PILL_W, 36),
+		LayoutOrder = order,
+	})
+	pill.Parent = parent
+
+	local icon = Icons.create(iconKey, 14, Colors.TextSecondary)
+	icon.AnchorPoint = Vector2.new(0, 0.5)
+	icon.Position = UDim2.new(0, 12, 0.5, 0)
+	icon.Parent = pill
+
+	text(pill, value, "value", Colors.TextPrimary, {
+		Parent = pill,
+		Position = UDim2.fromOffset(34, delta and 4 or 0),
+		Size = UDim2.new(1, -42, 0, delta and 16 or 36),
+		TextYAlignment = delta and Enum.TextYAlignment.Bottom or Enum.TextYAlignment.Center,
+	})
+	if delta and delta ~= "" then
+		text(pill, delta, "caption", deltaColor or Colors.TextSecondary, {
+			Parent = pill,
+			Position = UDim2.fromOffset(34, 19),
+			Size = UDim2.new(1, -42, 0, 13),
+		})
+	end
+
+	local tip = STAT_TIPS[iconKey]
+	if tip and tooltipLayer then
+		local hit = Instance.new("TextButton")
+		hit.Name = "Hit"
+		hit.Size = UDim2.fromScale(1, 1)
+		hit.BackgroundTransparency = 1
+		hit.AutoButtonColor = false
+		hit.Text = ""
+		hit.ZIndex = 10
+		hit.Parent = pill
+
+		-- Anchor the tooltip ABOVE the pill with a fixed gap (it does NOT follow the cursor). The
+		-- cursor stays inside the pill, always below the tooltip, so it can never occlude the cursor
+		-- and cause a hover leave/re-enter flicker loop.
+		local current
+		local function clearTip()
+			if current then
+				current:Destroy()
+				current = nil
+			end
+		end
+		local function anchor()
+			if not current then
+				return
+			end
+			local us = tooltipLayer:FindFirstChildWhichIsA("UIScale")
+			local scale = (us and us.Scale) or 1
+			local cam = workspace.CurrentCamera
+			local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
+			local tw = current.AbsoluteSize.X > 0 and current.AbsoluteSize.X or 196 * scale
+			local th = current.AbsoluteSize.Y > 0 and current.AbsoluteSize.Y or 64 * scale
+			local pp, ps = pill.AbsolutePosition, pill.AbsoluteSize
+			local x = pp.X + ps.X / 2 - tw / 2
+			local y = pp.Y - th - 8
+			if y < 8 then
+				y = pp.Y + ps.Y + 8
+			end
+			x = math.clamp(x, 8, math.max(8, vp.X - tw - 8))
+			current.Position = UDim2.fromOffset(x / scale, y / scale)
+		end
+		hit.MouseEnter:Connect(function()
+			clearTip()
+			current = Tooltip.create({ title = tip.title, body = tip.body, width = 196, compact = true })
+			current:SetAttribute("AoWInputSink", false)
+			current.Parent = tooltipLayer
+			anchor()
+			task.defer(anchor)
+		end)
+		hit.MouseLeave:Connect(clearTip)
+		hit.Destroying:Connect(clearTip)
+	end
+	return pill
+end
+
+function CountryBar.create(config)
+	config = config or {}
+	local r = config.resources or {}
+	local z = config.zIndex or 5
+
+	local root = Instance.new("Frame")
+	root.Name = "CountryStrip"
+	root.AnchorPoint = Vector2.new(0, 1)
+	root.Position = config.position or UDim2.new(0, 16, 1, -16)
+	root.Size = config.size or UDim2.fromOffset(900, 96)
+	root.BackgroundTransparency = 1
+	root.ZIndex = z
+	root:SetAttribute("AoWInputSink", true)
+
+	local bg = Shells.create("hud_country_bar_bg", { ZIndex = z })
+	bg.Name = "Bg"
+	bg.Parent = root
+
+	local content = Instance.new("Frame")
+	content.Name = "Content"
+	content.Size = UDim2.fromScale(1, 1)
+	content.BackgroundTransparency = 1
+	content.ZIndex = z + 1
+	content.Parent = root
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, Spacing.space4)
+	pad.PaddingRight = UDim.new(0, Spacing.space4)
+	pad.PaddingTop = UDim.new(0, Spacing.space3)
+	pad.PaddingBottom = UDim.new(0, Spacing.space2)
+	pad.Parent = content
+
+	local flag = CountryBadge.create({ code = config.code or "XXX", countryColor = config.color, size = "lg" })
+	flag.AnchorPoint = Vector2.new(0, 0)
+	flag.Position = UDim2.fromOffset(0, 0)
+	flag.Parent = content
+
+	text(content, config.name or "Unknown", "displayMd", Colors.TextPrimary, {
+		Position = UDim2.fromOffset(84, 0),
+		Size = UDim2.fromOffset(NAME_W, 24),
+	})
+	local cult = config.culture and ("  \u{00B7}  " .. config.culture) or ""
+	text(content, (config.government or "") .. cult, "bodySm", Colors.TextSecondary, {
+		Position = UDim2.fromOffset(84, 26),
+		Size = UDim2.fromOffset(NAME_W, 16),
+	})
+
+	local pills = Instance.new("Frame")
+	pills.Name = "Pills"
+	pills.AnchorPoint = Vector2.new(1, 0)
+	pills.Position = UDim2.new(1, 0, 0, 2)
+	pills.Size = UDim2.new(1, -PILLS_RESERVE, 0, 36)
+	pills.BackgroundTransparency = 1
+	pills.Parent = content
+	local pl = Instance.new("UIListLayout")
+	pl.FillDirection = Enum.FillDirection.Horizontal
+	pl.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	pl.SortOrder = Enum.SortOrder.LayoutOrder
+	pl.Padding = UDim.new(0, Spacing.space2)
+	pl.VerticalAlignment = Enum.VerticalAlignment.Center
+	pl.Parent = pills
+
+	local tipLayer = config.tooltipLayer
+	statPill(pills, "Treasury", r.treasury or "0", r.treasuryDelta, Colors.delta(r.treasuryDeltaNum or 0), 1, tipLayer)
+	statPill(pills, "Manpower", r.manpower or "0", nil, nil, 2, tipLayer)
+	statPill(pills, "PowerProj", r.pp or "0", nil, nil, 3, tipLayer)
+	statPill(pills, "Stability", r.stability or "0", nil, nil, 4, tipLayer)
+	statPill(pills, "Legitimacy", r.legitimacy or "0", nil, nil, 5, tipLayer)
+
+	local menuRow = Instance.new("Frame")
+	menuRow.Name = "MenuRow"
+	menuRow.AnchorPoint = Vector2.new(0, 1)
+	menuRow.Position = UDim2.new(0, 84, 1, 0)
+	menuRow.Size = UDim2.new(1, -84, 0, 22)
+	menuRow.BackgroundTransparency = 1
+	menuRow.Parent = content
+	local ml = Instance.new("UIListLayout")
+	ml.FillDirection = Enum.FillDirection.Horizontal
+	ml.HorizontalAlignment = Enum.HorizontalAlignment.Left
+	ml.SortOrder = Enum.SortOrder.LayoutOrder
+	ml.Padding = UDim.new(0, Spacing.space5)
+	ml.VerticalAlignment = Enum.VerticalAlignment.Center
+	ml.Parent = menuRow
+
+	local buttons = {}
+	local active = nil
+	local function setActive(key)
+		active = key
+		for k, b in buttons do
+			local on = k == key
+			b.label.TextColor3 = on and Colors.Accent or Colors.TextSecondary
+			b.underline.BackgroundTransparency = on and 0 or 1
+		end
+	end
+
+	for i, name in ipairs(MENUS) do
+		local btn = Instance.new("TextButton")
+		btn.Name = name
+		btn.AutomaticSize = Enum.AutomaticSize.X
+		btn.Size = UDim2.new(0, 0, 1, 0)
+		btn.BackgroundTransparency = 1
+		btn.AutoButtonColor = false
+		btn.Text = ""
+		btn.LayoutOrder = i
+		btn.Parent = menuRow
+
+		local lbl = text(btn, name:upper(), "caption", Colors.TextSecondary, {
+			AutomaticSize = Enum.AutomaticSize.X,
+			Size = UDim2.new(0, 0, 1, 0),
+		})
+		local underline = Instance.new("Frame")
+		underline.Name = "Underline"
+		underline.AnchorPoint = Vector2.new(0, 1)
+		underline.Position = UDim2.new(0, 0, 1, 0)
+		underline.Size = UDim2.new(1, 0, 0, 2)
+		underline.BackgroundColor3 = Colors.Accent
+		underline.BackgroundTransparency = 1
+		underline.BorderSizePixel = 0
+		underline.Parent = btn
+
+		buttons[name] = { label = lbl, underline = underline }
+		btn.MouseEnter:Connect(function()
+			if active ~= name then
+				lbl.TextColor3 = Colors.TextPrimary
+			end
+		end)
+		btn.MouseLeave:Connect(function()
+			if active ~= name then
+				lbl.TextColor3 = Colors.TextSecondary
+			end
+		end)
+		btn.MouseButton1Click:Connect(function()
+			setActive(name)
+			if config.onMenu then
+				config.onMenu(name)
+			end
+		end)
+	end
+	setActive("Politics")
+
+	if config.parent then
+		root.Parent = config.parent
+	end
+	return { root = root, setActive = setActive, buttons = buttons }
+end
+
+return CountryBar
