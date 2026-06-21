@@ -2,6 +2,7 @@ local ScreenKit = require(script.Parent.ScreenKit)
 local Components = script.Parent.Parent.Components
 local Button = require(Components.Button)
 local Modal = require(Components.Modal)
+local SimClock = require(script.Parent.Parent.Parent.Modules.SimClock)
 
 local EconomyScreen = {}
 
@@ -222,100 +223,126 @@ function EconomyScreen.create(ctx)
 	end
 
 	local function renderTrade(body)
+		local proposeRow = ScreenKit.buttonRow(body, 0)
+		Button.create({
+			parent = proposeRow,
+			variant = "primary",
+			text = "Propose Trade",
+			onClick = function()
+				require(script.Parent.TradeProposal).create(ctx)
+			end,
+		})
 		local mine = ctx.tag
-		local incoming, outgoing = {}, {}
-		for id, route in ctx.cache.allTrades() do
-			route.id = route.id or id
-			if route.toTag == mine then
-				incoming[#incoming + 1] = route
-			elseif route.fromTag == mine then
-				outgoing[#outgoing + 1] = route
+		local incoming, active = {}, {}
+		for id, ord in ctx.cache.allTradeOrders() do
+			ord.id = ord.id or id
+			if ord.state == "Pending" and ord.counterpartyTag == mine then
+				incoming[#incoming + 1] = ord
+			elseif
+				(ord.state == "Active" and (ord.initiatorTag == mine or ord.counterpartyTag == mine))
+				or (ord.state == "Pending" and ord.initiatorTag == mine)
+			then
+				active[#active + 1] = ord
 			end
 		end
 		table.sort(incoming, function(a, b)
 			return (a.id or 0) < (b.id or 0)
 		end)
-		table.sort(outgoing, function(a, b)
+		table.sort(active, function(a, b)
 			return (a.id or 0) < (b.id or 0)
 		end)
 
-		if #incoming == 0 and #outgoing == 0 then
-			ScreenKit.note(body, "No trade routes. Propose a deal from another nation's panel.", 1)
+		if #incoming == 0 and #active == 0 then
+			ScreenKit.note(body, "No active trades. Use \u{201C}Propose Trade\u{201D} to start one.", 1)
 			return
 		end
 
-		local function offerText(offer)
-			if type(offer) ~= "table" then
+		local function nationName(tag)
+			local c = ctx.cache.getCountry(tag)
+			return (c and c.displayName) or tag or "\u{2014}"
+		end
+		local function linesText(ord)
+			local parts = {}
+			for _, line in ipairs(ord.lines or {}) do
+				parts[#parts + 1] =
+					string.format("%s\u{00D7}%s", tostring(line.amount), goodName(registries, line.goodId))
+			end
+			if #parts == 0 then
 				return "\u{2014}"
 			end
-			return string.format("%s \u{00D7} %s", abbreviate(offer.amount) or "0", goodName(registries, offer.goodId))
+			return table.concat(parts, ", ")
 		end
 
 		if #incoming > 0 then
-			ScreenKit.section(body, "Incoming", 1)
+			ScreenKit.section(body, "Incoming Offers", 1)
 			local order = 2
-			for _, route in ipairs(incoming) do
-				local fromC = ctx.cache.getCountry(route.fromTag)
+			for _, ord in ipairs(incoming) do
+				local iAmBuyer = ord.buyerTag == mine
 				ScreenKit.stat(body, {
 					icon = "Trade",
-					label = (fromC and fromC.displayName) or route.fromTag or "\u{2014}",
-					value = route.state or "\u{2014}",
+					label = nationName(ord.initiatorTag),
+					value = iAmBuyer and "offers to sell" or "offers to buy",
 					layoutOrder = order,
 				})
-				ScreenKit.stat(body, { label = "They offer", value = offerText(route.offer), layoutOrder = order + 1 })
-				ScreenKit.stat(
-					body,
-					{ label = "They request", value = offerText(route.request), layoutOrder = order + 2 }
-				)
-				if route.state == "Proposed" then
-					local row = ScreenKit.buttonRow(body, order + 3)
-					Button.create({
-						parent = row,
-						variant = "primary",
-						text = "Accept",
-						onClick = function()
-							ctx.fire("AcceptTrade", route.id)
-						end,
-					})
-					Button.create({
-						parent = row,
-						variant = "ghost",
-						text = "Reject",
-						onClick = function()
-							ctx.fire("CancelTrade", route.id)
-						end,
-					})
-				end
+				ScreenKit.note(body, linesText(ord), order + 1)
+				ScreenKit.stat(body, {
+					label = iAmBuyer and "You pay" or "You receive",
+					value = money(ord.totalCost),
+					valueColor = iAmBuyer and "negative" or "positive",
+					mono = true,
+					layoutOrder = order + 2,
+				})
+				local row = ScreenKit.buttonRow(body, order + 3)
+				Button.create({
+					parent = row,
+					variant = "success",
+					text = "Accept",
+					onClick = function()
+						ctx.fire("AcceptTradeOrder", ord.id)
+					end,
+				})
+				Button.create({
+					parent = row,
+					variant = "ghost",
+					text = "Reject",
+					onClick = function()
+						ctx.fire("RejectTradeOrder", ord.id)
+					end,
+				})
 				order += 5
 			end
 		end
 
-		if #outgoing > 0 then
-			ScreenKit.section(body, "Outgoing", 30)
+		if #active > 0 then
+			ScreenKit.section(body, "Active Orders", 30)
 			local order = 31
-			for _, route in ipairs(outgoing) do
-				local toC = ctx.cache.getCountry(route.toTag)
+			for _, ord in ipairs(active) do
+				local otherTag = ord.initiatorTag == mine and ord.counterpartyTag or ord.initiatorTag
+				local verb = ord.buyerTag == mine and "Buying from" or "Selling to"
 				ScreenKit.stat(body, {
 					icon = "Trade",
-					label = (toC and toC.displayName) or route.toTag or "\u{2014}",
-					value = route.state or "\u{2014}",
+					label = string.format("%s %s", verb, nationName(otherTag)),
+					value = ord.recurring and "Recurring" or "One-time",
 					layoutOrder = order,
 				})
-				ScreenKit.stat(body, { label = "You offer", value = offerText(route.offer), layoutOrder = order + 1 })
-				ScreenKit.stat(
+				ScreenKit.note(
 					body,
-					{ label = "You request", value = offerText(route.request), layoutOrder = order + 2 }
+					linesText(ord)
+						.. "  \u{00B7}  "
+						.. money(ord.totalCost)
+						.. (ord.state == "Pending" and "  (awaiting reply)" or ""),
+					order + 1
 				)
-				local row = ScreenKit.buttonRow(body, order + 3)
+				local row = ScreenKit.buttonRow(body, order + 2)
 				Button.create({
 					parent = row,
-					variant = "ghost",
+					variant = "danger",
 					text = "Cancel",
 					onClick = function()
-						ctx.fire("CancelTrade", route.id)
+						ctx.fire("CancelTradeOrder", ord.id)
 					end,
 				})
-				order += 5
+				order += 4
 			end
 		end
 	end
@@ -409,7 +436,8 @@ function EconomyScreen.create(ctx)
 				local prov = item.provinceId and ctx.cache.getProvince(item.provinceId)
 				local pct = 0
 				if item.startedAt and item.completesAt and item.completesAt > item.startedAt then
-					pct = math.clamp((os.clock() - item.startedAt) / (item.completesAt - item.startedAt), 0, 1)
+					local now = SimClock.now() or item.startedAt
+					pct = math.clamp((now - item.startedAt) / (item.completesAt - item.startedAt), 0, 1)
 				end
 				ScreenKit.stat(body, {
 					icon = "Building",
@@ -518,7 +546,7 @@ function EconomyScreen.create(ctx)
 	})
 
 	table.insert(conns, ctx.cache.onChangePrefix("countries", scheduleRefresh))
-	table.insert(conns, ctx.cache.onChangePrefix("tradeRoutes", scheduleRefresh))
+	table.insert(conns, ctx.cache.onChangePrefix("tradeOrders", scheduleRefresh))
 	table.insert(conns, ctx.cache.onChangePrefix("provinces", scheduleRefresh))
 
 	render(activeTab)

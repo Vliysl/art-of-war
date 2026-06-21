@@ -102,6 +102,17 @@ local function traitText(registries, officer)
 	return table.concat(names, ", ")
 end
 
+local function modSummary(def)
+	local parts = {}
+	for k, v in pairs((def and def.modifiers) or {}) do
+		if type(v) == "number" and v ~= 0 then
+			parts[#parts + 1] = string.format("%s%g%% %s", v > 0 and "+" or "", v * 100, titleCase(k))
+		end
+	end
+	table.sort(parts)
+	return table.concat(parts, "  \u{00B7}  ")
+end
+
 function ArmyPanel.create(ctx)
 	local data = ctx.data or {}
 	local registries = ctx.registries
@@ -190,6 +201,123 @@ function ArmyPanel.create(ctx)
 		end
 	end
 
+	local function openOfficerTraits(army)
+		local officer = army and army.officer
+		local traitDefs = registries and registries.OfficerTraits
+		if type(officer) ~= "table" or not traitDefs then
+			return
+		end
+		local MAX = (type(traitDefs.MAX_TRAITS) == "number" and traitDefs.MAX_TRAITS) or 5
+		local domain = army.domain or "ground"
+		local pool = {}
+		for _, def in pairs(traitDefs) do
+			if type(def) == "table" and def.id and (def.domain == "any" or def.domain == domain) then
+				pool[#pool + 1] = def
+			end
+		end
+		table.sort(pool, function(a, b)
+			return (a.displayName or a.id) < (b.displayName or b.id)
+		end)
+
+		local selected = {}
+		for _, tid in ipairs(officer.traits or {}) do
+			selected[tid] = true
+		end
+		local function countSelected()
+			local n = 0
+			for _ in pairs(selected) do
+				n += 1
+			end
+			return n
+		end
+
+		local modal = Modal.create({
+			parent = ctx.modalLayer,
+			title = "Officer Traits",
+			subtitle = val(officer.name),
+			width = 420,
+			height = 460,
+			footer = true,
+		})
+		local list = Instance.new("ScrollingFrame")
+		list.Size = UDim2.fromScale(1, 1)
+		list.BackgroundTransparency = 1
+		list.BorderSizePixel = 0
+		list.ScrollBarThickness = 4
+		list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+		list.CanvasSize = UDim2.new()
+		list.Parent = modal.content
+		local layout = Instance.new("UIListLayout")
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
+		layout.Padding = UDim.new(0, 6)
+		layout.Parent = list
+
+		local function renderList()
+			for _, child in list:GetChildren() do
+				if child:IsA("GuiObject") then
+					child:Destroy()
+				end
+			end
+			local atCap = countSelected() >= MAX
+			ScreenKit.note(list, string.format("Selected %d / %d traits", countSelected(), MAX), 0)
+			for i, def in ipairs(pool) do
+				local on = selected[def.id] == true
+				local row = ScreenKit.stat(list, {
+					icon = "Star",
+					label = def.displayName or titleCase(def.id),
+					layoutOrder = i * 2,
+				})
+				local btn = Button.create({
+					parent = row,
+					variant = on and "secondary" or "ghost",
+					text = on and "Remove" or "Add",
+					width = 84,
+					size = "sm",
+					disabled = (not on) and atCap,
+					onClick = function()
+						if on then
+							selected[def.id] = nil
+						elseif countSelected() < MAX then
+							selected[def.id] = true
+						end
+						renderList()
+					end,
+				})
+				btn.AnchorPoint = Vector2.new(1, 0.5)
+				btn.Position = UDim2.fromScale(1, 0.5)
+				local sum = modSummary(def)
+				if sum ~= "" then
+					ScreenKit.note(list, sum, i * 2 + 1)
+				end
+			end
+		end
+		renderList()
+
+		Button.create({
+			parent = modal.footer,
+			variant = "ghost",
+			text = "Cancel",
+			layoutOrder = 1,
+			onClick = function()
+				modal.close()
+			end,
+		})
+		Button.create({
+			parent = modal.footer,
+			variant = "primary",
+			text = "Apply \u{00B7} 25 PP",
+			layoutOrder = 2,
+			onClick = function()
+				local ids = {}
+				for id in pairs(selected) do
+					ids[#ids + 1] = id
+				end
+				ctx.fire("ReassignOfficer", activeArmyId, ids)
+				modal.close()
+			end,
+		})
+	end
+
 	local function render()
 		handle.clearBody()
 		local body = handle.body
@@ -262,11 +390,22 @@ function ArmyPanel.create(ctx)
 				layoutOrder = 10,
 			})
 			ScreenKit.note(body, traitText(registries, officer), 11)
+			local canReassign = country and (country.politicalPower or 0) >= 25
+			local traitBtnRow = ScreenKit.buttonRow(body, 12)
+			Button.create({
+				parent = traitBtnRow,
+				variant = "secondary",
+				text = "Reassign Traits \u{00B7} 25 PP",
+				disabled = not canReassign,
+				onClick = function()
+					openOfficerTraits(army)
+				end,
+			})
 			ScreenKit.stat(body, {
 				label = "Experience",
 				value = commafy(officer.experience or 0),
 				mono = true,
-				layoutOrder = 12,
+				layoutOrder = 13,
 			})
 		end
 

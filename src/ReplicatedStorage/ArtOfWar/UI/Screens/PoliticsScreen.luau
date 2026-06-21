@@ -1,6 +1,7 @@
 local ScreenKit = require(script.Parent.ScreenKit)
 local Components = script.Parent.Parent.Components
 local Button = require(Components.Button)
+local Modal = require(Components.Modal)
 local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
 local Colors = DesignSystem.Colors
 
@@ -91,6 +92,193 @@ function PoliticsScreen.create(ctx)
 		return gov and gov.displayName or (c and c.governmentForm)
 	end
 
+	local function openIdeologyPicker()
+		local c = country()
+		local gov = registries.GovernmentTypes and c and registries.GovernmentTypes[c.governmentForm]
+		local allowed = (gov and gov.allowedIdeologies) or {}
+		local pp = (c and c.politicalPower) or 0
+		local modal = Modal.create({
+			parent = ctx.modalLayer or ctx.parent,
+			title = "Change Ideology",
+			subtitle = "Costs 60 PP",
+			width = 420,
+			height = 460,
+		})
+		local list = Instance.new("ScrollingFrame")
+		list.Size = UDim2.fromScale(1, 1)
+		list.BackgroundTransparency = 1
+		list.BorderSizePixel = 0
+		list.ScrollBarThickness = 4
+		list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+		list.CanvasSize = UDim2.new()
+		list.Parent = modal.content
+		local layout = Instance.new("UIListLayout")
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
+		layout.Padding = UDim.new(0, 6)
+		layout.Parent = list
+
+		local order = 0
+		local any = false
+		for _, id in ipairs(allowed) do
+			if id ~= (c and c.ideology) then
+				any = true
+				local def = registries.Ideologies and registries.Ideologies[id]
+				order += 1
+				local row = ScreenKit.stat(list, {
+					icon = "Politics",
+					label = (def and def.displayName) or id,
+					layoutOrder = order,
+				})
+				local btn = Button.create({
+					parent = row,
+					variant = "primary",
+					text = "Adopt",
+					width = 96,
+					size = "sm",
+					disabled = pp < 60,
+					onClick = function()
+						ctx.fire("SetIdeology", id)
+						modal.close()
+					end,
+				})
+				btn.AnchorPoint = Vector2.new(1, 0.5)
+				btn.Position = UDim2.fromScale(1, 0.5)
+				local mods = modifierLine(def and def.modifiers)
+				if mods then
+					order += 1
+					ScreenKit.note(list, mods, order)
+				end
+			end
+		end
+		if not any then
+			ScreenKit.note(list, "No alternative ideologies are available to your government.", 1)
+		end
+	end
+
+	local function openTransitionConfirm(targetGovId, def)
+		local c = country()
+		local govs = registries.GovernmentTypes or {}
+		local target = govs[targetGovId]
+		local pp = (c and c.politicalPower) or 0
+		local cost = def.ppCost or 0
+		local allowed = (target and target.allowedIdeologies) or {}
+		local chosen = nil
+		for _, id in ipairs(allowed) do
+			if id == (c and c.ideology) then
+				chosen = id
+				break
+			end
+		end
+		chosen = chosen or allowed[1]
+
+		local modal = Modal.create({
+			parent = ctx.modalLayer or ctx.parent,
+			title = "Begin Transition",
+			subtitle = (target and target.displayName) or targetGovId,
+			width = 440,
+			height = 460,
+			footer = true,
+		})
+		local content = modal.content
+		local layout = Instance.new("UIListLayout")
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
+		layout.Padding = UDim.new(0, 6)
+		layout.Parent = content
+
+		ScreenKit.stat(
+			content,
+			{ icon = "PowerProj", label = "Cost", value = cost .. " PP", mono = true, layoutOrder = 1 }
+		)
+		if def.minYears then
+			ScreenKit.stat(content, { label = "Minimum duration", value = def.minYears .. " yrs", layoutOrder = 2 })
+		end
+		local req = def.requires
+		if type(req) == "table" then
+			if req.ideology then
+				ScreenKit.note(content, "Requires current ideology: " .. tostring(req.ideology), 3)
+			end
+			if req.minLegitimacy then
+				ScreenKit.note(content, "Requires legitimacy \u{2265} " .. tostring(req.minLegitimacy), 4)
+			end
+			if type(req.faction) == "table" then
+				for fid, clout in pairs(req.faction) do
+					local fname = (
+						registries.Factions
+						and registries.Factions[fid]
+						and registries.Factions[fid].displayName
+					) or fid
+					ScreenKit.note(content, string.format("Requires %s clout \u{2265} %g%%", fname, clout * 100), 5)
+				end
+			end
+			if req.religion then
+				ScreenKit.note(content, "Requires state religion: " .. tostring(req.religion), 6)
+			end
+			if req.cause then
+				ScreenKit.note(content, "Typically occurs only via " .. tostring(req.cause) .. ".", 7)
+			end
+		end
+
+		ScreenKit.section(content, "Adopt Ideology", 10)
+		local ideoBox = Instance.new("Frame")
+		ideoBox.Size = UDim2.fromScale(1, 0)
+		ideoBox.AutomaticSize = Enum.AutomaticSize.Y
+		ideoBox.BackgroundTransparency = 1
+		ideoBox.LayoutOrder = 11
+		ideoBox.Parent = content
+		local ideoLayout = Instance.new("UIListLayout")
+		ideoLayout.FillDirection = Enum.FillDirection.Horizontal
+		ideoLayout.Wraps = true
+		ideoLayout.SortOrder = Enum.SortOrder.LayoutOrder
+		ideoLayout.Padding = UDim.new(0, 6)
+		ideoLayout.Parent = ideoBox
+
+		local selectedIdeo = chosen
+		local function renderIdeo()
+			for _, ch in ideoBox:GetChildren() do
+				if ch:IsA("GuiObject") then
+					ch:Destroy()
+				end
+			end
+			for i, id in ipairs(allowed) do
+				local def2 = registries.Ideologies and registries.Ideologies[id]
+				Button.create({
+					parent = ideoBox,
+					variant = id == selectedIdeo and "primary" or "secondary",
+					text = (def2 and def2.displayName) or id,
+					layoutOrder = i,
+					onClick = function()
+						selectedIdeo = id
+						renderIdeo()
+					end,
+				})
+			end
+		end
+		renderIdeo()
+
+		Button.create({
+			parent = modal.footer,
+			variant = "ghost",
+			text = "Cancel",
+			layoutOrder = 1,
+			onClick = function()
+				modal.close()
+			end,
+		})
+		Button.create({
+			parent = modal.footer,
+			variant = "primary",
+			text = "Begin Transition",
+			layoutOrder = 2,
+			disabled = pp < cost or selectedIdeo == nil,
+			onClick = function()
+				if selectedIdeo then
+					ctx.fire("SetGovernmentType", targetGovId, selectedIdeo)
+				end
+				modal.close()
+			end,
+		})
+	end
+
 	local renderers = {
 		overview = function(body, c)
 			ScreenKit.section(body, "Authority", 1)
@@ -134,8 +322,50 @@ function PoliticsScreen.create(ctx)
 				value = val(ideo and ideo.displayName or (c and c.ideology)),
 				layoutOrder = 3,
 			})
+			local pp = (c and c.politicalPower) or 0
+			local ideoRow = ScreenKit.buttonRow(body, 4)
+			Button.create({
+				parent = ideoRow,
+				variant = "secondary",
+				text = "Change Ideology \u{00B7} 60 PP",
+				disabled = pp < 60,
+				onClick = openIdeologyPicker,
+			})
 
-			ScreenKit.section(body, "Available Transitions", 4)
+			local transition = c and c.transition
+			if type(transition) == "table" then
+				ScreenKit.section(body, "Transition in Progress", 10)
+				local govs = registries.GovernmentTypes or {}
+				local fromName = (govs[transition.from] and govs[transition.from].displayName) or transition.from
+				local toName = (govs[transition.to] and govs[transition.to].displayName) or transition.to
+				ScreenKit.stat(body, {
+					icon = "Core",
+					label = "Changing to",
+					value = string.format("%s \u{2192} %s", val(fromName), val(toName)),
+					layoutOrder = 11,
+				})
+				if transition.completesAtDay then
+					ScreenKit.stat(body, {
+						label = "Completes",
+						value = "Day " .. tostring(transition.completesAtDay),
+						mono = true,
+						layoutOrder = 12,
+					})
+				end
+				ScreenKit.note(body, "Cancelling refunds 50% of the PP spent and costs 5 legitimacy.", 13)
+				local cancelRow = ScreenKit.buttonRow(body, 14)
+				Button.create({
+					parent = cancelRow,
+					variant = "danger",
+					text = "Cancel Transition",
+					onClick = function()
+						ctx.fire("CancelTransition")
+					end,
+				})
+				return
+			end
+
+			ScreenKit.section(body, "Available Transitions", 20)
 			local gov = registries.GovernmentTypes and c and registries.GovernmentTypes[c.governmentForm]
 			local transitions = gov and gov.transitions
 			if transitions and next(transitions) then
@@ -143,6 +373,8 @@ function PoliticsScreen.create(ctx)
 				for id, def in transitions do
 					local target = registries.GovernmentTypes and registries.GovernmentTypes[id]
 					ordered[#ordered + 1] = {
+						id = id,
+						def = def,
 						label = target and target.displayName or id,
 						cost = def.ppCost or 0,
 					}
@@ -150,16 +382,29 @@ function PoliticsScreen.create(ctx)
 				table.sort(ordered, function(a, b)
 					return a.label < b.label
 				end)
-				for i, entry in ordered do
-					ScreenKit.stat(body, {
-						label = entry.label,
-						value = entry.cost .. " PP",
-						mono = true,
-						layoutOrder = 4 + i,
+				local order = 20
+				for _, entry in ipairs(ordered) do
+					order += 1
+					local row = ScreenKit.stat(body, {
+						label = string.format("%s  \u{00B7}  %d PP", entry.label, entry.cost),
+						layoutOrder = order,
 					})
+					local btn = Button.create({
+						parent = row,
+						variant = "secondary",
+						text = "Begin",
+						width = 84,
+						size = "sm",
+						disabled = pp < entry.cost,
+						onClick = function()
+							openTransitionConfirm(entry.id, entry.def)
+						end,
+					})
+					btn.AnchorPoint = Vector2.new(1, 0.5)
+					btn.Position = UDim2.fromScale(1, 0.5)
 				end
 			else
-				ScreenKit.note(body, "No government transitions are available.", 5)
+				ScreenKit.note(body, "No government transitions are available.", 21)
 			end
 		end,
 		estates = function(body, c)

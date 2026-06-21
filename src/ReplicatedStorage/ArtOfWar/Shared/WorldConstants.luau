@@ -38,6 +38,11 @@ WorldConstants.ArtillerySplashPerTick = 0.02
 WorldConstants.PriceBandLow = 0.25
 WorldConstants.PriceBandHigh = 1.75
 WorldConstants.PlayerResourceTradeCap = 5
+WorldConstants.TradeOrderRecurringIntervalDays = 5
+WorldConstants.TradeOrderMaxLines = 8
+WorldConstants.TradeOrderMaxActive = 20
+WorldConstants.TradeOrderMultiplierMin = 0.25
+WorldConstants.TradeOrderMultiplierMax = 4
 
 WorldConstants.CapitalTaxMultiplier = 1.25
 WorldConstants.CapitalManpowerMultiplier = 1.15
@@ -153,16 +158,17 @@ WorldConstants.FieldHeadScale = 5
 WorldConstants.CommandPerchHeight = 100000
 
 -- Economy (province-driven income engine)
-WorldConstants.TaxIncomePerThousand = 0.05      -- gold per day per 1000 population per devTier
-WorldConstants.ResourceInfraScalePerTier = 0.1  -- 10pct resource production per infrastructure tier
+WorldConstants.TaxIncomePerThousand = 0.05 -- gold per day per 1000 population per devTier
+WorldConstants.ResourceInfraScalePerTier = 0.1 -- 10pct resource production per infrastructure tier
 WorldConstants.DevTierMax = 10
 WorldConstants.InfraTierMax = 10
-WorldConstants.DaysPerMonth = 30                -- monthly /mo projection scale
-WorldConstants.UnrestTaxPenaltyPerPoint = 0.05      -- -5pct tax per unrest point (caps at 0)
-WorldConstants.AutonomyAffectsTax = true             -- multiplies (1 - autonomy)
-WorldConstants.ManufactoryInfraScalePerTier = 0.05   -- +5pct manufactory throughput per infra tier above min
-WorldConstants.ArmyUpkeepBaseMultiplier = 0.1        -- daily upkeep cost multiplier on unit upkeep stat
-WorldConstants.ManufactoryDailyCycles = 0.1          -- a manufactory completes 0.1 cycles per day baseline
+WorldConstants.FortTierMax = 10
+WorldConstants.DaysPerMonth = 30 -- monthly /mo projection scale
+WorldConstants.UnrestTaxPenaltyPerPoint = 0.05 -- -5pct tax per unrest point (caps at 0)
+WorldConstants.AutonomyAffectsTax = true -- multiplies (1 - autonomy)
+WorldConstants.ManufactoryInfraScalePerTier = 0.05 -- +5pct manufactory throughput per infra tier above min
+WorldConstants.ArmyUpkeepBaseMultiplier = 0.1 -- daily upkeep cost multiplier on unit upkeep stat
+WorldConstants.ManufactoryDailyCycles = 0.1 -- a manufactory completes 0.1 cycles per day baseline
 
 -- HOI4-style combat additions
 WorldConstants.CombatFlankingWidthPerExtraProvince = 30
@@ -184,25 +190,25 @@ WorldConstants.CombatRoundTicks = 1
 --   netToDefender += max(0, attackerOffense - defenderDefense)
 --   netToAttacker += max(0, defenderDefense*CounterHi - attackerOffense*CounterLo)
 -- offense/defense fold count, stat, discipline, morale-factor, terrain, fort, mods.
-WorldConstants.CombatDamageScale = 10            -- net damage -> strength casualties
+WorldConstants.CombatDamageScale = 10 -- net damage -> strength casualties
 WorldConstants.CombatDefenderCounterHi = 0.6
 WorldConstants.CombatDefenderCounterLo = 0.3
-WorldConstants.CombatRoundCasualtyCap = 0.20     -- max fraction of a side lost per round
+WorldConstants.CombatRoundCasualtyCap = 0.20 -- max fraction of a side lost per round
 -- Resolution by ROUT (morale/org), not strength attrition:
-WorldConstants.CombatMoraleRoutFloor = 30        -- a formation routs at/below this morale
-WorldConstants.CombatRoutFraction = 0.5          -- side breaks when >= this strength-frac routed
-WorldConstants.CombatOrgBreakRatio = 0.15        -- or aggregate org ratio below this
-WorldConstants.CombatMoraleRoundBase = 1         -- morale lost per round under fire
-WorldConstants.CombatMoraleCasualtyScale = 140   -- extra morale lost scaled by casualty ratio
-WorldConstants.CombatOrgRoundBase = 0            -- org lost per round (0 = casualty-driven only)
-WorldConstants.CombatOrgCasualtyScale = 12       -- org lost scaled by casualty ratio
+WorldConstants.CombatMoraleRoutFloor = 30 -- a formation routs at/below this morale
+WorldConstants.CombatRoutFraction = 0.5 -- side breaks when >= this strength-frac routed
+WorldConstants.CombatOrgBreakRatio = 0.15 -- or aggregate org ratio below this
+WorldConstants.CombatMoraleRoundBase = 1 -- morale lost per round under fire
+WorldConstants.CombatMoraleCasualtyScale = 140 -- extra morale lost scaled by casualty ratio
+WorldConstants.CombatOrgRoundBase = 0 -- org lost per round (0 = casualty-driven only)
+WorldConstants.CombatOrgCasualtyScale = 12 -- org lost scaled by casualty ratio
 -- Discipline per unit class (folds into offense/defense); data wired Phase 2/4.
 WorldConstants.DisciplineLevy = 0.6
 WorldConstants.DisciplineStandard = 1.0
 WorldConstants.DisciplineElite = 1.4
 -- Forts in field battle: defender defense x (1 + fortTier*FortBattleDefensePerTier).
 WorldConstants.FortBattleDefensePerTier = 0.15
-WorldConstants.FortCannonDebuff = 0.75           -- hook: cannon-tech fort debuff (gated off)
+WorldConstants.FortCannonDebuff = 0.75 -- hook: cannon-tech fort debuff (gated off)
 -- Post-battle morale modifiers (spec G.1.7), applied by BattleManager.
 WorldConstants.BattleVictorMoraleBonus = 0.10
 WorldConstants.BattleLoserMoralePenalty = 0.20
@@ -211,8 +217,8 @@ WorldConstants.BattleMoraleModifierMonths = 6
 WorldConstants.OfficerRngSeed = 13337
 -- Naval role-matched rounds (Phase 3).
 WorldConstants.NavalCombatWidth = 40
-WorldConstants.NavalDamageScale = 2          -- per-round naval casualty scale (lower than land; hull pools are large)
-WorldConstants.NavalOrgRegenPerTick = 0.5    -- fleet organization regen while docked (mirrors ArmyOrganizationRegenPerTick)
+WorldConstants.NavalDamageScale = 2 -- per-round naval casualty scale (lower than land; hull pools are large)
+WorldConstants.NavalOrgRegenPerTick = 0.5 -- fleet organization regen while docked (mirrors ArmyOrganizationRegenPerTick)
 -- Doctrine tactic bonuses fold into the single statMultiplier (kept).
 WorldConstants.CombatTacticOffensiveBonus = 0.05
 WorldConstants.CombatTacticDefensiveBonus = 0.05
@@ -227,14 +233,14 @@ WorldConstants.TicksPerMonth = 30
 -- selects the pool. Levies are cheap+plentiful but low discipline (DisciplineLevy);
 -- professionals are scarce+elite. RecruitSystem owns the pools + monthly regen.
 -- =====================================================================
-WorldConstants.LevyManpowerPerBaseMP = 250    -- province levy cap = baseManpower * this * mods
-WorldConstants.LevyDevFactorPerTier = 0.10    -- devFactor = 1 + (devTier-1)*this
-WorldConstants.LevyForeignCultureMod = 0.5    -- province culture not primary/accepted -> levy x this
+WorldConstants.LevyManpowerPerBaseMP = 250 -- province levy cap = baseManpower * this * mods
+WorldConstants.LevyDevFactorPerTier = 0.10 -- devFactor = 1 + (devTier-1)*this
+WorldConstants.LevyForeignCultureMod = 0.5 -- province culture not primary/accepted -> levy x this
 WorldConstants.LevyAutonomyMaxReduction = 1.0 -- levy x (1 - autonomy*this) (autonomy 0..1)
-WorldConstants.LevyConscriptionDefault = 1.0  -- HOOK: conscription-law multiplier (Politics out of scope)
-WorldConstants.LevyRegenPerMonthPct = 0.05    -- levy pool regens 5%/mo of cap (peacetime)
+WorldConstants.LevyConscriptionDefault = 1.0 -- HOOK: conscription-law multiplier (Politics out of scope)
+WorldConstants.LevyRegenPerMonthPct = 0.05 -- levy pool regens 5%/mo of cap (peacetime)
 WorldConstants.ProfessionalRegenPerMonthPct = 0 -- HOOK: pro regen (laws/barracks out of scope; 0 = legacy static)
-WorldConstants.ManpowerRegenTickInterval = 6  -- scheduler cadence (effective s); actual regen is month-gated
+WorldConstants.ManpowerRegenTickInterval = 6 -- scheduler cadence (effective s); actual regen is month-gated
 WorldConstants.AttritionTickInterval = 6
 
 -- Diplomacy
@@ -242,21 +248,20 @@ WorldConstants.TrucePeriodDays = 1825
 WorldConstants.PeaceProposalLifetimeSeconds = 600
 WorldConstants.DiplomacyTickInterval = 6
 
-
 -- =====================================================================
 -- SIEGES (spec G.2, Phase 5) - see Systems.SiegeSystem.
 -- siegeProgress += SiegeBaseSpeed * armySizeFactor * (1 - fortDefenseMod) toward
 -- OccupationProgressRequired; forts slow the siege AND bleed the besieger (attrition).
 -- =====================================================================
-WorldConstants.SiegeBaseSpeed = 1.0              -- progress per round at reference army size, no fort
-WorldConstants.SiegeArmySizeRef = 8              -- regiments giving sizeFactor 1.0
-WorldConstants.SiegeMinSizeFactor = 0.5          -- clamp: tiny besieging force
-WorldConstants.SiegeMaxSizeFactor = 1.5          -- clamp: large force can't trivialise walls
-WorldConstants.FortSiegeDefensePerTier = 0.15    -- each fort tier slows siege by this (pre-cap)
-WorldConstants.SiegeFortMaxReduction = 0.85      -- max siege slowdown from forts
-WorldConstants.SiegeAttritionPerRound = 0.01     -- besieger loses this regiment-fraction / round
-WorldConstants.SiegeAttritionFortScale = 0.004   -- extra besieger attrition per fort tier
-WorldConstants.OccupationOutputPenalty = 0.20    -- occupied province yields 20pct (hook for economy)
+WorldConstants.SiegeBaseSpeed = 1.0 -- progress per round at reference army size, no fort
+WorldConstants.SiegeArmySizeRef = 8 -- regiments giving sizeFactor 1.0
+WorldConstants.SiegeMinSizeFactor = 0.5 -- clamp: tiny besieging force
+WorldConstants.SiegeMaxSizeFactor = 1.5 -- clamp: large force can't trivialise walls
+WorldConstants.FortSiegeDefensePerTier = 0.15 -- each fort tier slows siege by this (pre-cap)
+WorldConstants.SiegeFortMaxReduction = 0.85 -- max siege slowdown from forts
+WorldConstants.SiegeAttritionPerRound = 0.01 -- besieger loses this regiment-fraction / round
+WorldConstants.SiegeAttritionFortScale = 0.004 -- extra besieger attrition per fort tier
+WorldConstants.OccupationOutputPenalty = 0.20 -- occupied province yields 20pct (hook for economy)
 
 -- =====================================================================
 -- WAR SCORE / EXHAUSTION / PEACE (spec B.9 / G.4-G.5, Phase 5).
@@ -265,34 +270,34 @@ WorldConstants.OccupationOutputPenalty = 0.20    -- occupied province yields 20p
 -- and gates AI peace acceptance on score vs term cost (+ exhaustion willingness).
 -- =====================================================================
 WorldConstants.WarScoreMax = 100
-WorldConstants.WarScoreBattleWin = 5             -- field-battle victory
-WorldConstants.WarScoreNavalWin = 8             -- naval-battle victory (sink fleet)
-WorldConstants.WarScoreOccupyProvince = 8        -- fully occupy an enemy province
-WorldConstants.WarScoreForcedPeace = 100         -- at +/-100, war auto-ends in winner's favour
-WorldConstants.WarExhaustionMonthlyBase = 0.05   -- both sides gain this per month at war
-WorldConstants.WarExhaustionPerBattleLost = 0.5  -- loser of a battle gains this
-WorldConstants.WarExhaustionPerProvinceLost = 1.0-- losing a province to occupation
+WorldConstants.WarScoreBattleWin = 5 -- field-battle victory
+WorldConstants.WarScoreNavalWin = 8 -- naval-battle victory (sink fleet)
+WorldConstants.WarScoreOccupyProvince = 8 -- fully occupy an enemy province
+WorldConstants.WarScoreForcedPeace = 100 -- at +/-100, war auto-ends in winner's favour
+WorldConstants.WarExhaustionMonthlyBase = 0.05 -- both sides gain this per month at war
+WorldConstants.WarExhaustionPerBattleLost = 0.5 -- loser of a battle gains this
+WorldConstants.WarExhaustionPerProvinceLost = 1.0 -- losing a province to occupation
 WorldConstants.WarExhaustionMax = 100
-WorldConstants.WarStalemateYears = 5             -- mandatory white peace after this many years
+WorldConstants.WarStalemateYears = 5 -- mandatory white peace after this many years
 -- Peace term war-score costs (paid by the side GAINING from the term):
-WorldConstants.PeaceWhitePeaceCost = 0           -- revert occupations: free
-WorldConstants.PeaceAnnexBaseCost = 20           -- annex occupied: base war-score cost
-WorldConstants.PeaceAnnexPerProvinceCost = 10    -- + per annexed province
-WorldConstants.PeaceAIExhaustionWeight = 0.5     -- each exhaustion point adds this to willingness
-WorldConstants.PeaceAIAcceptMargin = 0           -- accept when willingness - cost >= this
+WorldConstants.PeaceWhitePeaceCost = 0 -- revert occupations: free
+WorldConstants.PeaceAnnexBaseCost = 20 -- annex occupied: base war-score cost
+WorldConstants.PeaceAnnexPerProvinceCost = 10 -- + per annexed province
+WorldConstants.PeaceAIExhaustionWeight = 0.5 -- each exhaustion point adds this to willingness
+WorldConstants.PeaceAIAcceptMargin = 0 -- accept when willingness - cost >= this
 
 -- =====================================================================
 -- ATTRITION (spec B.10 / 6.9, Phase 5) - see Systems.AttritionSystem.
 -- Monthly: provinces with stacked armies over supply bleed manpower (crowding);
 -- low-supply terrain adds a base rate. Wasteland slows movement (hook).
 -- =====================================================================
-WorldConstants.ProvinceSupplyLimitBase = 5000    -- strength a province supports for free
-WorldConstants.ProvinceSupplyLimitPerDev = 500   -- + per devTier
-WorldConstants.AttritionCrowdingRate = 0.05      -- monthly loss-frac per 1x supply overflow
-WorldConstants.AttritionTerrainScale = 0.02      -- low-supply terrain attrition scale
-WorldConstants.AttritionMaxPerMonth = 0.10       -- cap monthly attrition fraction
-WorldConstants.AttritionTerrainFreeSupply = 8    -- terrain supplyLimit at/above which terrain attrition is 0
-WorldConstants.AttritionFrostRate = 0.03         -- hook: extra attrition in winter provinces (no season system yet)
-WorldConstants.WastelandMovementSlowdown = 0.5   -- hook: wasteland province speed x this
+WorldConstants.ProvinceSupplyLimitBase = 5000 -- strength a province supports for free
+WorldConstants.ProvinceSupplyLimitPerDev = 500 -- + per devTier
+WorldConstants.AttritionCrowdingRate = 0.05 -- monthly loss-frac per 1x supply overflow
+WorldConstants.AttritionTerrainScale = 0.02 -- low-supply terrain attrition scale
+WorldConstants.AttritionMaxPerMonth = 0.10 -- cap monthly attrition fraction
+WorldConstants.AttritionTerrainFreeSupply = 8 -- terrain supplyLimit at/above which terrain attrition is 0
+WorldConstants.AttritionFrostRate = 0.03 -- hook: extra attrition in winter provinces (no season system yet)
+WorldConstants.WastelandMovementSlowdown = 0.5 -- hook: wasteland province speed x this
 
 return WorldConstants

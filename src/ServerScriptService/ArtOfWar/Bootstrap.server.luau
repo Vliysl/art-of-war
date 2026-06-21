@@ -314,6 +314,53 @@ InputValidator.register("CancelTrade", {
 	schema = { { name = "tradeId", type = "integer" } },
 	rate = { count = 12, window = 10 },
 })
+InputValidator.addValidator("boolean", function(v)
+	return type(v) == "boolean"
+end)
+InputValidator.addValidator("tradeLines", function(v)
+	if type(v) ~= "table" then
+		return false
+	end
+	local n = 0
+	for _, line in ipairs(v) do
+		n += 1
+		if n > 16 then
+			return false
+		end
+		if type(line) ~= "table" then
+			return false
+		end
+		if type(line.goodId) ~= "string" or line.goodId == "" then
+			return false
+		end
+		if type(line.amount) ~= "number" or line.amount ~= line.amount or line.amount <= 0 then
+			return false
+		end
+	end
+	return n > 0
+end)
+InputValidator.register("PlaceTradeOrder", {
+	schema = {
+		{ name = "counterpartyTag", type = "countryTag" },
+		{ name = "direction", type = "string" },
+		{ name = "lines", type = "tradeLines" },
+		{ name = "multiplier", type = "positiveNumber" },
+		{ name = "recurring", type = "boolean" },
+	},
+	rate = { count = 6, window = 10 },
+})
+InputValidator.register("AcceptTradeOrder", {
+	schema = { { name = "orderId", type = "integer" } },
+	rate = { count = 12, window = 10 },
+})
+InputValidator.register("RejectTradeOrder", {
+	schema = { { name = "orderId", type = "integer" } },
+	rate = { count = 12, window = 10 },
+})
+InputValidator.register("CancelTradeOrder", {
+	schema = { { name = "orderId", type = "integer" } },
+	rate = { count = 12, window = 10 },
+})
 InputValidator.register("RequestFullState", {
 	rate = { count = 2, window = 30 },
 })
@@ -596,6 +643,42 @@ bindEvent("CancelTrade", function(player, tradeId)
 	local tag = auth.tagFor(player)
 	if not tag then return end
 	system.cancel(tradeId, tag)
+end)
+
+bindEvent("PlaceTradeOrder", function(player, counterpartyTag, direction, lines, multiplier, recurring)
+	local auth = authority()
+	local system = loadedSystems.TradeOrderSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.place(tag, counterpartyTag, direction, lines, multiplier, recurring)
+end)
+
+bindEvent("AcceptTradeOrder", function(player, orderId)
+	local auth = authority()
+	local system = loadedSystems.TradeOrderSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.accept(orderId, tag)
+end)
+
+bindEvent("RejectTradeOrder", function(player, orderId)
+	local auth = authority()
+	local system = loadedSystems.TradeOrderSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.reject(orderId, tag)
+end)
+
+bindEvent("CancelTradeOrder", function(player, orderId)
+	local auth = authority()
+	local system = loadedSystems.TradeOrderSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.cancel(orderId, tag)
 end)
 
 bindEvent("SetIdeology", function(player, ideologyId)

@@ -1,7 +1,7 @@
 local StateReplicator = {}
 
 local BROADCAST_INTERVAL = 1.5
-local COLLECTIONS = { "provinces", "countries", "markets", "tradeRoutes", "armies", "battles", "fleets", "wars", "peaceProposals" }
+local COLLECTIONS = { "provinces", "countries", "markets", "tradeRoutes", "armies", "battles", "fleets", "wars", "peaceProposals", "tradeOrders" }
 local GETTERS = {
 	provinces = "getProvince",
 	countries = "getCountry",
@@ -12,6 +12,7 @@ local GETTERS = {
 	fleets = "getFleet",
 	wars = "getWar",
 	peaceProposals = "getPeaceProposal",
+	tradeOrders = "getTradeOrder",
 }
 
 local ctx
@@ -64,6 +65,7 @@ local function buildSnapshot()
 	snapshot.fleets = ctx.WorldState.allFleets()
 	snapshot.wars = ctx.WorldState.allWars()
 	snapshot.peaceProposals = ctx.WorldState.allPeaceProposals()
+	snapshot.tradeOrders = ctx.WorldState.allTradeOrders()
 	return snapshot
 end
 

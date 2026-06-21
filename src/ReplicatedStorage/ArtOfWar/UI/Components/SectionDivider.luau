@@ -17,6 +17,9 @@ function SectionDivider.create(config)
 
 	local layout = Instance.new("UIListLayout")
 	layout.FillDirection = Enum.FillDirection.Horizontal
+	-- Without this the layout defaults to SortOrder.Name, which orders the two same-named "Frame" rules
+	-- before the "Label" (ignoring LayoutOrder 1/2/3) -- rendering "-- -- TEXT" instead of "-- TEXT --".
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 	layout.VerticalAlignment = Enum.VerticalAlignment.Center
 	layout.Padding = UDim.new(0, Spacing.space3)

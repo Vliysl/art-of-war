@@ -58,12 +58,13 @@ local BuildingTypes = {
 		},
 	},
 	walls = {
-		displayName = "Town Walls",
+		displayName = "Expand Fortifications",
 		description = "Stone curtain walls and gate towers. The town becomes harder to assault and slower to siege.",
 		category = "military",
 		cost = 180,
 		buildDays = 130,
 		infraRequirement = 1,
+		repeatable = true,
 		grantsFortTier = 1,
 		modifiers = {
 			province_fort_defense = 0.25,
@@ -161,7 +162,10 @@ for mid, mdef in Manufactories do
 		local outName = mdef.output and mdef.output:gsub("_", " ") or "goods"
 		BuildingTypes["manufactory_" .. mid] = {
 			displayName = mdef.displayName or mid,
-			description = string.format("Industrial workshop. Produces %s daily once supplied with raw inputs.", outName),
+			description = string.format(
+				"Industrial workshop. Produces %s daily once supplied with raw inputs.",
+				outName
+			),
 			category = "industry",
 			cost = 120,
 			buildDays = 80,

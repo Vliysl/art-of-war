@@ -11,6 +11,7 @@ local cache = {
 	fleets = {},
 	wars = {},
 	peaceProposals = {},
+	tradeOrders = {},
 }
 
 local subscribers = {}
@@ -71,7 +72,7 @@ local function applyCollection(name, bucket)
 	end
 end
 
-local REPLICATED_COLLECTIONS = { "provinces", "countries", "markets", "tradeRoutes", "armies", "battles", "fleets", "wars", "peaceProposals" }
+local REPLICATED_COLLECTIONS = { "provinces", "countries", "markets", "tradeRoutes", "armies", "battles", "fleets", "wars", "peaceProposals", "tradeOrders" }
 
 local function applyRemovals(removed)
 	if type(removed) ~= "table" then return end
@@ -106,6 +107,7 @@ function ClientStateCache.applyDelta(packet)
 		cache.fleets = packet.fleets or {}
 		cache.wars = packet.wars or {}
 		cache.peaceProposals = packet.peaceProposals or {}
+		cache.tradeOrders = packet.tradeOrders or {}
 		cache.revision = packet.revision or 0
 		initialized = true
 		notify("snapshot", cache)
@@ -120,6 +122,7 @@ function ClientStateCache.applyDelta(packet)
 	applyCollection("fleets", packet.fleets)
 	applyCollection("wars", packet.wars)
 	applyCollection("peaceProposals", packet.peaceProposals)
+	applyCollection("tradeOrders", packet.tradeOrders)
 	applyRemovals(packet.removed)
 	if packet.revision then
 		cache.revision = packet.revision
@@ -171,6 +174,7 @@ function ClientStateCache.getBattle(id) return cache.battles[id] end
 function ClientStateCache.getFleet(id) return cache.fleets[id] end
 function ClientStateCache.getWar(id) return cache.wars[id] end
 function ClientStateCache.getPeaceProposal(id) return cache.peaceProposals[id] end
+function ClientStateCache.getTradeOrder(id) return cache.tradeOrders[id] end
 function ClientStateCache.allProvinces() return cache.provinces end
 function ClientStateCache.allCountries() return cache.countries end
 function ClientStateCache.allMarkets() return cache.markets end
@@ -180,6 +184,7 @@ function ClientStateCache.allBattles() return cache.battles end
 function ClientStateCache.allFleets() return cache.fleets end
 function ClientStateCache.allWars() return cache.wars end
 function ClientStateCache.allPeaceProposals() return cache.peaceProposals end
+function ClientStateCache.allTradeOrders() return cache.tradeOrders end
 function ClientStateCache.revision() return cache.revision end
 function ClientStateCache.isReady() return initialized end
 
@@ -213,6 +218,7 @@ function ClientStateCache.clear()
 	cache.fleets = {}
 	cache.wars = {}
 	cache.peaceProposals = {}
+	cache.tradeOrders = {}
 	initialized = false
 end
 

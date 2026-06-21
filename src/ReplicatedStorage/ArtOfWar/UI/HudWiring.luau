@@ -459,6 +459,59 @@ function HudWiring.start(modules)
 	ClientStateCache.onChangePrefix("armies", scheduleCountryRefresh)
 	ClientStateCache.onChange("snapshot", scheduleCountryRefresh)
 
+	-- Pop the PeaceTreaty modal once when an incoming proposal addressed to the player arrives. The
+	-- modal + AcceptPeace/RejectPeace remotes already exist; only this trigger was missing.
+	local function describeTerms(terms)
+		local kind = type(terms) == "table" and terms.type or nil
+		if kind == "white_peace" then
+			return { { icon = "Core", label = "Terms", value = "White peace (status quo)" } }
+		elseif kind == "annex_occupied" then
+			return { { icon = "Core", label = "Terms", value = "Cede occupied territory" } }
+		end
+		return { { icon = "Core", label = "Terms", value = kind and prettify(kind) or "Negotiated peace" } }
+	end
+	local seenProposals = {}
+	ClientStateCache.onChangePrefix("peaceProposals", function()
+		for id, p in pairs(ClientStateCache.allPeaceProposals() or {}) do
+			p.id = p.id or id
+			local mine = p.toTag == claimedTag and p.status == "pending"
+			if mine and not seenProposals[p.id] then
+				seenProposals[p.id] = true
+				local fromC = ClientStateCache.getCountry(p.fromTag)
+				Hud.openPeaceTreaty({
+					warName = "Peace offer from " .. ((fromC and fromC.displayName) or p.fromTag or "?"),
+					demands = describeTerms(p.terms),
+					costs = {},
+					onAccept = function()
+						fire("AcceptPeace", p.id)
+					end,
+					onRefuse = function()
+						fire("RejectPeace", p.id)
+					end,
+				})
+			elseif not mine then
+				-- Allow re-opening if the same id is later re-proposed to us.
+				seenProposals[p.id] = nil
+			end
+		end
+	end)
+
+	-- Pop the TradeOffer modal once when a pending trade order is directed at the player (the
+	-- counterparty who must accept). Mirrors the peace-proposal hook above.
+	local seenOrders = {}
+	ClientStateCache.onChangePrefix("tradeOrders", function()
+		for id, o in pairs(ClientStateCache.allTradeOrders() or {}) do
+			o.id = o.id or id
+			local mine = o.counterpartyTag == claimedTag and o.state == "Pending"
+			if mine and not seenOrders[o.id] then
+				seenOrders[o.id] = true
+				Hud.openTradeOffer(o)
+			elseif not mine then
+				seenOrders[o.id] = nil
+			end
+		end
+	end)
+
 	local timeSync = Remotes and Remotes:FindFirstChild("TimeSync")
 	if timeSync then
 		timeSync.OnClientEvent:Connect(function(packet)

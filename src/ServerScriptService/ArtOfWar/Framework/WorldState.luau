@@ -1,6 +1,6 @@
 local WorldState = {}
 
-local COLLECTIONS = { "provinces", "countries", "markets", "units", "fleets", "tradeRoutes", "ideologies", "leaders", "armies", "battles", "wars", "peaceProposals" }
+local COLLECTIONS = { "provinces", "countries", "markets", "units", "fleets", "tradeRoutes", "ideologies", "leaders", "armies", "battles", "wars", "peaceProposals", "tradeOrders" }
 
 local store
 local dirty
@@ -222,6 +222,20 @@ function WorldState.allPeaceProposals()
 	return store.peaceProposals
 end
 
+function WorldState.setTradeOrder(id, record)
+	store.tradeOrders[id] = record
+	mark("tradeOrders", id)
+	bump()
+end
+
+function WorldState.getTradeOrder(id)
+	return store.tradeOrders[id]
+end
+
+function WorldState.allTradeOrders()
+	return store.tradeOrders
+end
+
 function WorldState.snapshot()
 	return {
 		revision = revision,
@@ -237,6 +251,7 @@ function WorldState.snapshot()
 		battles = store.battles,
 		wars = store.wars,
 		peaceProposals = store.peaceProposals,
+		tradeOrders = store.tradeOrders,
 	}
 end
 

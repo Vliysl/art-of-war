@@ -464,6 +464,22 @@ function Hud.openPeaceTreaty(treaty)
 	return screen.create(mergedCtx({ parent = layers.Modals, data = treaty, onClose = function() end }))
 end
 
+function Hud.openTradeOffer(order)
+	if not started then
+		return
+	end
+	local mod = Screens:FindFirstChild("TradeOffer")
+	if not mod then
+		return
+	end
+	local ok, screen = pcall(require, mod)
+	if not ok or type(screen) ~= "table" or not screen.create then
+		warn("[AoW Hud] TradeOffer failed: " .. tostring(screen))
+		return
+	end
+	return screen.create(mergedCtx({ parent = layers.Modals, data = order, onClose = function() end }))
+end
+
 function Hud.isStarted()
 	return started
 end
