@@ -2,7 +2,6 @@ local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
 local Colors = DesignSystem.Colors
 local Animations = DesignSystem.Animations
 local Icons = DesignSystem.Icons
-local Shells = DesignSystem.Shells
 local Responsive = DesignSystem.Responsive
 local Tooltip = require(script.Parent.Parent.Components.Tooltip)
 
@@ -52,7 +51,10 @@ function MapModeGrid.create(config)
 		active = key
 		for k, e in entries do
 			local on = k == key
-			Animations.tween(e.activeBg, Animations.Fast, { ImageTransparency = on and 0 or 1 })
+			local fill = on and Colors.SurfaceOverlay or Colors.SurfaceElevated
+			local rim = on and Colors.BorderActive or Colors.BorderStrong
+			Animations.tween(e.bg, Animations.Fast, { BackgroundColor3 = fill })
+			Animations.tween(e.stroke, Animations.Fast, { Color = rim })
 			e.icon.ImageColor3 = on and Colors.Accent or Colors.TextSecondary
 		end
 	end
@@ -67,18 +69,28 @@ function MapModeGrid.create(config)
 		btn.ZIndex = z + 1
 		btn.Parent = root
 
-		local idle = Shells.create("map_mode_button_shell", { Name = "Idle", ZIndex = z + 1 })
-		idle.Parent = btn
-		local activeBg =
-			Shells.create("map_mode_button_active", { Name = "Active", ImageTransparency = 1, ZIndex = z + 1 })
-		activeBg.Parent = btn
+		local bg = Instance.new("Frame")
+		bg.Name = "Bg"
+		bg.Size = UDim2.fromScale(1, 1)
+		bg.BackgroundColor3 = Colors.SurfaceElevated
+		bg.BorderSizePixel = 0
+		bg.ZIndex = z + 1
+		bg.Parent = btn
+		local bgCorner = Instance.new("UICorner")
+		bgCorner.CornerRadius = UDim.new(0, 6)
+		bgCorner.Parent = bg
+		local stroke = Instance.new("UIStroke")
+		stroke.Color = Colors.BorderStrong
+		stroke.Thickness = 1
+		stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		stroke.Parent = bg
 		local icon = Icons.create(mode.icon, 22, Colors.TextSecondary)
 		icon.AnchorPoint = Vector2.new(0.5, 0.5)
 		icon.Position = UDim2.fromScale(0.5, 0.5)
 		icon.ZIndex = z + 2
 		icon.Parent = btn
 
-		entries[mode.key] = { activeBg = activeBg, icon = icon }
+		entries[mode.key] = { bg = bg, stroke = stroke, icon = icon }
 		btn.MouseEnter:Connect(function()
 			if active ~= mode.key then
 				icon.ImageColor3 = Colors.TextPrimary

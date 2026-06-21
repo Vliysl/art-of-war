@@ -867,12 +867,24 @@ function NationSelection.create(ctx)
 		btn.Text = ""
 		btn.LayoutOrder = spec.order
 		btn.ZIndex = 3
-		local idle = Shells.create("tab_horizontal_idle", { Name = "Idle", ZIndex = 3 })
-		idle.Parent = btn
-		local hover = Shells.create("tab_horizontal_hover", { Name = "Hover", ImageTransparency = 1, ZIndex = 3 })
-		hover.Parent = btn
-		local active = Shells.create("tab_horizontal_active", { Name = "Active", ImageTransparency = 1, ZIndex = 4 })
-		active.Parent = btn
+		-- Procedural chip surface (Frame + UICorner + UIStroke) with a small corner so the region
+		-- filters read as tight chips, not fully-rounded capsules. Also avoids the 9-slice load race.
+		local bg = Instance.new("Frame")
+		bg.Name = "Bg"
+		bg.Size = UDim2.fromScale(1, 1)
+		bg.BackgroundColor3 = Colors.SurfaceElevated
+		bg.BackgroundTransparency = 1
+		bg.BorderSizePixel = 0
+		bg.ZIndex = 3
+		bg.Parent = btn
+		local bgCorner = Instance.new("UICorner")
+		bgCorner.CornerRadius = UDim.new(0, 4)
+		bgCorner.Parent = bg
+		local stroke = Instance.new("UIStroke")
+		stroke.Color = Colors.BorderSubtle
+		stroke.Thickness = 1
+		stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		stroke.Parent = bg
 		local label = Instance.new("TextLabel")
 		label.AutomaticSize = Enum.AutomaticSize.X
 		label.Size = UDim2.new(0, 0, 1, 0)
@@ -890,16 +902,21 @@ function NationSelection.create(ctx)
 		local handle = { key = spec.key, selected = false }
 		function handle.setSelected(on)
 			handle.selected = on
-			Animations.tween(active, Animations.Fast, { ImageTransparency = on and 0 or 1 })
+			bg.BackgroundColor3 = Colors.SurfaceOverlay
+			Animations.tween(bg, Animations.Fast, { BackgroundTransparency = on and 0 or 1 })
+			Animations.tween(stroke, Animations.Fast, { Color = on and Colors.BorderActive or Colors.BorderSubtle })
 			label.TextColor3 = on and Colors.Accent or Colors.TextSecondary
 		end
 		btn.MouseEnter:Connect(function()
 			if not handle.selected then
-				Animations.tween(hover, Animations.Fast, { ImageTransparency = 0 })
+				bg.BackgroundColor3 = Colors.SurfaceElevated
+				Animations.tween(bg, Animations.Fast, { BackgroundTransparency = 0.4 })
 			end
 		end)
 		btn.MouseLeave:Connect(function()
-			Animations.tween(hover, Animations.Fast, { ImageTransparency = 1 })
+			if not handle.selected then
+				Animations.tween(bg, Animations.Fast, { BackgroundTransparency = 1 })
+			end
 		end)
 		btn.MouseButton1Click:Connect(function()
 			setFilter(spec.key)

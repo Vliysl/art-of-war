@@ -653,11 +653,28 @@ function Shells.create(name, props)
 			-- so a SliceCenter can never exceed the image (which is what squared off the right/bottom
 			-- corners). The max() guards a border larger than half the asset.
 			local b = def.Border or 0
-			img.SliceCenter = Rect.new(b, b, math.max(b, def.Size.X - b), math.max(b, def.Size.Y - b))
+			local function applySlice()
+				img.SliceCenter = Rect.new(b, b, math.max(b, def.Size.X - b), math.max(b, def.Size.Y - b))
+				img.SliceScale = def.Scale
+			end
+			applySlice()
+			-- A 9-slice can only map its pixel-space SliceCenter once the texture's real resolution is
+			-- decoded. While the asset is still downloading the engine renders the border at full
+			-- placeholder thickness -- a thick inset "inner outline" overflowing the element. Re-assert
+			-- the slice the instant the image loads so it snaps to the edge; this is the fix for the
+			-- intermittent button border that depended on whether the texture happened to be cached yet.
+			if not img.IsLoaded then
+				img:GetPropertyChangedSignal("IsLoaded"):Once(function()
+					-- Re-applying the same SliceScale is a no-op, so nudge it to force the engine to
+					-- re-rasterize the slice now that the texture's true resolution is known.
+					img.SliceScale = 0
+					applySlice()
+				end)
+			end
 		else
 			warn("[AoW Shells] slice shell '" .. tostring(name) .. "' is missing Size/Border")
+			img.SliceScale = def.Scale
 		end
-		img.SliceScale = def.Scale
 	elseif def.Mode == "fit" then
 		img.ScaleType = Enum.ScaleType.Fit
 		local r = Instance.new("UIAspectRatioConstraint")
@@ -674,6 +691,27 @@ function Shells.create(name, props)
 		end
 	end
 	return img
+end
+
+-- Preload every shell texture up front so a 9-slice border is never first rendered against an
+-- undecoded image (the root cause of the intermittent inset "inner outline" on buttons). Once the
+-- textures are cached, every later button -- including ones rebuilt on data deltas -- gets the
+-- correct slice immediately. PreloadAsync yields, so callers should wrap this in task.spawn.
+function Shells.preload()
+	local ContentProvider = game:GetService("ContentProvider")
+	local seen, list = {}, {}
+	for _, def in Shells.Data do
+		if def.Id and not seen[def.Id] then
+			seen[def.Id] = true
+			table.insert(list, def.Id)
+		end
+	end
+	local ok, err = pcall(function()
+		ContentProvider:PreloadAsync(list)
+	end)
+	if not ok then
+		warn("[AoW Shells] preload failed: " .. tostring(err))
+	end
 end
 
 return Shells

@@ -96,6 +96,29 @@ do
 	end
 end
 
+-- Preload the ornate panel/pill/tab/notification shell textures before the HUD builds so their
+-- 9-slice borders don't render against an undecoded image. Bounded wait behind the loading cover so a
+-- slow asset can't hang boot; Shells.create's on-load self-heal backstops anything that lands late.
+-- (Buttons no longer use shells -- they're procedural now -- so this only serves the decorative surfaces.)
+do
+	local ds = aow:FindFirstChild("DesignSystem")
+	local shellsMod = ds and ds:FindFirstChild("Shells")
+	if shellsMod then
+		local ok, Shells = pcall(require, shellsMod)
+		if ok and Shells and Shells.preload then
+			local done = false
+			task.spawn(function()
+				Shells.preload()
+				done = true
+			end)
+			local startedAt = os.clock()
+			while not done and os.clock() - startedAt < 8 do
+				task.wait()
+			end
+		end
+	end
+end
+
 local NotificationChannel = Remotes and Remotes:WaitForChild("NotificationChannel", 120)
 if NotificationChannel then
 	NotificationChannel.OnClientEvent:Connect(function(payload)
