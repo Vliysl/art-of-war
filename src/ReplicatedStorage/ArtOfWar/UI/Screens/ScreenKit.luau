@@ -217,4 +217,25 @@ function ScreenKit.spacer(parent, height, order)
 	return f
 end
 
+-- Coalescing throttle: returns a scheduler that runs `fn` at most once per `interval` seconds
+-- (default 0.4), collapsing bursts. Use for data-screen refreshes so an open screen doesn't rebuild
+-- its whole body on every server tick -- it still updates, just at a human-readable cadence.
+function ScreenKit.throttle(fn, interval)
+	interval = interval or 0.4
+	local pending = false
+	local lastClock = 0
+	return function()
+		if pending then
+			return
+		end
+		pending = true
+		local wait = math.max(0, interval - (os.clock() - lastClock))
+		task.delay(wait, function()
+			pending = false
+			lastClock = os.clock()
+			fn()
+		end)
+	end
+end
+
 return ScreenKit

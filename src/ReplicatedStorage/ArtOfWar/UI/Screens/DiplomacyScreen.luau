@@ -359,6 +359,55 @@ function DiplomacyScreen.create(ctx)
 	end
 
 	local currentTab = "nations"
+
+	-- Cheap content signature per tab: the body is only rebuilt when something it actually shows
+	-- changed, so the ~131-row Nations list no longer rebuilds on every economy tick (its status only
+	-- depends on active-war edges + truces, not treasury). Wars/Proposals are a few rows, so
+	-- re-rendering them when their numbers change is fine.
+	local function contentSignature(tab)
+		local parts = {}
+		if tab == "wars" then
+			for _, w in pairs(cache.allWars()) do
+				if w.status == "active" and (w.attackerTag == mineTag or w.defenderTag == mineTag) then
+					parts[#parts + 1] = string.format(
+						"%s>%s:%d/%d/%d",
+						tostring(w.attackerTag),
+						tostring(w.defenderTag),
+						math.floor(w.score or 0),
+						math.floor(w.attackerExhaustion or 0),
+						math.floor(w.defenderExhaustion or 0)
+					)
+				end
+			end
+		elseif tab == "proposals" then
+			for id, p in pairs(cache.allPeaceProposals()) do
+				if p.status == "pending" and (p.toTag == mineTag or p.fromTag == mineTag) then
+					parts[#parts + 1] = tostring(id) .. ":" .. tostring((p.terms or {}).type)
+				end
+			end
+		else
+			for _, w in pairs(cache.allWars()) do
+				if w.status == "active" then
+					parts[#parts + 1] = "w:" .. tostring(w.attackerTag) .. ">" .. tostring(w.defenderTag)
+				end
+			end
+			local me = mineTag and cache.getCountry(mineTag)
+			if me and me.truces then
+				for t in pairs(me.truces) do
+					parts[#parts + 1] = "t:" .. tostring(t)
+				end
+			end
+			local n = 0
+			for _ in pairs(cache.allCountries()) do
+				n += 1
+			end
+			parts[#parts + 1] = "n:" .. n
+		end
+		table.sort(parts)
+		return table.concat(parts, "|")
+	end
+
+	local lastSig = nil
 	local function scheduleRefresh()
 		if dirty then
 			return
@@ -366,9 +415,15 @@ function DiplomacyScreen.create(ctx)
 		dirty = true
 		task.defer(function()
 			dirty = false
-			if handle and handle.root and handle.root.Parent then
-				render(currentTab)
+			if not (handle and handle.root and handle.root.Parent) then
+				return
 			end
+			local sig = contentSignature(currentTab)
+			if sig == lastSig then
+				return
+			end
+			lastSig = sig
+			render(currentTab)
 		end)
 	end
 
@@ -381,10 +436,12 @@ function DiplomacyScreen.create(ctx)
 		activeTab = "nations",
 		onTab = function(key)
 			currentTab = key
+			lastSig = contentSignature(key)
 			render(key)
 		end,
 	})
 	render("nations")
+	lastSig = contentSignature("nations")
 
 	table.insert(conns, cache.onChangePrefix("countries", scheduleRefresh))
 	table.insert(conns, cache.onChangePrefix("wars", scheduleRefresh))

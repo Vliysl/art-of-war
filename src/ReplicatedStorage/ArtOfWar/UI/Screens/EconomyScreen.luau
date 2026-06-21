@@ -73,7 +73,6 @@ end
 function EconomyScreen.create(ctx)
 	local conns = {}
 	local openModals = {}
-	local dirty = false
 	local handle
 	local registries = ctx.registries
 
@@ -497,18 +496,13 @@ function EconomyScreen.create(ctx)
 	end
 
 	local activeTab = "budget"
-	local function scheduleRefresh()
-		if dirty then
-			return
+	-- Throttled (ScreenKit.throttle) so an open Economy screen refreshes a couple of times a second
+	-- instead of rebuilding its body on every economy tick (treasury/income change continuously).
+	local scheduleRefresh = ScreenKit.throttle(function()
+		if handle and handle.root and handle.root.Parent then
+			render(activeTab)
 		end
-		dirty = true
-		task.defer(function()
-			dirty = false
-			if handle and handle.root and handle.root.Parent then
-				render(activeTab)
-			end
-		end)
-	end
+	end)
 
 	local c = country()
 	handle = ScreenKit.open(ctx, {
