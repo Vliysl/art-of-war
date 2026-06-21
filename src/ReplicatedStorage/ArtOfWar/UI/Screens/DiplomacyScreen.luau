@@ -1,30 +1,38 @@
+-- DiplomacyScreen: an HOI4/RoN-style list -> country-profile -> contextual-actions flow.
+-- The alphabetical, searchable nation list drills into a rich per-country profile (flag + controller
+-- avatar + relation pill + opinion meter + nation info + only-valid actions). War state and pending
+-- peace/pact offers are folded into the profile. Major actions confirm via a modal. A deep-link entry
+-- point (ctx.data.focusTag) opens straight to a profile -- e.g. the province-panel crest.
+
 local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
 local Colors = DesignSystem.Colors
 local Typography = DesignSystem.Typography
-local Spacing = DesignSystem.Spacing
 local ScreenKit = require(script.Parent.ScreenKit)
 local Components = script.Parent.Parent.Components
 local Button = require(Components.Button)
+local Modal = require(Components.Modal)
 local CountryBadge = require(Components.CountryBadge)
+local SimClock = require(script.Parent.Parent.Parent.Modules.SimClock)
 
 local DiplomacyScreen = {}
-
-local TABS = {
-	{ key = "nations", label = "Nations" },
-	{ key = "wars", label = "Wars" },
-	{ key = "proposals", label = "Proposals" },
-}
 
 local TERMS_LABEL = {
 	white_peace = "White Peace",
 	annex_occupied = "Demand Lands",
+	vassalize = "Vassalize",
 }
 
-local CHIP = {
-	WAR = Colors.Negative,
-	TRUCE = Colors.Warning,
-	PEACE = Colors.TextSecondary,
-	YOU = Colors.Accent,
+-- Primary relation -> { label, color }. Priority resolved in relationStatus().
+local RELATION = {
+	YOU = { label = "You", color = Colors.Accent },
+	WAR = { label = "At War", color = Colors.Negative },
+	SUBJECT = { label = "Your Subject", color = Colors.Accent },
+	OVERLORD = { label = "Your Overlord", color = Colors.Warning },
+	ALLY = { label = "Allied", color = Colors.Positive },
+	GUARANTEE = { label = "Guaranteed", color = Colors.Positive },
+	NAP = { label = "Non-Aggression", color = Colors.Warning },
+	TRUCE = { label = "Truce", color = Colors.Warning },
+	NEUTRAL = { label = "Neutral", color = Colors.TextSecondary },
 }
 
 local function nameOf(cache, tag)
@@ -38,6 +46,27 @@ local function countryColor(c)
 		return Color3.fromRGB(col[1], col[2], col[3])
 	end
 	return nil
+end
+
+local function prettify(id)
+	if type(id) ~= "string" or id == "" then
+		return "—"
+	end
+	local out = {}
+	for word in id:gmatch("[^_%s]+") do
+		out[#out + 1] = word:sub(1, 1):upper() .. word:sub(2)
+	end
+	return table.concat(out, " ")
+end
+
+-- Is a stored pact expiry still in the future? A nil expiresAt means there is NO such pact -> inactive.
+-- If the sim clock has not synced yet (SimClock.now() nil) but an expiry exists, treat the pact as active.
+local function stillActive(expiresAt)
+	if not expiresAt then
+		return false
+	end
+	local nowT = SimClock.now()
+	return (not nowT) or expiresAt > nowT
 end
 
 local function activeWarWith(cache, mineTag, otherTag)
@@ -55,11 +84,9 @@ local function activeWarWith(cache, mineTag, otherTag)
 	return nil
 end
 
-local function statusOf(cache, mineTag, otherTag)
-	if not mineTag then
-		return "PEACE"
-	end
-	if otherTag == mineTag then
+-- The single most salient relation between mineTag and otherTag, for the list chip + profile pill.
+local function relationStatus(cache, mineTag, otherTag)
+	if not mineTag or otherTag == mineTag then
 		return "YOU"
 	end
 	if activeWarWith(cache, mineTag, otherTag) then
@@ -67,10 +94,71 @@ local function statusOf(cache, mineTag, otherTag)
 	end
 	local mine = cache.getCountry(mineTag)
 	local other = cache.getCountry(otherTag)
-	if (mine and mine.truces and mine.truces[otherTag]) or (other and other.truces and other.truces[mineTag]) then
+	if mine then
+		if mine.subjects and mine.subjects[otherTag] then
+			return "SUBJECT"
+		end
+		if mine.subjectOf == otherTag then
+			return "OVERLORD"
+		end
+		if mine.allies and mine.allies[otherTag] then
+			return "ALLY"
+		end
+		if (mine.guarantees and mine.guarantees[otherTag]) or (mine.guaranteedBy and mine.guaranteedBy[otherTag]) then
+			return "GUARANTEE"
+		end
+		if mine.naps and stillActive(mine.naps[otherTag]) then
+			return "NAP"
+		end
+		if mine.truces and stillActive(mine.truces[otherTag]) then
+			return "TRUCE"
+		end
+	end
+	if other and other.truces and stillActive(other.truces[mineTag]) then
 		return "TRUCE"
 	end
-	return "PEACE"
+	return "NEUTRAL"
+end
+
+-- A procedural, debounced search box (no shell texture -> no load race). initialText preserves the query
+-- across re-renders.
+local function makeSearchBox(parent, placeholder, initialText, onChanged)
+	local box = Instance.new("TextBox")
+	box.Name = "Search"
+	box.Size = UDim2.new(1, 0, 0, 34)
+	box.BackgroundColor3 = Colors.SurfaceSunken
+	box.BorderSizePixel = 0
+	box.Text = initialText or ""
+	box.PlaceholderText = placeholder
+	box.PlaceholderColor3 = Colors.TextTertiary
+	box.TextColor3 = Colors.TextPrimary
+	box.TextXAlignment = Enum.TextXAlignment.Left
+	box.ClearTextOnFocus = false
+	box.LayoutOrder = 0
+	Typography.apply(box, "bodyMd")
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 10)
+	pad.PaddingRight = UDim.new(0, 10)
+	pad.Parent = box
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 6)
+	corner.Parent = box
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Colors.BorderSubtle
+	stroke.Parent = box
+	box.Parent = parent
+	local debounce
+	box:GetPropertyChangedSignal("Text"):Connect(function()
+		local text = box.Text
+		if debounce then
+			task.cancel(debounce)
+		end
+		debounce = task.delay(0.1, function()
+			debounce = nil
+			onChanged(text)
+		end)
+	end)
+	return box
 end
 
 function DiplomacyScreen.create(ctx)
@@ -80,27 +168,206 @@ function DiplomacyScreen.create(ctx)
 	local conns = {}
 	local dirty = false
 
-	local function chip(parent, label)
-		local l = Instance.new("TextLabel")
-		l.Name = "Chip"
-		l.AnchorPoint = Vector2.new(1, 0.5)
-		l.Position = UDim2.new(1, -6, 0.5, 0)
-		l.Size = UDim2.fromOffset(58, 18)
-		l.BackgroundTransparency = 1
-		l.Text = label
-		l.TextColor3 = CHIP[label] or Colors.TextSecondary
-		l.TextXAlignment = Enum.TextXAlignment.Right
-		Typography.apply(l, "label")
-		l.Parent = parent
+	-- View state. focusTag deep-links straight to a profile (e.g. the province-panel crest).
+	local mode = "list"
+	local currentTag = nil
+	local listQuery = ""
+	local focusTag = ctx.data and ctx.data.focusTag
+	if focusTag and focusTag ~= mineTag then
+		-- Deep-link straight to the profile. renderProfile's guard handles a not-yet-synced or annexed tag,
+		-- and the "ex:" signature term re-renders once the country record arrives.
+		mode = "profile"
+		currentTag = focusTag
 	end
 
-	local function nationRow(parent, tag, status, order)
-		local row = Instance.new("Frame")
+	local render, showList, showProfile
+
+	-- ---- remote fire helpers -------------------------------------------------
+	local function declareWar(tag)
+		ctx.fire("DeclareWar", tag)
+	end
+	local function proposePeace(tag, kind)
+		ctx.fire("ProposePeace", tag, { type = kind, proposerTag = mineTag })
+	end
+	local function improveRelations(tag)
+		ctx.fire("ImproveRelations", tag)
+	end
+	local function proposePact(tag, kind)
+		ctx.fire("ProposePact", tag, kind)
+	end
+	local function breakPact(tag, kind)
+		ctx.fire("BreakPact", tag, kind)
+	end
+	local function releaseSubject(tag)
+		ctx.fire("ReleaseSubject", tag)
+	end
+	local function annexSubject(tag)
+		ctx.fire("AnnexSubject", tag)
+	end
+
+	-- ---- relation reads (bound to cache/mineTag) -----------------------------
+	local function opinionOf(other)
+		local me = mineTag and cache.getCountry(mineTag)
+		return (me and me.opinion and me.opinion[other]) or 0
+	end
+	local function napActive(other)
+		local me = mineTag and cache.getCountry(mineTag)
+		return me ~= nil and me.naps ~= nil and stillActive(me.naps[other])
+	end
+	local function truceActive(other)
+		local me = mineTag and cache.getCountry(mineTag)
+		local other2 = cache.getCountry(other)
+		return (me and me.truces and stillActive(me.truces[other]))
+			or (other2 and other2.truces and stillActive(other2.truces[mineTag]))
+			or false
+	end
+	local function isAllied(other)
+		local me = mineTag and cache.getCountry(mineTag)
+		return (me and me.allies and me.allies[other]) == true
+	end
+	local function iGuarantee(other)
+		local me = mineTag and cache.getCountry(mineTag)
+		return (me and me.guarantees and me.guarantees[other]) == true
+	end
+
+	-- ---- a Cancel/Confirm modal for major actions ----------------------------
+	local function confirm(opts)
+		local modal = Modal.create({
+			parent = ctx.modalLayer,
+			title = opts.title,
+			subtitle = opts.subtitle,
+			width = 420,
+			height = 220,
+			footer = true,
+			dismissable = true,
+			onClose = function() end,
+		})
+		local msg = Instance.new("TextLabel")
+		msg.Size = UDim2.new(1, -24, 1, -12)
+		msg.Position = UDim2.fromOffset(12, 6)
+		msg.BackgroundTransparency = 1
+		msg.Text = opts.body or ""
+		msg.TextWrapped = true
+		msg.TextColor3 = Colors.TextSecondary
+		msg.TextXAlignment = Enum.TextXAlignment.Left
+		msg.TextYAlignment = Enum.TextYAlignment.Top
+		Typography.apply(msg, "bodyMd")
+		msg.Parent = modal.content
+		Button.create({
+			parent = modal.footer,
+			variant = "ghost",
+			text = "Cancel",
+			layoutOrder = 1,
+			onClick = function()
+				modal.close()
+			end,
+		})
+		Button.create({
+			parent = modal.footer,
+			variant = opts.variant or "danger",
+			text = opts.confirmText or "Confirm",
+			layoutOrder = 2,
+			onClick = function()
+				opts.onConfirm()
+				modal.close()
+			end,
+		})
+	end
+
+	-- ---- a centered -200..+200 opinion meter (ProgressBar is left-origin only) ----
+	local function opinionMeter(parent, value, order)
+		local container = Instance.new("Frame")
+		container.Name = "OpinionMeter"
+		container.Size = UDim2.new(1, 0, 0, 30)
+		container.BackgroundTransparency = 1
+		container.LayoutOrder = order
+		container.Parent = parent
+
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.new(1, 0, 0, 16)
+		label.BackgroundTransparency = 1
+		label.Text = string.format("Opinion  %s%d", value > 0 and "+" or "", value)
+		label.TextColor3 = value > 0 and Colors.Positive or (value < 0 and Colors.Negative or Colors.TextSecondary)
+		label.TextXAlignment = Enum.TextXAlignment.Left
+		Typography.apply(label, "label")
+		label.Parent = container
+
+		local track = Instance.new("Frame")
+		track.Size = UDim2.new(1, 0, 0, 8)
+		track.Position = UDim2.fromOffset(0, 20)
+		track.BackgroundColor3 = Colors.SurfaceSunken
+		track.BorderSizePixel = 0
+		track.Parent = container
+		local tcorner = Instance.new("UICorner")
+		tcorner.CornerRadius = UDim.new(1, 0)
+		tcorner.Parent = track
+
+		local center = Instance.new("Frame")
+		center.AnchorPoint = Vector2.new(0.5, 0)
+		center.Position = UDim2.fromScale(0.5, 0)
+		center.Size = UDim2.new(0, 1, 1, 0)
+		center.BackgroundColor3 = Colors.BorderStrong
+		center.BorderSizePixel = 0
+		center.ZIndex = 2
+		center.Parent = track
+
+		local frac = math.clamp(value / 200, -1, 1)
+		local fill = Instance.new("Frame")
+		fill.AnchorPoint = Vector2.new(frac >= 0 and 0 or 1, 0)
+		fill.Position = UDim2.fromScale(0.5, 0)
+		fill.Size = UDim2.fromScale(0.5 * math.abs(frac), 1)
+		fill.BackgroundColor3 = value >= 0 and Colors.Positive or Colors.Negative
+		fill.BorderSizePixel = 0
+		fill.Parent = track
+		local fcorner = Instance.new("UICorner")
+		fcorner.CornerRadius = UDim.new(1, 0)
+		fcorner.Parent = fill
+	end
+
+	-- ---- province + army counts (not precomputed; iterate once per profile render) ----
+	local function countryStats(tag)
+		local provinces = 0
+		for _, p in pairs(cache.allProvinces()) do
+			if p.ownerTag == tag then
+				provinces += 1
+			end
+		end
+		local regiments = 0
+		for _, a in pairs(cache.allArmies()) do
+			if a.ownerTag == tag then
+				for _, count in pairs(a.composition or {}) do
+					regiments += count
+				end
+			end
+		end
+		return provinces, regiments
+	end
+
+	-- ---- list mode -----------------------------------------------------------
+	local function listRow(parent, tag, order)
+		local rel = relationStatus(cache, mineTag, tag)
+		local row = Instance.new("TextButton")
 		row.Name = "Nation"
 		row.Size = UDim2.new(1, 0, 0, 44)
+		row.BackgroundColor3 = Colors.SurfaceElevated
 		row.BackgroundTransparency = 1
+		row.BorderSizePixel = 0
+		row.AutoButtonColor = false
+		row.Text = ""
 		row.LayoutOrder = order
 		row.Parent = parent
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0, 6)
+		corner.Parent = row
+		row.MouseEnter:Connect(function()
+			row.BackgroundTransparency = 0.88
+		end)
+		row.MouseLeave:Connect(function()
+			row.BackgroundTransparency = 1
+		end)
+		row.Activated:Connect(function()
+			showProfile(tag)
+		end)
 
 		local badge = CountryBadge.create({
 			code = tag,
@@ -109,12 +376,11 @@ function DiplomacyScreen.create(ctx)
 			parent = row,
 		})
 		badge.AnchorPoint = Vector2.new(0, 0.5)
-		badge.Position = UDim2.fromScale(0, 0.5)
+		badge.Position = UDim2.new(0, 8, 0.5, 0)
 
 		local nameLbl = Instance.new("TextLabel")
-		nameLbl.Name = "Name"
-		nameLbl.Position = UDim2.fromOffset(46, 0)
-		nameLbl.Size = UDim2.new(1, -110, 1, 0)
+		nameLbl.Position = UDim2.fromOffset(54, 0)
+		nameLbl.Size = UDim2.new(1, -200, 1, 0)
 		nameLbl.BackgroundTransparency = 1
 		nameLbl.Text = nameOf(cache, tag)
 		nameLbl.TextColor3 = Colors.TextPrimary
@@ -123,285 +389,556 @@ function DiplomacyScreen.create(ctx)
 		Typography.apply(nameLbl, "bodyLg")
 		nameLbl.Parent = row
 
-		chip(row, status)
-		return row
+		local chipLbl = Instance.new("TextLabel")
+		chipLbl.AnchorPoint = Vector2.new(1, 0.5)
+		chipLbl.Position = UDim2.new(1, -10, 0.5, 0)
+		chipLbl.Size = UDim2.fromOffset(120, 18)
+		chipLbl.BackgroundTransparency = 1
+		chipLbl.Text = RELATION[rel].label
+		chipLbl.TextColor3 = RELATION[rel].color
+		chipLbl.TextXAlignment = Enum.TextXAlignment.Right
+		Typography.apply(chipLbl, "label")
+		chipLbl.Parent = row
+
+		local op = opinionOf(tag)
+		local opLbl = Instance.new("TextLabel")
+		opLbl.AnchorPoint = Vector2.new(1, 0.5)
+		opLbl.Position = UDim2.new(1, -138, 0.5, 0)
+		opLbl.Size = UDim2.fromOffset(48, 18)
+		opLbl.BackgroundTransparency = 1
+		opLbl.Text = (op > 0 and "+" or "") .. tostring(op)
+		opLbl.TextColor3 = op > 0 and Colors.Positive or (op < 0 and Colors.Negative or Colors.TextSecondary)
+		opLbl.TextXAlignment = Enum.TextXAlignment.Right
+		Typography.apply(opLbl, "mono")
+		opLbl.Parent = row
 	end
 
-	local function declareWar(tag)
-		ctx.fire("DeclareWar", tag)
-	end
-	local function proposePeace(tag, kind)
-		ctx.fire("ProposePeace", tag, { type = kind, proposerTag = mineTag })
-	end
+	local function renderList(body)
+		if not mineTag then
+			ScreenKit.note(body, "Claim a country to conduct diplomacy.", 1)
+			return
+		end
 
-	local renderers = {
-		nations = function(body)
-			if not mineTag then
-				ScreenKit.note(body, "Claim a country to conduct diplomacy.", 1)
-				return
+		local listContainer = Instance.new("Frame")
+		listContainer.Name = "List"
+		listContainer.Size = UDim2.fromScale(1, 0)
+		listContainer.AutomaticSize = Enum.AutomaticSize.Y
+		listContainer.BackgroundTransparency = 1
+		listContainer.LayoutOrder = 1
+		local listLayout = Instance.new("UIListLayout")
+		listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+		listLayout.Padding = UDim.new(0, 4)
+		listLayout.Parent = listContainer
+
+		local function rebuild()
+			for _, ch in listContainer:GetChildren() do
+				if ch:IsA("GuiObject") then
+					ch:Destroy()
+				end
 			end
+			local q = listQuery:lower()
 			local entries = {}
 			for tag in pairs(cache.allCountries()) do
-				entries[#entries + 1] = { tag = tag, name = nameOf(cache, tag) }
+				if tag ~= mineTag then
+					local nm = nameOf(cache, tag)
+					if q == "" or nm:lower():find(q, 1, true) or tag:lower():find(q, 1, true) then
+						entries[#entries + 1] = { tag = tag, name = nm }
+					end
+				end
 			end
 			table.sort(entries, function(a, b)
 				return a.name < b.name
 			end)
 			if #entries == 0 then
-				ScreenKit.note(body, "Waiting for the world to replicate.", 1)
+				ScreenKit.note(listContainer, "No nations match your search.", 1)
 				return
 			end
-
 			local order = 0
-			for _, entry in ipairs(entries) do
+			for _, e in ipairs(entries) do
 				order += 1
-				local status = statusOf(cache, mineTag, entry.tag)
-				nationRow(body, entry.tag, status, order)
-				if status == "WAR" then
-					local actions = ScreenKit.buttonRow(body, order + 0.1)
-					actions.Size = UDim2.new(1, 0, 0, 36)
-					Button.create({
-						parent = actions,
-						variant = "secondary",
-						text = "White Peace",
-						size = "sm",
-						onClick = function()
-							proposePeace(entry.tag, "white_peace")
-						end,
-					})
-					Button.create({
-						parent = actions,
-						variant = "primary",
-						text = "Demand Lands",
-						size = "sm",
-						onClick = function()
-							proposePeace(entry.tag, "annex_occupied")
-						end,
-					})
-				elseif status == "PEACE" then
-					local actions = ScreenKit.buttonRow(body, order + 0.1)
-					actions.Size = UDim2.new(1, 0, 0, 36)
-					Button.create({
-						parent = actions,
-						variant = "danger",
-						text = "Declare War",
-						size = "sm",
-						onClick = function()
-							declareWar(entry.tag)
-						end,
-					})
-				elseif status == "TRUCE" then
-					ScreenKit.note(body, "Truce in effect. War cannot be declared.", order + 0.1)
-				end
-				ScreenKit.spacer(body, Spacing.space1, order + 0.2)
+				listRow(listContainer, e.tag, order)
 			end
-		end,
-		wars = function(body)
-			if not mineTag then
-				ScreenKit.note(body, "Claim a country to wage war.", 1)
-				return
-			end
-			local wars = {}
-			for _, war in pairs(cache.allWars()) do
-				if war.status == "active" and (war.attackerTag == mineTag or war.defenderTag == mineTag) then
-					wars[#wars + 1] = war
-				end
-			end
-			table.sort(wars, function(a, b)
-				return (a.declaredMonthIndex or 0) < (b.declaredMonthIndex or 0)
-			end)
-			if #wars == 0 then
-				ScreenKit.note(body, "You are at peace with the world.", 1)
-				return
-			end
+		end
 
-			local order = 0
-			for _, war in ipairs(wars) do
-				local aggressor = war.attackerTag == mineTag
-				local opponent = aggressor and war.defenderTag or war.attackerTag
-				local score = war.score or 0
-				if not aggressor then
-					score = -score
-				end
-				local myExh = aggressor and war.attackerExhaustion or war.defenderExhaustion
-				local theirExh = aggressor and war.defenderExhaustion or war.attackerExhaustion
-				order += 1
-				ScreenKit.section(body, "War with " .. nameOf(cache, opponent), order)
-				order += 1
-				ScreenKit.stat(body, {
-					icon = "War",
-					label = "Role",
-					value = aggressor and "Aggressor" or "Defender",
-					layoutOrder = order,
-				})
-				order += 1
-				ScreenKit.stat(body, {
-					icon = "Battle",
-					label = "War Score",
-					value = string.format("%+d", math.floor(score)),
-					valueColor = score >= 0 and "positive" or "negative",
-					layoutOrder = order,
-				})
-				order += 1
-				ScreenKit.stat(body, {
-					icon = "Unrest",
-					label = "Exhaustion",
-					value = string.format("you %.1f  \u{00B7}  them %.1f", myExh or 0, theirExh or 0),
-					layoutOrder = order,
-				})
-				order += 1
-				local actions = ScreenKit.buttonRow(body, order)
-				Button.create({
-					parent = actions,
-					variant = "secondary",
-					text = "White Peace",
-					onClick = function()
-						proposePeace(opponent, "white_peace")
-					end,
-				})
-				Button.create({
-					parent = actions,
-					variant = "primary",
-					text = "Demand Lands",
-					onClick = function()
-						proposePeace(opponent, "annex_occupied")
-					end,
-				})
-			end
-		end,
-		proposals = function(body)
-			if not mineTag then
-				ScreenKit.note(body, "Claim a country to negotiate peace.", 1)
-				return
-			end
-			local incoming, outgoing = {}, {}
-			for id, prop in pairs(cache.allPeaceProposals()) do
-				if prop.status == "pending" then
-					if prop.toTag == mineTag then
-						incoming[#incoming + 1] = { id = id, prop = prop }
-					elseif prop.fromTag == mineTag then
-						outgoing[#outgoing + 1] = { id = id, prop = prop }
-					end
-				end
-			end
-
-			local order = 0
-			order += 1
-			ScreenKit.section(body, "Incoming", order)
-			if #incoming == 0 then
-				order += 1
-				ScreenKit.note(body, "No offers awaiting your response.", order)
-			else
-				for _, entry in ipairs(incoming) do
-					local terms = entry.prop.terms or {}
-					order += 1
-					ScreenKit.stat(body, {
-						icon = "Diplomacy",
-						label = nameOf(cache, entry.prop.fromTag),
-						value = TERMS_LABEL[terms.type] or "Peace",
-						layoutOrder = order,
-					})
-					order += 1
-					local actions = ScreenKit.buttonRow(body, order)
-					Button.create({
-						parent = actions,
-						variant = "primary",
-						text = "Accept",
-						onClick = function()
-							ctx.fire("AcceptPeace", entry.id)
-						end,
-					})
-					Button.create({
-						parent = actions,
-						variant = "danger",
-						text = "Reject",
-						onClick = function()
-							ctx.fire("RejectPeace", entry.id)
-						end,
-					})
-				end
-			end
-
-			order += 1
-			ScreenKit.section(body, "Outgoing", order)
-			if #outgoing == 0 then
-				order += 1
-				ScreenKit.note(body, "You have no pending offers.", order)
-			else
-				for _, entry in ipairs(outgoing) do
-					local terms = entry.prop.terms or {}
-					order += 1
-					ScreenKit.stat(body, {
-						icon = "Diplomacy",
-						label = nameOf(cache, entry.prop.toTag),
-						value = TERMS_LABEL[terms.type] or "Peace",
-						layoutOrder = order,
-					})
-					order += 1
-					local actions = ScreenKit.buttonRow(body, order)
-					Button.create({
-						parent = actions,
-						variant = "ghost",
-						text = "Cancel",
-						onClick = function()
-							ctx.fire("CancelPeaceProposal", entry.id)
-						end,
-					})
-				end
-			end
-		end,
-	}
-
-	local function render(tab)
-		handle.clearBody()
-		local fn = renderers[tab] or renderers.nations
-		fn(handle.body)
+		makeSearchBox(body, "Search nations…", listQuery, function(text)
+			listQuery = text
+			rebuild()
+		end)
+		listContainer.Parent = body
+		rebuild()
 	end
 
-	local currentTab = "nations"
+	-- ---- profile mode --------------------------------------------------------
+	local function renderProfile(body)
+		local tag = currentTag
+		local n = 0
+		local function ord()
+			n += 1
+			return n
+		end
 
-	-- Cheap content signature per tab: the body is only rebuilt when something it actually shows
-	-- changed, so the ~131-row Nations list no longer rebuilds on every economy tick (its status only
-	-- depends on active-war edges + truces, not treasury). Wars/Proposals are a few rows, so
-	-- re-rendering them when their numbers change is fine.
-	local function contentSignature(tab)
-		local parts = {}
-		if tab == "wars" then
-			for _, w in pairs(cache.allWars()) do
-				if w.status == "active" and (w.attackerTag == mineTag or w.defenderTag == mineTag) then
-					parts[#parts + 1] = string.format(
-						"%s>%s:%d/%d/%d",
-						tostring(w.attackerTag),
-						tostring(w.defenderTag),
-						math.floor(w.score or 0),
-						math.floor(w.attackerExhaustion or 0),
-						math.floor(w.defenderExhaustion or 0)
+		local back = ScreenKit.buttonRow(body, ord())
+		Button.create({
+			parent = back,
+			variant = "ghost",
+			text = "‹ Back",
+			size = "sm",
+			onClick = showList,
+		})
+
+		local country = tag and cache.getCountry(tag)
+		if not country then
+			ScreenKit.note(body, "This nation no longer exists.", ord())
+			return
+		end
+		local rel = relationStatus(cache, mineTag, tag)
+		local col = countryColor(country)
+
+		-- Header: flag/crest + name + relation pill + controller avatar.
+		local header = Instance.new("Frame")
+		header.Name = "Header"
+		header.Size = UDim2.new(1, 0, 0, 76)
+		header.BackgroundTransparency = 1
+		header.LayoutOrder = ord()
+		header.Parent = body
+
+		local flag = Instance.new("Frame")
+		flag.Size = UDim2.fromOffset(104, 68)
+		flag.AnchorPoint = Vector2.new(0, 0.5)
+		flag.Position = UDim2.fromScale(0, 0.5)
+		flag.BackgroundColor3 = col or Colors.SurfaceElevated
+		flag.BorderSizePixel = 0
+		flag.Parent = header
+		local fcorner = Instance.new("UICorner")
+		fcorner.CornerRadius = UDim.new(0, 6)
+		fcorner.Parent = flag
+		local fstroke = Instance.new("UIStroke")
+		fstroke.Color = Colors.BorderStrong
+		fstroke.Parent = flag
+		local crest = CountryBadge.create({ code = tag, countryColor = col, size = "md", parent = flag })
+		crest.AnchorPoint = Vector2.new(0.5, 0.5)
+		crest.Position = UDim2.fromScale(0.5, 0.5)
+
+		local nameLbl = Instance.new("TextLabel")
+		nameLbl.Position = UDim2.fromOffset(116, 12)
+		nameLbl.Size = UDim2.new(1, -180, 0, 28)
+		nameLbl.BackgroundTransparency = 1
+		nameLbl.Text = nameOf(cache, tag)
+		nameLbl.TextColor3 = Colors.TextPrimary
+		nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+		nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+		Typography.apply(nameLbl, "displayMd")
+		nameLbl.Parent = header
+
+		local pill = Instance.new("TextLabel")
+		pill.Position = UDim2.fromOffset(116, 42)
+		pill.Size = UDim2.new(1, -180, 0, 18)
+		pill.BackgroundTransparency = 1
+		pill.Text = RELATION[rel].label
+		pill.TextColor3 = RELATION[rel].color
+		pill.TextXAlignment = Enum.TextXAlignment.Left
+		Typography.apply(pill, "label")
+		pill.Parent = header
+
+		if country.claimedBy then
+			local avatar = Instance.new("ImageLabel")
+			avatar.AnchorPoint = Vector2.new(1, 0.5)
+			avatar.Position = UDim2.new(1, -4, 0.5, 0)
+			avatar.Size = UDim2.fromOffset(52, 52)
+			avatar.BackgroundColor3 = Colors.SurfaceSunken
+			avatar.Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(country.claimedBy) .. "&w=150&h=150"
+			avatar.Parent = header
+			local acorner = Instance.new("UICorner")
+			acorner.CornerRadius = UDim.new(1, 0)
+			acorner.Parent = avatar
+		else
+			local ai = Instance.new("TextLabel")
+			ai.AnchorPoint = Vector2.new(1, 0.5)
+			ai.Position = UDim2.new(1, -4, 0.5, 0)
+			ai.Size = UDim2.fromOffset(52, 24)
+			ai.BackgroundTransparency = 1
+			ai.Text = "AI"
+			ai.TextColor3 = Colors.TextTertiary
+			ai.TextXAlignment = Enum.TextXAlignment.Right
+			Typography.apply(ai, "caption")
+			ai.Parent = header
+		end
+
+		opinionMeter(body, opinionOf(tag), ord())
+
+		-- Nation info.
+		ScreenKit.section(body, "Nation", ord())
+		ScreenKit.stat(body, {
+			icon = "Core",
+			label = "Government",
+			value = prettify(country.governmentForm),
+			layoutOrder = ord(),
+		})
+		ScreenKit.stat(body, {
+			label = "Ideology",
+			value = prettify(country.ideology),
+			layoutOrder = ord(),
+		})
+		local provinces, regiments = countryStats(tag)
+		ScreenKit.stat(
+			body,
+			{ icon = "Prestige", label = "Provinces", value = tostring(provinces), mono = true, layoutOrder = ord() }
+		)
+		ScreenKit.stat(
+			body,
+			{ icon = "War", label = "Regiments", value = tostring(regiments), mono = true, layoutOrder = ord() }
+		)
+		if country.treasury ~= nil then
+			ScreenKit.stat(body, {
+				icon = "Treasury",
+				label = "Treasury",
+				value = tostring(math.floor(country.treasury or 0)),
+				mono = true,
+				layoutOrder = ord(),
+			})
+		end
+		if country.manpower ~= nil then
+			ScreenKit.stat(body, {
+				icon = "Manpower",
+				label = "Manpower",
+				value = tostring(math.floor(country.manpower or 0)),
+				mono = true,
+				layoutOrder = ord(),
+			})
+		end
+
+		-- Relations detail.
+		ScreenKit.section(body, "Relations", ord())
+		local war = activeWarWith(cache, mineTag, tag)
+		if war then
+			local iAmAttacker = war.attackerTag == mineTag
+			local myScore = iAmAttacker and (war.score or 0) or -(war.score or 0)
+			ScreenKit.stat(body, {
+				icon = "War",
+				label = "War score",
+				value = string.format("%s%d", myScore > 0 and "+" or "", math.floor(myScore)),
+				valueColor = myScore > 0 and "positive" or (myScore < 0 and "negative" or nil),
+				mono = true,
+				layoutOrder = ord(),
+			})
+			ScreenKit.stat(body, {
+				label = "War exhaustion",
+				value = string.format(
+					"you %d%%  ·  them %d%%",
+					math.floor((iAmAttacker and war.attackerExhaustion or war.defenderExhaustion) or 0),
+					math.floor((iAmAttacker and war.defenderExhaustion or war.attackerExhaustion) or 0)
+				),
+				layoutOrder = ord(),
+			})
+		end
+		if napActive(tag) then
+			ScreenKit.note(body, "Non-aggression pact in force.", ord())
+		end
+		if truceActive(tag) then
+			ScreenKit.note(body, "Truce in effect — war cannot be declared.", ord())
+		end
+		if isAllied(tag) then
+			ScreenKit.note(body, "Allied — you defend each other's wars.", ord())
+		end
+		if iGuarantee(tag) then
+			ScreenKit.note(body, "You guarantee their independence.", ord())
+		end
+		local me = mineTag and cache.getCountry(mineTag)
+		if me and me.guaranteedBy and me.guaranteedBy[tag] then
+			ScreenKit.note(body, "They guarantee your independence.", ord())
+		end
+		if rel == "SUBJECT" then
+			ScreenKit.note(body, "Your subject — they fight your wars and cannot act alone.", ord())
+		elseif rel == "OVERLORD" then
+			ScreenKit.note(body, "Your overlord — they control your foreign policy.", ord())
+		end
+
+		-- Pending offers between you (folded in, per design).
+		local pendingShown = false
+		local function ensurePending()
+			if not pendingShown then
+				ScreenKit.section(body, "Pending", ord())
+				pendingShown = true
+			end
+		end
+		local function offerButtons(incoming, acceptRemote, rejectRemote, cancelRemote, id)
+			local prow = ScreenKit.buttonRow(body, ord())
+			if incoming then
+				Button.create({
+					parent = prow,
+					variant = "success",
+					text = "Accept",
+					size = "sm",
+					onClick = function()
+						ctx.fire(acceptRemote, id)
+					end,
+				})
+				Button.create({
+					parent = prow,
+					variant = "danger",
+					text = "Reject",
+					size = "sm",
+					onClick = function()
+						ctx.fire(rejectRemote, id)
+					end,
+				})
+			else
+				Button.create({
+					parent = prow,
+					variant = "ghost",
+					text = "Cancel",
+					size = "sm",
+					onClick = function()
+						ctx.fire(cancelRemote, id)
+					end,
+				})
+			end
+		end
+		for id, p in pairs(cache.allPeaceProposals()) do
+			if
+				p.status == "pending"
+				and ((p.fromTag == mineTag and p.toTag == tag) or (p.fromTag == tag and p.toTag == mineTag))
+			then
+				ensurePending()
+				local incoming = p.toTag == mineTag
+				ScreenKit.note(
+					body,
+					(incoming and "Incoming" or "Outgoing")
+						.. " peace offer · "
+						.. (TERMS_LABEL[(p.terms or {}).type] or "Peace"),
+					ord()
+				)
+				offerButtons(incoming, "AcceptPeace", "RejectPeace", "CancelPeaceProposal", id)
+			end
+		end
+		for id, p in pairs(cache.allPacts()) do
+			if
+				p.status == "pending"
+				and ((p.fromTag == mineTag and p.toTag == tag) or (p.fromTag == tag and p.toTag == mineTag))
+			then
+				ensurePending()
+				local incoming = p.toTag == mineTag
+				local label = (p.type == "call_to_arms") and "Call to arms"
+					or ((p.type == "alliance") and "Alliance offer" or "Non-aggression pact")
+				ScreenKit.note(body, (incoming and "Incoming · " or "Outgoing · ") .. label, ord())
+				offerButtons(incoming, "AcceptPact", "RejectPact", "CancelPact", id)
+			end
+		end
+
+		-- Contextual actions.
+		ScreenKit.section(body, "Actions", ord())
+		local act = ScreenKit.buttonRow(body, ord())
+		local function major(variant, text, title, bodyText, confirmText, onYes)
+			Button.create({
+				parent = act,
+				variant = variant,
+				text = text,
+				size = "sm",
+				onClick = function()
+					confirm({
+						title = title,
+						subtitle = nameOf(cache, tag),
+						body = bodyText,
+						confirmText = confirmText,
+						variant = variant,
+						onConfirm = onYes,
+					})
+				end,
+			})
+		end
+		local function minor(variant, text, onClick)
+			Button.create({ parent = act, variant = variant, text = text, size = "sm", onClick = onClick })
+		end
+
+		local meSubject = me and me.subjectOf ~= nil
+		if rel == "WAR" then
+			major(
+				"secondary",
+				"White Peace",
+				"Propose White Peace",
+				"End the war with no exchange of land?",
+				"Propose",
+				function()
+					proposePeace(tag, "white_peace")
+				end
+			)
+			major(
+				"primary",
+				"Demand Lands",
+				"Demand Lands",
+				"Demand the provinces you occupy as the price of peace?",
+				"Demand",
+				function()
+					proposePeace(tag, "annex_occupied")
+				end
+			)
+			major("primary", "Vassalize", "Vassalize", "Force them to become your subject?", "Vassalize", function()
+				proposePeace(tag, "vassalize")
+			end)
+		elseif rel == "OVERLORD" then
+			minor("secondary", "Improve · 25 PP", function()
+				improveRelations(tag)
+			end)
+		elseif rel == "SUBJECT" then
+			minor("secondary", "Release", function()
+				releaseSubject(tag)
+			end)
+			major(
+				"danger",
+				"Annex",
+				"Annex Subject",
+				"Absorb this subject — its provinces become yours and the nation ceases to exist?",
+				"Annex",
+				function()
+					annexSubject(tag)
+				end
+			)
+		else
+			local allied = isAllied(tag)
+			local napOn = napActive(tag)
+			local truceOn = truceActive(tag)
+			-- A nation that is someone else's subject can't form pacts (server rejects "subject_involved").
+			local targetIsSubject = country.subjectOf ~= nil
+			if not meSubject then
+				if allied then
+					major(
+						"danger",
+						"Break Alliance",
+						"Break Alliance",
+						"Breaking an alliance is a grave betrayal — opinion plummets.",
+						"Break",
+						function()
+							breakPact(tag, "alliance")
+						end
+					)
+				elseif napOn then
+					major(
+						"danger",
+						"Break NAP",
+						"Break Non-Aggression Pact",
+						"Breaking the pact angers both peoples.",
+						"Break",
+						function()
+							breakPact(tag, "nap")
+						end
+					)
+				elseif not truceOn then
+					major(
+						"danger",
+						"Declare War",
+						"Declare War",
+						"Declare war on " .. nameOf(cache, tag) .. "?",
+						"Declare War",
+						function()
+							declareWar(tag)
+						end
 					)
 				end
+				if not allied and not targetIsSubject then
+					minor("secondary", "Propose Alliance", function()
+						proposePact(tag, "alliance")
+					end)
+				end
+				if not allied and not napOn and not targetIsSubject then
+					minor("secondary", "Propose NAP", function()
+						proposePact(tag, "nap")
+					end)
+				end
+				if iGuarantee(tag) then
+					major(
+						"ghost",
+						"Revoke Guarantee",
+						"Revoke Guarantee",
+						"Withdraw your protection of " .. nameOf(cache, tag) .. "?",
+						"Revoke",
+						function()
+							breakPact(tag, "guarantee")
+						end
+					)
+				elseif not targetIsSubject then
+					minor("ghost", "Guarantee", function()
+						proposePact(tag, "guarantee")
+					end)
+				end
 			end
-		elseif tab == "proposals" then
+			minor("secondary", "Improve · 25 PP", function()
+				improveRelations(tag)
+			end)
+		end
+	end
+
+	-- ---- dispatch + navigation ----------------------------------------------
+	render = function()
+		if not (handle and handle.body) then
+			return
+		end
+		handle.clearBody()
+		if mode == "profile" and currentTag then
+			renderProfile(handle.body)
+		else
+			renderList(handle.body)
+		end
+	end
+	showList = function()
+		mode = "list"
+		currentTag = nil
+		render()
+	end
+	showProfile = function(tag)
+		mode = "profile"
+		currentTag = tag
+		render()
+	end
+
+	-- Mode-aware signature: re-render the current view only when its meaningful state changes (economy
+	-- ticks mutate treasury/manpower but those are excluded, so an open profile/list does not thrash).
+	local function contentSignature()
+		local parts = {}
+		if mode == "profile" and currentTag then
+			local t = currentTag
+			parts[#parts + 1] = "rel:" .. relationStatus(cache, mineTag, t)
+			parts[#parts + 1] = "op:" .. tostring(opinionOf(t))
+			local tc = cache.getCountry(t)
+			parts[#parts + 1] = "ex:" .. (tc and "1" or "0")
+			-- Field PRESENCE (not value, to avoid per-tick thrash) so the info rows appear once populated.
+			parts[#parts + 1] = "fld:"
+				.. ((tc and tc.treasury ~= nil) and "1" or "0")
+				.. ((tc and tc.manpower ~= nil) and "1" or "0")
+			local w = activeWarWith(cache, mineTag, t)
+			if w then
+				parts[#parts + 1] = string.format(
+					"w:%d/%d/%d",
+					math.floor(w.score or 0),
+					math.floor(w.attackerExhaustion or 0),
+					math.floor(w.defenderExhaustion or 0)
+				)
+			end
 			for id, p in pairs(cache.allPeaceProposals()) do
-				if p.status == "pending" and (p.toTag == mineTag or p.fromTag == mineTag) then
-					parts[#parts + 1] = tostring(id) .. ":" .. tostring((p.terms or {}).type)
+				if
+					p.status == "pending"
+					and ((p.fromTag == mineTag and p.toTag == t) or (p.fromTag == t and p.toTag == mineTag))
+				then
+					parts[#parts + 1] = "pp:" .. tostring(id) .. ":" .. tostring((p.terms or {}).type)
+				end
+			end
+			for id, p in pairs(cache.allPacts()) do
+				if
+					p.status == "pending"
+					and ((p.fromTag == mineTag and p.toTag == t) or (p.fromTag == t and p.toTag == mineTag))
+				then
+					parts[#parts + 1] = "pa:" .. tostring(id) .. ":" .. tostring(p.type)
 				end
 			end
 		else
-			for _, w in pairs(cache.allWars()) do
-				if w.status == "active" then
-					parts[#parts + 1] = "w:" .. tostring(w.attackerTag) .. ">" .. tostring(w.defenderTag)
+			for tag in pairs(cache.allCountries()) do
+				if tag ~= mineTag then
+					parts[#parts + 1] = tag
+						.. ":"
+						.. relationStatus(cache, mineTag, tag)
+						.. ":"
+						.. tostring(opinionOf(tag))
 				end
 			end
-			local me = mineTag and cache.getCountry(mineTag)
-			if me and me.truces then
-				for t in pairs(me.truces) do
-					parts[#parts + 1] = "t:" .. tostring(t)
-				end
-			end
-			local n = 0
-			for _ in pairs(cache.allCountries()) do
-				n += 1
-			end
-			parts[#parts + 1] = "n:" .. n
 		end
 		table.sort(parts)
 		return table.concat(parts, "|")
@@ -418,12 +955,12 @@ function DiplomacyScreen.create(ctx)
 			if not (handle and handle.root and handle.root.Parent) then
 				return
 			end
-			local sig = contentSignature(currentTab)
+			local sig = contentSignature()
 			if sig == lastSig then
 				return
 			end
 			lastSig = sig
-			render(currentTab)
+			render()
 		end)
 	end
 
@@ -432,20 +969,14 @@ function DiplomacyScreen.create(ctx)
 		name = "DiplomacyScreen",
 		title = "Diplomacy",
 		subtitle = (mine and (mine.displayName or mineTag)) or "Realm",
-		tabs = TABS,
-		activeTab = "nations",
-		onTab = function(key)
-			currentTab = key
-			lastSig = contentSignature(key)
-			render(key)
-		end,
 	})
-	render("nations")
-	lastSig = contentSignature("nations")
+	render()
+	lastSig = contentSignature()
 
 	table.insert(conns, cache.onChangePrefix("countries", scheduleRefresh))
 	table.insert(conns, cache.onChangePrefix("wars", scheduleRefresh))
 	table.insert(conns, cache.onChangePrefix("peaceProposals", scheduleRefresh))
+	table.insert(conns, cache.onChangePrefix("pacts", scheduleRefresh))
 
 	return {
 		root = handle.root,

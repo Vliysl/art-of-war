@@ -248,6 +248,33 @@ WorldConstants.TrucePeriodDays = 1825
 WorldConstants.PeaceProposalLifetimeSeconds = 600
 WorldConstants.DiplomacyTickInterval = 6
 
+-- Opinion / relations (Phase 1). Per-direction value on country.opinion[otherTag].
+WorldConstants.OpinionMin = -200
+WorldConstants.OpinionMax = 200
+WorldConstants.OpinionImproveStep = 25 -- both-ways bump per Improve Relations
+WorldConstants.OpinionImproveCost = 25 -- political power spent per Improve Relations
+WorldConstants.OpinionImproveCooldownDays = 30 -- per-target cooldown
+WorldConstants.OpinionWarPenalty = 50 -- both-ways drop on a war declaration
+WorldConstants.OpinionFriendBase = 50 -- baseline toward a historical friend
+WorldConstants.OpinionRivalBase = -50 -- baseline toward a historical rival
+WorldConstants.OpinionDecayPerMonth = 3 -- drift toward baseline each month
+
+-- Pacts (Phase 2): NAP offers (bilateral, offer->accept) + Guarantee independence (instant)
+WorldConstants.PactOfferLifetimeSeconds = 600 -- pending NAP offer TTL before auto-expire
+WorldConstants.NapDurationDays = 3650 -- active NAP length (~10 years)
+WorldConstants.NapAcceptOpinionBonus = 15 -- both-ways on signing a NAP
+WorldConstants.NapBreakOpinionPenalty = 40 -- both-ways for breaking a NAP early (betrayal)
+WorldConstants.NapAcceptThreshold = 0 -- AI signs a NAP when opinion >= this
+WorldConstants.GuaranteeOpinionBonus = 15 -- both-ways when a guarantee is issued
+WorldConstants.GuaranteeRevokeOpinionPenalty = 15 -- protected->guarantor when a guarantee is revoked
+
+-- Alliances + call-to-arms (Phase 3). Alliances reuse the pacts pipeline; call-to-arms drags a
+-- defender's allies/guarantors into linked co-belligerent wars.
+WorldConstants.AllianceOpinionBonus = 25 -- both-ways on forming an alliance
+WorldConstants.AllianceBreakPenalty = 60 -- both-ways for breaking an alliance
+WorldConstants.AllianceAcceptThreshold = 50 -- AI accepts an alliance only at opinion >= this
+WorldConstants.CallToArmsDeclinePenalty = 75 -- both-ways for refusing a called ally's war (betrayal)
+
 -- =====================================================================
 -- SIEGES (spec G.2, Phase 5) - see Systems.SiegeSystem.
 -- siegeProgress += SiegeBaseSpeed * armySizeFactor * (1 - fortDefenseMod) toward
@@ -285,6 +312,8 @@ WorldConstants.PeaceAnnexBaseCost = 20 -- annex occupied: base war-score cost
 WorldConstants.PeaceAnnexPerProvinceCost = 10 -- + per annexed province
 WorldConstants.PeaceAIExhaustionWeight = 0.5 -- each exhaustion point adds this to willingness
 WorldConstants.PeaceAIAcceptMargin = 0 -- accept when willingness - cost >= this
+WorldConstants.PeaceVassalizeCost = 90 -- vassalize peace term: very high war-score cost (AI only when crushed)
+WorldConstants.ReleaseSubjectOpinionBonus = 30 -- a freed subject's opinion of its former overlord
 
 -- =====================================================================
 -- ATTRITION (spec B.10 / 6.9, Phase 5) - see Systems.AttritionSystem.

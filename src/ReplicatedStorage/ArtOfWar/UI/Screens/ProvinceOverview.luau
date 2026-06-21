@@ -372,6 +372,18 @@ function ProvinceOverview.create(ctx)
 			parent = body,
 		})
 		badge.LayoutOrder = 1
+		-- Clicking the owner crest deep-links to that country's diplomacy profile.
+		if prov.ownerTag and ctx.openCountryProfile then
+			badge.Active = true
+			badge.InputBegan:Connect(function(input)
+				if
+					input.UserInputType == Enum.UserInputType.MouseButton1
+					or input.UserInputType == Enum.UserInputType.Touch
+				then
+					ctx.openCountryProfile(prov.ownerTag)
+				end
+			end)
+		end
 
 		ScreenKit.section(body, "Land", 2)
 		ScreenKit.stat(body, { icon = "MapTerrain", label = "Terrain", value = val(prov.terrain), layoutOrder = 3 })

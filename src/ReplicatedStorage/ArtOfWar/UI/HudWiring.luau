@@ -350,6 +350,7 @@ function HudWiring.start(modules)
 		registries = Registries,
 		openArmyPanel = Hud.openArmyPanel,
 		openFleetPanel = Hud.openFleetPanel,
+		openCountryProfile = Hud.openCountryProfile,
 		requestTarget = requestTarget,
 		cancelTarget = function()
 			pendingCommand = nil
@@ -508,6 +509,22 @@ function HudWiring.start(modules)
 				Hud.openTradeOffer(o)
 			elseif not mine then
 				seenOrders[o.id] = nil
+			end
+		end
+	end)
+
+	-- Pop the DiplomaticOffer modal once when a pending NAP offer is directed at the player.
+	-- Mirrors the trade-order hook above (active NAPs live on the country record, not here).
+	local seenPacts = {}
+	ClientStateCache.onChangePrefix("pacts", function()
+		for id, p in pairs(ClientStateCache.allPacts() or {}) do
+			p.id = p.id or id
+			local mine = p.toTag == claimedTag and p.status == "pending"
+			if mine and not seenPacts[p.id] then
+				seenPacts[p.id] = true
+				Hud.openDiplomaticOffer(p)
+			elseif not mine then
+				seenPacts[p.id] = nil
 			end
 		end
 	end)

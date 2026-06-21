@@ -317,6 +317,9 @@ InputValidator.register("CancelTrade", {
 InputValidator.addValidator("boolean", function(v)
 	return type(v) == "boolean"
 end)
+InputValidator.addValidator("pactType", function(v)
+	return v == "nap" or v == "guarantee" or v == "alliance"
+end)
 InputValidator.addValidator("tradeLines", function(v)
 	if type(v) ~= "table" then
 		return false
@@ -550,6 +553,44 @@ InputValidator.register("RejectPeace", {
 InputValidator.register("CancelPeaceProposal", {
 	schema = { { name = "proposalId", type = "string" } },
 	rate = { count = 4, window = 15 },
+})
+InputValidator.register("ImproveRelations", {
+	schema = { { name = "targetTag", type = "countryTag" } },
+	rate = { count = 6, window = 30 },
+})
+InputValidator.register("ProposePact", {
+	schema = {
+		{ name = "toTag", type = "countryTag" },
+		{ name = "pactType", type = "pactType" },
+	},
+	rate = { count = 6, window = 30 },
+})
+InputValidator.register("AcceptPact", {
+	schema = { { name = "pactId", type = "string" } },
+	rate = { count = 12, window = 10 },
+})
+InputValidator.register("RejectPact", {
+	schema = { { name = "pactId", type = "string" } },
+	rate = { count = 6, window = 15 },
+})
+InputValidator.register("CancelPact", {
+	schema = { { name = "pactId", type = "string" } },
+	rate = { count = 4, window = 15 },
+})
+InputValidator.register("BreakPact", {
+	schema = {
+		{ name = "otherTag", type = "countryTag" },
+		{ name = "pactType", type = "pactType" },
+	},
+	rate = { count = 4, window = 30 },
+})
+InputValidator.register("ReleaseSubject", {
+	schema = { { name = "subjectTag", type = "countryTag" } },
+	rate = { count = 4, window = 30 },
+})
+InputValidator.register("AnnexSubject", {
+	schema = { { name = "subjectTag", type = "countryTag" } },
+	rate = { count = 4, window = 30 },
 })
 
 local function bindEvent(name, handler)
@@ -1106,6 +1147,78 @@ bindEvent("CancelPeaceProposal", function(player, proposalId)
 	local tag = auth.tagFor(player)
 	if not tag then return end
 	system.cancelPeaceProposal(proposalId, tag)
+end)
+
+bindEvent("ImproveRelations", function(player, targetTag)
+	local auth = authority()
+	local system = loadedSystems.DiplomacySystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.improveRelations(tag, targetTag)
+end)
+
+bindEvent("ProposePact", function(player, toTag, pactType)
+	local auth = authority()
+	local system = loadedSystems.DiplomacySystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.proposePact(tag, toTag, pactType)
+end)
+
+bindEvent("AcceptPact", function(player, pactId)
+	local auth = authority()
+	local system = loadedSystems.DiplomacySystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.acceptPact(pactId, tag)
+end)
+
+bindEvent("RejectPact", function(player, pactId)
+	local auth = authority()
+	local system = loadedSystems.DiplomacySystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.rejectPact(pactId, tag)
+end)
+
+bindEvent("CancelPact", function(player, pactId)
+	local auth = authority()
+	local system = loadedSystems.DiplomacySystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.cancelPact(pactId, tag)
+end)
+
+bindEvent("BreakPact", function(player, otherTag, pactType)
+	local auth = authority()
+	local system = loadedSystems.DiplomacySystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.breakPact(tag, otherTag, pactType)
+end)
+
+bindEvent("ReleaseSubject", function(player, subjectTag)
+	local auth = authority()
+	local system = loadedSystems.DiplomacySystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.releaseSubject(tag, subjectTag)
+end)
+
+bindEvent("AnnexSubject", function(player, subjectTag)
+	local auth = authority()
+	local system = loadedSystems.DiplomacySystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.annexSubject(tag, subjectTag)
 end)
 
 

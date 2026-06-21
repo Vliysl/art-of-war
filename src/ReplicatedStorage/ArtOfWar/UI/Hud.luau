@@ -419,6 +419,19 @@ function Hud.openFleetPanel(fleetData)
 	return openContext("FleetPanel", fleetData)
 end
 
+-- Deep-link to a country's diplomacy profile (e.g. from the province-panel crest). Force-(re)opens the
+-- Diplomacy screen focused on `tag`; openScreen toggles closed when re-invoked with the active screen's
+-- name, so pre-close Diplomacy if it is already open.
+function Hud.openCountryProfile(tag)
+	if not tag then
+		return
+	end
+	if activeScreen and activeScreen.name == "Diplomacy" then
+		Hud.closeScreen()
+	end
+	return Hud.openScreen("Diplomacy", { focusTag = tag })
+end
+
 function Hud.openSettings()
 	return Hud.openScreen("Settings")
 end
@@ -478,6 +491,22 @@ function Hud.openTradeOffer(order)
 		return
 	end
 	return screen.create(mergedCtx({ parent = layers.Modals, data = order, onClose = function() end }))
+end
+
+function Hud.openDiplomaticOffer(pact)
+	if not started then
+		return
+	end
+	local mod = Screens:FindFirstChild("DiplomaticOffer")
+	if not mod then
+		return
+	end
+	local ok, screen = pcall(require, mod)
+	if not ok or type(screen) ~= "table" or not screen.create then
+		warn("[AoW Hud] DiplomaticOffer failed: " .. tostring(screen))
+		return
+	end
+	return screen.create(mergedCtx({ parent = layers.Modals, data = pact, onClose = function() end }))
 end
 
 function Hud.isStarted()
