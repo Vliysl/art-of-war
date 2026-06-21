@@ -84,7 +84,6 @@ function PeaceTreaty.create(ctx)
 		parent = modal.footer,
 		variant = "ghost",
 		text = "Cancel",
-		width = 110,
 		layoutOrder = 1,
 		onClick = function()
 			modal.close()
@@ -94,7 +93,6 @@ function PeaceTreaty.create(ctx)
 		parent = modal.footer,
 		variant = "danger",
 		text = "Refuse",
-		width = 130,
 		layoutOrder = 2,
 		onClick = function()
 			finish(t.onRefuse)
@@ -104,7 +102,6 @@ function PeaceTreaty.create(ctx)
 		parent = modal.footer,
 		variant = "primary",
 		text = "Accept Terms",
-		width = 170,
 		layoutOrder = 3,
 		onClick = function()
 			finish(t.onAccept)

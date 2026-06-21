@@ -149,6 +149,19 @@ function NationSelection.create(ctx)
 	root.Size = UDim2.fromScale(1, 1)
 	root.BackgroundTransparency = 1
 
+	-- Dim the map behind the selection so the panel reads as a modal instead of floating in midair.
+	-- AoWInputSink=false (and a non-Active Frame) keeps map hover/click working, so you can still
+	-- pick a nation by clicking it on the map.
+	local scrim = Instance.new("Frame")
+	scrim.Name = "Scrim"
+	scrim.Size = UDim2.fromScale(1, 1)
+	scrim.BackgroundColor3 = Colors.SurfaceSunken
+	scrim.BackgroundTransparency = 0.4
+	scrim.BorderSizePixel = 0
+	scrim.ZIndex = 1
+	scrim:SetAttribute("AoWInputSink", false)
+	scrim.Parent = root
+
 	local leftPanel = Shells.create("panel_large_shell", {
 		Name = "LeftPanel",
 		Position = UDim2.fromOffset(Spacing.space5, Spacing.space5),
@@ -382,8 +395,11 @@ function NationSelection.create(ctx)
 		local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
 		local scale = layerScale(tooltip)
 		local size = tooltip.AbsoluteSize
-		local w = size.X > 0 and size.X or 224 * scale
-		local h = size.Y > 0 and size.Y or 96 * scale
+		if size.X <= 0 or size.Y <= 0 then
+			return
+		end
+		local w = size.X
+		local h = size.Y
 		local mp = UserInputService:GetMouseLocation()
 		local x = mp.X + 16
 		local y = mp.Y + 18
@@ -975,6 +991,7 @@ function NationSelection.create(ctx)
 			ttLine2.Text = vm.continent .. "  \u{00B7}  " .. vm.provinces .. " provinces"
 			ttLine3.Text = vm.claimed and (vm.claimedByMe and "Your nation" or "Taken") or "Click to select"
 			ttLine3.TextColor3 = vm.claimed and Colors.Negative or Colors.Accent
+			tooltip.Position = UDim2.fromOffset(-4000, -4000)
 			tooltip.Visible = true
 			startFollow()
 		else

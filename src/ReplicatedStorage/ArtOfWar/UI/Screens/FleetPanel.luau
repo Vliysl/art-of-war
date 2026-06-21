@@ -129,7 +129,6 @@ function FleetPanel.create(ctx)
 			parent = clearRow,
 			variant = "ghost",
 			text = "Clear Mission",
-			width = 180,
 			onClick = function()
 				ctx.fire("ClearFleetMission", fleet.id)
 				modal.close()
@@ -150,7 +149,6 @@ function FleetPanel.create(ctx)
 				parent = row,
 				variant = "secondary",
 				text = "Assign",
-				width = 96,
 				size = "sm",
 				onClick = function()
 					local province = def.requiresAdjacentTarget and (data.provinceId or 0) or 0
@@ -221,7 +219,6 @@ function FleetPanel.create(ctx)
 				parent = row,
 				variant = "secondary",
 				text = "Build",
-				width = 90,
 				size = "sm",
 				onClick = function()
 					ctx.fire("RecruitShip", provinceId, id, 1)
@@ -346,7 +343,6 @@ function FleetPanel.create(ctx)
 				parent = row,
 				variant = "secondary",
 				text = "Mission",
-				width = 110,
 				onClick = function()
 					openMissionModal(fleet)
 				end,
@@ -355,7 +351,6 @@ function FleetPanel.create(ctx)
 				parent = row,
 				variant = "secondary",
 				text = "Build Ships",
-				width = 130,
 				onClick = function()
 					openBuildModal(fleet)
 				end,
@@ -363,9 +358,36 @@ function FleetPanel.create(ctx)
 			local row2 = ScreenKit.buttonRow(body, 41)
 			Button.create({
 				parent = row2,
+				variant = "secondary",
+				text = "Move",
+				onClick = function()
+					if ctx.requestTarget then
+						ctx.requestTarget({
+							kind = "moveFleet",
+							fleetId = fleet.id,
+							hint = "Click a sea province to sail to.",
+						})
+					end
+				end,
+			})
+			Button.create({
+				parent = row2,
+				variant = "danger",
+				text = "Attack",
+				onClick = function()
+					if ctx.requestTarget then
+						ctx.requestTarget({
+							kind = "attackFleet",
+							fleetId = fleet.id,
+							hint = "Click a province with an enemy fleet.",
+						})
+					end
+				end,
+			})
+			Button.create({
+				parent = row2,
 				variant = "danger",
 				text = "Disband",
-				width = 120,
 				onClick = function()
 					ctx.fire("DisbandFleet", fleet.id)
 					if ctx.onClose then
@@ -373,7 +395,7 @@ function FleetPanel.create(ctx)
 					end
 				end,
 			})
-			ScreenKit.note(body, "Sail and engage orders are issued from the map.", 42)
+			ScreenKit.note(body, "Tip: Move and Attack let you pick a target on the map.", 42)
 		end
 	end
 

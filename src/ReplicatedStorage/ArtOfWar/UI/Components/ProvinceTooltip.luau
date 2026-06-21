@@ -5,7 +5,6 @@ local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
 local Colors = DesignSystem.Colors
 local Typography = DesignSystem.Typography
 local Spacing = DesignSystem.Spacing
-local Shells = DesignSystem.Shells
 
 local ProvinceTooltip = {}
 
@@ -28,14 +27,29 @@ local function line(parent, role, color, order)
 end
 
 function ProvinceTooltip.create(parent)
-	local root = Shells.create("tooltip_shell", {
-		Name = "ProvinceTooltip",
-		Size = UDim2.fromOffset(WIDTH, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		Visible = false,
-		ZIndex = 80,
-	})
+	-- A tooltip is a small utility surface, not an ornate window: build it from a themed frame with
+	-- real rounded corners (UICorner) + a hairline border (UIStroke) instead of a 9-slice asset. The
+	-- old `tooltip_shell` image is a speech-bubble callout with a downward pointer tail, so slicing it
+	-- stretched the tail into a band and the body's bottom corners never lined up -> "bottom cut off".
+	local root = Instance.new("Frame")
+	root.Name = "ProvinceTooltip"
+	root.Size = UDim2.fromOffset(WIDTH, 0)
+	root.AutomaticSize = Enum.AutomaticSize.Y
+	root.BackgroundColor3 = Colors.SurfaceOverlay
+	root.BackgroundTransparency = 0.02
+	root.BorderSizePixel = 0
+	root.Visible = false
+	root.ZIndex = 80
 	root:SetAttribute("AoWInputSink", false)
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = root
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Colors.BorderStrong
+	stroke.Thickness = 1
+	stroke.Parent = root
 
 	local pad = Instance.new("UIPadding")
 	pad.PaddingTop = UDim.new(0, Spacing.space3)
@@ -79,8 +93,13 @@ function ProvinceTooltip.create(parent)
 		local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
 		local scale = effectiveScale()
 		local size = root.AbsoluteSize
-		local w = size.X > 0 and size.X or WIDTH * scale
-		local h = size.Y > 0 and size.Y or 120 * scale
+		-- Wait until the tooltip has actually been laid out this frame; positioning with a stale
+		-- size (e.g. the previous province's height) is what makes it jump / clip near edges.
+		if size.X <= 0 or size.Y <= 0 then
+			return
+		end
+		local w = size.X
+		local h = size.Y
 		local mp = UserInputService:GetMouseLocation()
 		local x = mp.X + OFFSET
 		local y = mp.Y + OFFSET
@@ -125,6 +144,7 @@ function ProvinceTooltip.create(parent)
 		societyRow.Visible = (info.society or "") ~= ""
 		devRow.Text = info.dev or ""
 		devRow.Visible = (info.dev or "") ~= ""
+		root.Position = UDim2.fromOffset(-4000, -4000)
 		root.Visible = true
 		ensureFollow()
 	end
@@ -132,6 +152,7 @@ function ProvinceTooltip.create(parent)
 	local function showWater(name)
 		setLand(false)
 		nameRow.Text = name or "Open Water"
+		root.Position = UDim2.fromOffset(-4000, -4000)
 		root.Visible = true
 		ensureFollow()
 	end

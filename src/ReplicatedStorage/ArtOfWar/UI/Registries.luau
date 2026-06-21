@@ -13,6 +13,9 @@ local function load(name)
 		return nil
 	end
 	local ok, value = pcall(require, mod)
+	if not ok then
+		warn("[AoW Registries] failed to load '" .. name .. "': " .. tostring(value))
+	end
 	cache[name] = (ok and value) or false
 	return cache[name] or nil
 end

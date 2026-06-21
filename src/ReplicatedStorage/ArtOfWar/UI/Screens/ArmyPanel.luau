@@ -286,37 +286,94 @@ function ArmyPanel.create(ctx)
 			ScreenKit.note(body, "No regiments in this army.", 21)
 		end
 
-		local row = ScreenKit.buttonRow(body, 40)
-		Button.create({
-			parent = row,
-			variant = "secondary",
-			text = "Recruit",
-			width = 110,
-			onClick = openRecruit,
-		})
-		if #armyIds() >= 2 then
-			Button.create({
-				parent = row,
-				variant = "ghost",
-				text = "Merge",
-				width = 100,
-				onClick = function()
-					local others = otherIds(activeArmyId)
-					if #others > 0 then
-						ctx.fire("MergeArmies", activeArmyId, others)
-					end
-				end,
-			})
+		local actions = Instance.new("Frame")
+		actions.Name = "Actions"
+		actions.Size = UDim2.new(1, 0, 0, 0)
+		actions.AutomaticSize = Enum.AutomaticSize.Y
+		actions.BackgroundTransparency = 1
+		actions.LayoutOrder = 40
+		actions.Parent = body
+		local grid = Instance.new("UIGridLayout")
+		grid.CellSize = UDim2.fromOffset(96, 36)
+		grid.CellPadding = UDim2.fromOffset(8, 8)
+		grid.SortOrder = Enum.SortOrder.LayoutOrder
+		grid.HorizontalAlignment = Enum.HorizontalAlignment.Left
+		grid.Parent = actions
+
+		local actionOrder = 0
+		local function addAction(text, variant, onClick)
+			actionOrder += 1
+			local b = Button.create({ parent = actions, variant = variant, text = text, width = 96, onClick = onClick })
+			b.LayoutOrder = actionOrder
+			return b
 		end
-		Button.create({
-			parent = row,
-			variant = "danger",
-			text = "Disband",
-			width = 110,
-			onClick = function()
-				ctx.fire("DisbandArmy", activeArmyId)
-			end,
-		})
+
+		addAction("Attack", "danger", function()
+			if ctx.requestTarget then
+				ctx.requestTarget({
+					kind = "attackProvince",
+					armyId = activeArmyId,
+					hint = "Click an enemy province to attack.",
+				})
+			end
+		end)
+		addAction("Reinforce", "secondary", function()
+			if ctx.requestTarget then
+				ctx.requestTarget({
+					kind = "reinforce",
+					armyId = activeArmyId,
+					hint = "Click the battle province to reinforce.",
+				})
+			end
+		end)
+		if army.movement then
+			addAction("Cancel Move", "ghost", function()
+				ctx.fire("CancelMove", activeArmyId)
+			end)
+		end
+		addAction("Recruit", "secondary", openRecruit)
+		if info.total >= 2 then
+			addAction("Split", "ghost", function()
+				local cur = getArmy(activeArmyId)
+				if not cur then
+					return
+				end
+				local comp = {}
+				local peeled = 0
+				local bestId, bestCount = nil, 0
+				for unitId, count in pairs(cur.composition or {}) do
+					if count > 0 then
+						local half = math.floor(count / 2)
+						if half > 0 then
+							comp[unitId] = half
+							peeled += half
+						end
+						if count > bestCount then
+							bestCount = count
+							bestId = unitId
+						end
+					end
+				end
+				if peeled == 0 and bestId then
+					comp[bestId] = 1
+					peeled = 1
+				end
+				if peeled > 0 then
+					ctx.fire("SplitArmy", activeArmyId, comp)
+				end
+			end)
+		end
+		if #armyIds() >= 2 then
+			addAction("Merge", "ghost", function()
+				local others = otherIds(activeArmyId)
+				if #others > 0 then
+					ctx.fire("MergeArmies", activeArmyId, others)
+				end
+			end)
+		end
+		addAction("Disband", "danger", function()
+			ctx.fire("DisbandArmy", activeArmyId)
+		end)
 	end
 
 	local function tabsFor()

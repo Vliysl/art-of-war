@@ -240,7 +240,6 @@ function PoliticsScreen.create(ctx)
 						parent = row,
 						variant = "ghost",
 						text = "Dismiss",
-						width = 130,
 						onClick = function()
 							ctx.fire("DismissLeader", entry.id)
 						end,
@@ -267,7 +266,6 @@ function PoliticsScreen.create(ctx)
 							parent = row,
 							variant = "secondary",
 							text = "Appoint",
-							width = 130,
 							onClick = function()
 								ctx.fire("AppointLeader", entry.id, 1)
 							end,
@@ -325,7 +323,6 @@ function PoliticsScreen.create(ctx)
 						parent = row,
 						variant = "ghost",
 						text = "Repeal",
-						width = 130,
 						onClick = function()
 							ctx.fire("RepealPolicy", entry.id)
 						end,
@@ -335,7 +332,6 @@ function PoliticsScreen.create(ctx)
 						parent = row,
 						variant = "secondary",
 						text = "Enact",
-						width = 130,
 						onClick = function()
 							ctx.fire("EnactPolicy", entry.id)
 						end,
@@ -368,7 +364,6 @@ function PoliticsScreen.create(ctx)
 					parent = row,
 					variant = "danger",
 					text = "Cancel Law",
-					width = 150,
 					onClick = function()
 						ctx.fire("CancelLaw")
 					end,
@@ -459,7 +454,6 @@ function PoliticsScreen.create(ctx)
 							parent = row,
 							variant = "secondary",
 							text = "Adopt",
-							width = 130,
 							onClick = function()
 								ctx.fire("SetDoctrine", opt.id)
 							end,

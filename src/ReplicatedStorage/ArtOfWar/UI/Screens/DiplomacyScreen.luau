@@ -165,7 +165,6 @@ function DiplomacyScreen.create(ctx)
 						variant = "secondary",
 						text = "White Peace",
 						size = "sm",
-						width = 150,
 						onClick = function()
 							proposePeace(entry.tag, "white_peace")
 						end,
@@ -175,7 +174,6 @@ function DiplomacyScreen.create(ctx)
 						variant = "primary",
 						text = "Demand Lands",
 						size = "sm",
-						width = 150,
 						onClick = function()
 							proposePeace(entry.tag, "annex_occupied")
 						end,
@@ -188,7 +186,6 @@ function DiplomacyScreen.create(ctx)
 						variant = "danger",
 						text = "Declare War",
 						size = "sm",
-						width = 150,
 						onClick = function()
 							declareWar(entry.tag)
 						end,
@@ -258,7 +255,6 @@ function DiplomacyScreen.create(ctx)
 					parent = actions,
 					variant = "secondary",
 					text = "White Peace",
-					width = 150,
 					onClick = function()
 						proposePeace(opponent, "white_peace")
 					end,
@@ -267,7 +263,6 @@ function DiplomacyScreen.create(ctx)
 					parent = actions,
 					variant = "primary",
 					text = "Demand Lands",
-					width = 150,
 					onClick = function()
 						proposePeace(opponent, "annex_occupied")
 					end,
@@ -312,7 +307,6 @@ function DiplomacyScreen.create(ctx)
 						parent = actions,
 						variant = "primary",
 						text = "Accept",
-						width = 130,
 						onClick = function()
 							ctx.fire("AcceptPeace", entry.id)
 						end,
@@ -321,7 +315,6 @@ function DiplomacyScreen.create(ctx)
 						parent = actions,
 						variant = "danger",
 						text = "Reject",
-						width = 130,
 						onClick = function()
 							ctx.fire("RejectPeace", entry.id)
 						end,
@@ -350,7 +343,6 @@ function DiplomacyScreen.create(ctx)
 						parent = actions,
 						variant = "ghost",
 						text = "Cancel",
-						width = 130,
 						onClick = function()
 							ctx.fire("CancelPeaceProposal", entry.id)
 						end,

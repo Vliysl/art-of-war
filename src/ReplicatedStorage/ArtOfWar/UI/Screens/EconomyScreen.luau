@@ -159,7 +159,6 @@ function EconomyScreen.create(ctx)
 					parent = row,
 					variant = active and "primary" or "secondary",
 					text = def.displayName,
-					width = 220,
 					disabled = active,
 					onClick = function()
 						ctx.fire("SetEconomyPolicy", id)
@@ -275,7 +274,6 @@ function EconomyScreen.create(ctx)
 						parent = row,
 						variant = "primary",
 						text = "Accept",
-						width = 130,
 						onClick = function()
 							ctx.fire("AcceptTrade", route.id)
 						end,
@@ -284,7 +282,6 @@ function EconomyScreen.create(ctx)
 						parent = row,
 						variant = "ghost",
 						text = "Reject",
-						width = 120,
 						onClick = function()
 							ctx.fire("CancelTrade", route.id)
 						end,
@@ -315,7 +312,6 @@ function EconomyScreen.create(ctx)
 					parent = row,
 					variant = "ghost",
 					text = "Cancel",
-					width = 130,
 					onClick = function()
 						ctx.fire("CancelTrade", route.id)
 					end,
@@ -393,7 +389,6 @@ function EconomyScreen.create(ctx)
 				parent = row,
 				variant = "secondary",
 				text = provinceName(prov),
-				width = 340,
 				onClick = function()
 					ctx.fire("BuildBuilding", prov.id, buildingId)
 					modal.close()
@@ -429,7 +424,6 @@ function EconomyScreen.create(ctx)
 					parent = row,
 					variant = "ghost",
 					text = "Cancel",
-					width = 130,
 					onClick = function()
 						ctx.fire("CancelBuilding", item.id)
 					end,
@@ -472,7 +466,6 @@ function EconomyScreen.create(ctx)
 					parent = row,
 					variant = "secondary",
 					text = "Build",
-					width = 130,
 					onClick = function()
 						openBuildModal(entry.id, def)
 					end,

@@ -184,7 +184,7 @@ function MilitaryScreen.create(ctx)
 					)
 				end
 			else
-				ScreenKit.note(body, "No standing armies. Recruit regiments to defend your realm.", 7)
+				ScreenKit.note(body, "No standing armies. Click one of your provinces, then Recruit.", 7)
 			end
 		end,
 		navy = function(body)

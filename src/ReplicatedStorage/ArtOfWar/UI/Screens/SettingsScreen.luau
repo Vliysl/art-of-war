@@ -54,7 +54,6 @@ local function toggleRow(parent, label, getValue, setValue, order)
 		parent = row,
 		variant = "secondary",
 		text = getValue() and "On" or "Off",
-		width = 88,
 		onClick = function()
 			local nv = not getValue()
 			setValue(nv)
@@ -97,7 +96,6 @@ function SettingsScreen.create(ctx)
 				parent = row,
 				variant = "secondary",
 				text = "Command",
-				width = 150,
 				onClick = function()
 					if ctx.fire then
 						ctx.fire("SetMapMode", "command")
@@ -108,7 +106,6 @@ function SettingsScreen.create(ctx)
 				parent = row,
 				variant = "ghost",
 				text = "Field",
-				width = 130,
 				onClick = function()
 					if ctx.fire then
 						ctx.fire("SetMapMode", "field")

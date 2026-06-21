@@ -93,6 +93,16 @@ local function mountPersistent(opts)
 	widgets.topBar = TopBar.create({
 		parent = layers.Hud,
 		date = opts.date or "",
+		onTogglePause = function()
+			if handlers.onTimeControl then
+				handlers.onTimeControl({ action = "togglePause" })
+			end
+		end,
+		onSetSpeed = function(n)
+			if handlers.onTimeControl then
+				handlers.onTimeControl({ action = "setSpeed", speed = n })
+			end
+		end,
 	})
 	-- The date capsule lives on the inset-respecting Hud layer (so it hides with the rest of the
 	-- HUD during nation selection), but should sit at the true top-center. Lift it by the GUI inset
@@ -256,6 +266,12 @@ end
 function Hud.setClock(date)
 	if widgets.topBar and date ~= nil then
 		widgets.topBar.setDate(date)
+	end
+end
+
+function Hud.setTime(packet)
+	if widgets.topBar and widgets.topBar.setTime then
+		widgets.topBar.setTime(packet)
 	end
 end
 

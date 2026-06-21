@@ -66,9 +66,15 @@ Icons.Ids = {
 	TabDoctrines = "rbxassetid://72499876526924",
 }
 
+local warnedIcons = {}
+
 function Icons.create(key, size, tint)
 	local px = size or 16
 	local id = Icons.Ids[key]
+	if not id and key ~= nil and not warnedIcons[key] then
+		warnedIcons[key] = true
+		warn("[AoW Icons] unknown icon key: " .. tostring(key))
+	end
 	local img = Instance.new("ImageLabel")
 	img.Name = "Icon"
 	img.Size = UDim2.fromOffset(px, px)

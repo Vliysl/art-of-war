@@ -2,8 +2,11 @@ local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
 local Colors = DesignSystem.Colors
 local Typography = DesignSystem.Typography
 local Shells = DesignSystem.Shells
+local Icons = DesignSystem.Icons
 
 local TopBar = {}
+
+local SPEEDS = { 1, 2, 4, 8, 16 }
 
 function TopBar.create(config)
 	config = config or {}
@@ -20,19 +23,87 @@ function TopBar.create(config)
 
 	local date = Instance.new("TextLabel")
 	date.Name = "Date"
-	date.Size = UDim2.fromScale(1, 1)
+	date.AnchorPoint = Vector2.new(0.5, 0.5)
+	date.Position = UDim2.fromScale(0.5, 0.5)
+	date.Size = UDim2.new(1, -96, 1, 0)
 	date.BackgroundTransparency = 1
 	date.Text = config.date or ""
 	date.TextColor3 = Colors.TextPrimary
 	date.TextXAlignment = Enum.TextXAlignment.Center
 	date.TextYAlignment = Enum.TextYAlignment.Center
+	date.TextTruncate = Enum.TextTruncate.AtEnd
 	date.ZIndex = z + 1
 	Typography.apply(date, "displayMd")
 	date.Parent = root
-	local pad = Instance.new("UIPadding")
-	pad.PaddingLeft = UDim.new(0, 18)
-	pad.PaddingRight = UDim.new(0, 18)
-	pad.Parent = root
+
+	-- Pause / resume (left). Time control is admin-gated server-side; HudWiring notifies non-admins.
+	local pauseBtn = Instance.new("ImageButton")
+	pauseBtn.Name = "Pause"
+	pauseBtn.AnchorPoint = Vector2.new(0, 0.5)
+	pauseBtn.Position = UDim2.new(0, 12, 0.5, 0)
+	pauseBtn.Size = UDim2.fromOffset(26, 26)
+	pauseBtn.BackgroundTransparency = 1
+	pauseBtn.AutoButtonColor = false
+	pauseBtn.Image = ""
+	pauseBtn.ZIndex = z + 1
+	pauseBtn.Parent = root
+	local pauseIcon = Icons.create("Pause", 18, Colors.TextSecondary)
+	pauseIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+	pauseIcon.Position = UDim2.fromScale(0.5, 0.5)
+	pauseIcon.ZIndex = z + 2
+	pauseIcon.Parent = pauseBtn
+
+	-- Speed cycle (right): clicking steps 1->2->4->8->16->1.
+	local speedBtn = Instance.new("TextButton")
+	speedBtn.Name = "Speed"
+	speedBtn.AnchorPoint = Vector2.new(1, 0.5)
+	speedBtn.Position = UDim2.new(1, -12, 0.5, 0)
+	speedBtn.Size = UDim2.fromOffset(42, 26)
+	speedBtn.BackgroundTransparency = 1
+	speedBtn.AutoButtonColor = false
+	speedBtn.Text = "1\u{00D7}"
+	speedBtn.TextColor3 = Colors.TextSecondary
+	speedBtn.ZIndex = z + 1
+	Typography.apply(speedBtn, "value")
+	speedBtn.Parent = root
+
+	local speed = 1
+	local paused = false
+
+	local function cycleSpeed()
+		for i, s in ipairs(SPEEDS) do
+			if s == speed then
+				return SPEEDS[i % #SPEEDS + 1]
+			end
+		end
+		return SPEEDS[1]
+	end
+
+	local function refreshSpeedColor()
+		speedBtn.TextColor3 = paused and Colors.Warning or Colors.TextSecondary
+	end
+
+	pauseBtn.MouseEnter:Connect(function()
+		pauseIcon.ImageColor3 = Colors.TextPrimary
+	end)
+	pauseBtn.MouseLeave:Connect(function()
+		pauseIcon.ImageColor3 = Colors.TextSecondary
+	end)
+	speedBtn.MouseEnter:Connect(function()
+		speedBtn.TextColor3 = Colors.TextPrimary
+	end)
+	speedBtn.MouseLeave:Connect(refreshSpeedColor)
+
+	pauseBtn.MouseButton1Click:Connect(function()
+		if config.onTogglePause then
+			config.onTogglePause()
+		end
+	end)
+	speedBtn.MouseButton1Click:Connect(function()
+		if config.onSetSpeed then
+			config.onSetSpeed(cycleSpeed())
+		end
+	end)
 
 	if config.parent then
 		root.Parent = config.parent
@@ -43,6 +114,23 @@ function TopBar.create(config)
 		setDate = function(d)
 			if d then
 				date.Text = d
+			end
+		end,
+		setTime = function(packet)
+			if type(packet) ~= "table" then
+				return
+			end
+			if packet.date then
+				date.Text = packet.date
+			end
+			if type(packet.speed) == "number" then
+				speed = packet.speed
+				speedBtn.Text = tostring(packet.speed) .. "\u{00D7}"
+			end
+			if packet.paused ~= nil then
+				paused = packet.paused == true
+				pauseIcon.Image = Icons.Ids[paused and "Play" or "Pause"] or ""
+				refreshSpeedColor()
 			end
 		end,
 	}

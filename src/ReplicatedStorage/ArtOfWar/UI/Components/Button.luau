@@ -23,10 +23,18 @@ function Button.create(config)
 	local height = Responsive.tapHeight(SIZE_HEIGHT[config.size or "md"] or 38)
 	local z = config.zIndex or 1
 
+	-- Three sizing modes:
+	--   fill   -> stretches to the parent width (centered label)
+	--   width  -> fixed pixel width (centered label, truncates if too long)
+	--   else   -> hugs its text and grows with it (the structural default; never clips)
+	local fill = config.fill == true
+	local fixedW = (not fill) and config.width or nil
+	local sized = fill or fixedW ~= nil
+
 	local btn = Instance.new("TextButton")
 	btn.Name = "Button"
-	btn.AutomaticSize = config.width and Enum.AutomaticSize.None or Enum.AutomaticSize.X
-	btn.Size = UDim2.new(0, config.width or 0, 0, height)
+	btn.AutomaticSize = sized and Enum.AutomaticSize.None or Enum.AutomaticSize.X
+	btn.Size = fill and UDim2.new(1, 0, 0, height) or UDim2.new(0, fixedW or 0, 0, height)
 	btn.BackgroundTransparency = 1
 	btn.AutoButtonColor = false
 	btn.Text = ""
@@ -46,14 +54,15 @@ function Button.create(config)
 
 	local label = Instance.new("TextLabel")
 	label.Name = "Label"
-	label.AutomaticSize = config.width and Enum.AutomaticSize.None or Enum.AutomaticSize.X
-	label.Size = config.width and UDim2.fromScale(1, 1) or UDim2.new(0, 0, 1, 0)
+	label.AutomaticSize = sized and Enum.AutomaticSize.None or Enum.AutomaticSize.X
+	label.Size = sized and UDim2.fromScale(1, 1) or UDim2.new(0, 0, 1, 0)
 	label.BackgroundTransparency = 1
 	label.Text = config.text or "Button"
 	label.TextColor3 = TEXT_COLOR[variant] or Colors.TextPrimary
 	label.TextXAlignment = Enum.TextXAlignment.Center
 	label.ZIndex = btn.ZIndex
 	Typography.apply(label, "label")
+	label.TextTruncate = Enum.TextTruncate.AtEnd
 	label.Parent = btn
 
 	local lpad = Instance.new("UIPadding")

@@ -175,12 +175,16 @@ end
 function ScreenKit.buttonRow(parent, order)
 	local row = Instance.new("Frame")
 	row.Name = "ButtonRow"
-	row.Size = UDim2.new(1, 0, 0, 44)
+	-- Width is constrained to the panel; height grows so wrapped buttons get their own line.
+	row.Size = UDim2.new(1, 0, 0, 0)
+	row.AutomaticSize = Enum.AutomaticSize.Y
 	row.BackgroundTransparency = 1
 	row.LayoutOrder = order or 0
 	row.Parent = parent
 	local layout = Instance.new("UIListLayout")
 	layout.FillDirection = Enum.FillDirection.Horizontal
+	-- Buttons flow to the next line instead of overflowing the panel edge.
+	layout.Wraps = true
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.Padding = UDim.new(0, Spacing.space2)
 	layout.VerticalAlignment = Enum.VerticalAlignment.Center

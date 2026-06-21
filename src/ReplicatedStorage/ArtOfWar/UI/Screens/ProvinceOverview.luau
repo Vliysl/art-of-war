@@ -2,6 +2,7 @@ local ScreenKit = require(script.Parent.ScreenKit)
 local Components = script.Parent.Parent.Components
 local Button = require(Components.Button)
 local CountryBadge = require(Components.CountryBadge)
+local Modal = require(Components.Modal)
 
 local ProvinceOverview = {}
 
@@ -15,10 +16,72 @@ end
 function ProvinceOverview.create(ctx)
 	local prov = ctx.data or {}
 	local handle
+	local registries = ctx.registries
 
-	local function action(name)
-		if ctx.handlers and ctx.handlers.action then
-			ctx.handlers.action(name, { province = prov.id })
+	local function titleCase(text)
+		if not text then
+			return ""
+		end
+		local s = tostring(text):gsub("_", " ")
+		s = s:gsub("(%a)([%w']*)", function(a, b)
+			return a:upper() .. b:lower()
+		end)
+		return s
+	end
+
+	-- Province-scoped recruitment: gives a player with no armies a way to raise their first one
+	-- (server validates ownership/cost via RecruitUnit).
+	local function openRecruit()
+		local types = registries and registries.UnitTypes
+		if not types or not prov.id then
+			return
+		end
+		local pool = {}
+		for id, def in pairs(types) do
+			if def.recruitCost ~= nil then
+				table.insert(pool, { id = id, def = def })
+			end
+		end
+		table.sort(pool, function(a, b)
+			return (a.def.displayName or a.id) < (b.def.displayName or b.id)
+		end)
+		local modal = Modal.create({
+			parent = ctx.modalLayer,
+			title = "Recruit Regiment",
+			subtitle = prov.name or ("Province #" .. tostring(prov.id)),
+			width = 420,
+			height = 460,
+		})
+		local list = Instance.new("ScrollingFrame")
+		list.Size = UDim2.fromScale(1, 1)
+		list.BackgroundTransparency = 1
+		list.BorderSizePixel = 0
+		list.ScrollBarThickness = 4
+		list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+		list.CanvasSize = UDim2.new()
+		list.Parent = modal.content
+		local layout = Instance.new("UIListLayout")
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
+		layout.Padding = UDim.new(0, 6)
+		layout.Parent = list
+		for i, item in ipairs(pool) do
+			local r = ScreenKit.stat(list, {
+				icon = "Army",
+				label = item.def.displayName or titleCase(item.id),
+				value = string.format("%s gold", tostring(item.def.recruitCost)),
+				mono = true,
+				layoutOrder = i,
+			})
+			local add = Button.create({
+				parent = r,
+				variant = "secondary",
+				text = "Add",
+				onClick = function()
+					ctx.fire("RecruitUnit", prov.id, item.id, 1)
+				end,
+			})
+			add.AnchorPoint = Vector2.new(1, 0.5)
+			add.Position = UDim2.fromScale(1, 0.5)
 		end
 	end
 
@@ -94,22 +157,11 @@ function ProvinceOverview.create(ctx)
 		local row = ScreenKit.buttonRow(body, 40)
 		Button.create({
 			parent = row,
-			variant = "secondary",
-			text = "Develop",
-			width = 150,
-			onClick = function()
-				action("developProvince")
-			end,
+			variant = "primary",
+			text = "Recruit",
+			onClick = openRecruit,
 		})
-		Button.create({
-			parent = row,
-			variant = "ghost",
-			text = "Build",
-			width = 130,
-			onClick = function()
-				action("buildProvince")
-			end,
-		})
+		ScreenKit.note(body, "Construct buildings from the Economy screen (hotkey 2).", 41)
 	end
 
 	return handle

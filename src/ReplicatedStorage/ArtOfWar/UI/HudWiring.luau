@@ -11,7 +11,7 @@ local HudWiring = {}
 local nationSelectActive = false
 local nationSelectApi = nil
 
-local BOOT_DEBUG = true
+local BOOT_DEBUG = false
 local function nslog(...)
 	if BOOT_DEBUG then
 		print("[AoW NationSelect]", ...)
@@ -120,11 +120,26 @@ function HudWiring.start(modules)
 		local r = Remotes and Remotes:FindFirstChild(name)
 		if r then
 			r:FireServer(...)
+		else
+			warn("[AoW HudWiring] missing remote '" .. tostring(name) .. "'")
 		end
 	end
 
 	local claimedTag = nil
 	local nationSelectShown = false
+	-- When set, the next map province click resolves this command (attack/move) instead of
+	-- opening the province panel. Set via ctx.requestTarget from army/fleet panels.
+	local pendingCommand = nil
+
+	local function requestTarget(spec)
+		pendingCommand = spec
+		Hud.notify({
+			kind = "info",
+			title = "Select a target",
+			body = (spec and spec.hint) or "Click a province on the map.",
+			ttl = 5,
+		})
+	end
 
 	local function aggregateArmies(tag)
 		local regiments = 0
@@ -312,6 +327,18 @@ function HudWiring.start(modules)
 		action = function(name, payload)
 			HudWiring.action(name, payload, fire, claimedTag)
 		end,
+		onTimeControl = function(req)
+			if localPlayer:GetAttribute("IsAdmin") ~= true then
+				Hud.notify({
+					kind = "warning",
+					title = "Admin only",
+					body = "Only administrators can control game speed.",
+					ttl = 4,
+				})
+				return
+			end
+			fire("TimeRequest", req)
+		end,
 	})
 
 	Hud.start({ mapModes = MAP_MODES, parentGui = modules.parentGui })
@@ -323,6 +350,10 @@ function HudWiring.start(modules)
 		registries = Registries,
 		openArmyPanel = Hud.openArmyPanel,
 		openFleetPanel = Hud.openFleetPanel,
+		requestTarget = requestTarget,
+		cancelTarget = function()
+			pendingCommand = nil
+		end,
 	})
 
 	local function countryCount()
@@ -408,9 +439,11 @@ function HudWiring.start(modules)
 			if type(packet) ~= "table" then
 				return
 			end
+			local dateStr = nil
 			if packet.year and packet.month then
-				Hud.setClock(string.format("%d %s %d", packet.day or 1, MONTHS[packet.month] or "", packet.year))
+				dateStr = string.format("%d %s %d", packet.day or 1, MONTHS[packet.month] or "", packet.year)
 			end
+			Hud.setTime({ date = dateStr, speed = packet.speed, paused = packet.paused })
 		end)
 	end
 
@@ -487,6 +520,44 @@ function HudWiring.start(modules)
 					end
 					ProvinceInteraction.clearSelectionSilent()
 				end
+				return
+			end
+			if pendingCommand then
+				local cmd = pendingCommand
+				pendingCommand = nil
+				local id = nil
+				if part then
+					local _, pid = provinceFromPart(part)
+					id = pid
+				end
+				if id then
+					if cmd.kind == "attackProvince" and cmd.armyId then
+						fire("AttackProvince", cmd.armyId, id)
+					elseif cmd.kind == "reinforce" and cmd.armyId then
+						fire("Reinforce", cmd.armyId, id)
+					elseif cmd.kind == "moveFleet" and cmd.fleetId then
+						fire("MoveFleet", cmd.fleetId, id)
+					elseif cmd.kind == "attackFleet" and cmd.fleetId then
+						local target = nil
+						for fid, fleet in pairs(ClientStateCache.allFleets() or {}) do
+							if fleet.provinceId == id and fleet.ownerTag ~= claimedTag then
+								target = fid
+								break
+							end
+						end
+						if target then
+							fire("AttackFleet", cmd.fleetId, target)
+						else
+							Hud.notify({
+								kind = "warning",
+								title = "No target",
+								body = "No enemy fleet in that province.",
+								ttl = 4,
+							})
+						end
+					end
+				end
+				ProvinceInteraction.clearSelectionSilent()
 				return
 			end
 			if not part then
