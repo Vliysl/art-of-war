@@ -217,11 +217,13 @@ function ScreenKit.spacer(parent, height, order)
 	return f
 end
 
--- Coalescing throttle: returns a scheduler that runs `fn` at most once per `interval` seconds
--- (default 0.4), collapsing bursts. Use for data-screen refreshes so an open screen doesn't rebuild
--- its whole body on every server tick -- it still updates, just at a human-readable cadence.
+-- Leading-edge coalescing throttle: runs `fn` immediately on the first call after a quiet gap, then
+-- at most once per `interval` seconds during a burst. So at normal game speed (ticks spaced apart)
+-- every tick updates the screen with no delay; the interval only caps pathological per-frame bursts
+-- (e.g. while fast-forwarding). Use for data-screen refreshes so an open screen never rebuilds its
+-- whole body 60x/second.
 function ScreenKit.throttle(fn, interval)
-	interval = interval or 0.4
+	interval = interval or 0.2
 	local pending = false
 	local lastClock = 0
 	return function()

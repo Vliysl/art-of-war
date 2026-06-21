@@ -974,12 +974,22 @@ function NationSelection.create(ctx)
 			end
 		end
 	end)
+	-- Debounce the list rebuild so rapid typing doesn't re-sort + rebuild all ~131 rows on every
+	-- keystroke; rebuild once the user pauses. searchText updates immediately so an Enter (FocusLost)
+	-- still matches against the latest query.
+	local searchDebounce
 	searchBox:GetPropertyChangedSignal("Text"):Connect(function()
 		searchText = searchBox.Text:lower()
-		rebuildList()
-		if selectedTag and rowByTag[selectedTag] then
-			rowByTag[selectedTag].setSelected(true)
+		if searchDebounce then
+			task.cancel(searchDebounce)
 		end
+		searchDebounce = task.delay(0.12, function()
+			searchDebounce = nil
+			rebuildList()
+			if selectedTag and rowByTag[selectedTag] then
+				rowByTag[selectedTag].setSelected(true)
+			end
+		end)
 	end)
 
 	local api = {}

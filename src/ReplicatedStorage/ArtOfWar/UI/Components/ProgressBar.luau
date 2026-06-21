@@ -74,16 +74,19 @@ function ProgressBar.create(config)
 	clip.Parent = track
 
 	local fillName = FILL[config.color] or FILL.green
+	-- The clip reveals a full-width fill (Size = 1/pct of the clip) so the fill texture isn't squished.
+	-- Cap the inverse so a near-zero percent doesn't blow the fill up to a 1000x-scale frame; capped,
+	-- it still fully covers the (tiny) clip, so the visible result is identical.
 	local fill = Shells.create(fillName, {
 		Name = "Fill",
-		Size = UDim2.new(pct > 0 and 1 / pct or 1, 0, 1, 0),
+		Size = UDim2.new(pct > 0 and math.min(1 / pct, 100) or 1, 0, 1, 0),
 	})
 	fill.Parent = clip
 
 	local function setValue(newValue, newColor)
 		local p = pctOf(newValue, minV, maxV)
 		Animations.tween(clip, Animations.Slow, { Size = UDim2.new(p, 0, 1, 0) })
-		fill.Size = UDim2.new(p > 0 and 1 / p or 1, 0, 1, 0)
+		fill.Size = UDim2.new(p > 0 and math.min(1 / p, 100) or 1, 0, 1, 0)
 		if newColor and FILL[newColor] and Shells.Data[FILL[newColor]] then
 			fill.Image = Shells.Data[FILL[newColor]].Id
 		end
