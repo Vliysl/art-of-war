@@ -259,7 +259,12 @@ end
 function Hud.setCountry(data)
 	countryData = data or {}
 	if started then
-		buildCountryBar()
+		-- Mutate the existing bar in place; only fall back to a full rebuild if it isn't built yet.
+		if widgets.countryBar and widgets.countryBar.update then
+			widgets.countryBar.update(countryData)
+		else
+			buildCountryBar()
+		end
 	end
 end
 

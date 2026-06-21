@@ -396,6 +396,31 @@ function HudWiring.start(modules)
 	-- than only reacting to a claimed<->unclaimed transition. This is what makes the screen open
 	-- for a freshly-loaded unclaimed player once country data lands (newTag stays nil, so the old
 	-- transition gate never fired).
+	-- Display-equality guard: updating the CountryBar only matters when a value it actually shows
+	-- changed. The server re-sends the country record on every economy/army tick, so without this the
+	-- bar would update every frame even when nothing visible moved.
+	local RESOURCE_KEYS =
+		{ "treasury", "treasuryDelta", "treasuryDeltaNum", "manpower", "pp", "stability", "legitimacy" }
+	local lastCountryData = nil
+	local function sameCountryData(a, b)
+		if a == nil or b == nil then
+			return a == b
+		end
+		if a.code ~= b.code or a.name ~= b.name then
+			return false
+		end
+		if a.government ~= b.government or a.culture ~= b.culture or a.color ~= b.color then
+			return false
+		end
+		local ra, rb = a.resources or {}, b.resources or {}
+		for _, k in ipairs(RESOURCE_KEYS) do
+			if ra[k] ~= rb[k] then
+				return false
+			end
+		end
+		return true
+	end
+
 	local countryDirty = false
 	local function scheduleCountryRefresh()
 		if countryDirty then
@@ -419,7 +444,8 @@ function HudWiring.start(modules)
 					restoreHud.Enabled = true
 				end
 				local data = normalizeCountry(claimedTag)
-				if data then
+				if data and not sameCountryData(data, lastCountryData) then
+					lastCountryData = data
 					Hud.setCountry(data)
 				end
 			elseif not nationSelectShown and countryCount() > 0 then

@@ -46,7 +46,9 @@ local function text(parent, str, role, color, props)
 	return l
 end
 
-local function statPill(parent, iconKey, value, delta, deltaColor, order, tooltipLayer)
+-- Builds one stat pill and returns handles to its mutable labels. The value/delta text is set later
+-- (and on every change) via CountryBar.update -> setResources, so the bar never needs to be rebuilt.
+local function statPill(parent, iconKey, order, withDelta, tooltipLayer)
 	local pill = Shells.create("stat_pill_shell", {
 		Size = UDim2.fromOffset(PILL_W, 36),
 		LayoutOrder = order,
@@ -58,14 +60,15 @@ local function statPill(parent, iconKey, value, delta, deltaColor, order, toolti
 	icon.Position = UDim2.new(0, 12, 0.5, 0)
 	icon.Parent = pill
 
-	text(pill, value, "value", Colors.TextPrimary, {
+	local valueLabel = text(pill, "", "value", Colors.TextPrimary, {
 		Parent = pill,
-		Position = UDim2.fromOffset(34, delta and 4 or 0),
-		Size = UDim2.new(1, -42, 0, delta and 16 or 36),
-		TextYAlignment = delta and Enum.TextYAlignment.Bottom or Enum.TextYAlignment.Center,
+		Position = UDim2.fromOffset(34, withDelta and 4 or 0),
+		Size = UDim2.new(1, -42, 0, withDelta and 16 or 36),
+		TextYAlignment = withDelta and Enum.TextYAlignment.Bottom or Enum.TextYAlignment.Center,
 	})
-	if delta and delta ~= "" then
-		text(pill, delta, "caption", deltaColor or Colors.TextSecondary, {
+	local deltaLabel
+	if withDelta then
+		deltaLabel = text(pill, "", "caption", Colors.TextSecondary, {
 			Parent = pill,
 			Position = UDim2.fromOffset(34, 19),
 			Size = UDim2.new(1, -42, 0, 13),
@@ -123,7 +126,7 @@ local function statPill(parent, iconKey, value, delta, deltaColor, order, toolti
 		hit.MouseLeave:Connect(clearTip)
 		hit.Destroying:Connect(clearTip)
 	end
-	return pill
+	return { pill = pill, value = valueLabel, delta = deltaLabel }
 end
 
 function CountryBar.create(config)
@@ -162,12 +165,12 @@ function CountryBar.create(config)
 	flag.Position = UDim2.fromOffset(0, 0)
 	flag.Parent = content
 
-	text(content, config.name or "Unknown", "displayMd", Colors.TextPrimary, {
+	local nameLabel = text(content, config.name or "Unknown", "displayMd", Colors.TextPrimary, {
 		Position = UDim2.fromOffset(84, 0),
 		Size = UDim2.fromOffset(NAME_W, 24),
 	})
 	local cult = config.culture and ("  \u{00B7}  " .. config.culture) or ""
-	text(content, (config.government or "") .. cult, "bodySm", Colors.TextSecondary, {
+	local govLabel = text(content, (config.government or "") .. cult, "bodySm", Colors.TextSecondary, {
 		Position = UDim2.fromOffset(84, 26),
 		Size = UDim2.fromOffset(NAME_W, 16),
 	})
@@ -188,11 +191,25 @@ function CountryBar.create(config)
 	pl.Parent = pills
 
 	local tipLayer = config.tooltipLayer
-	statPill(pills, "Treasury", r.treasury or "0", r.treasuryDelta, Colors.delta(r.treasuryDeltaNum or 0), 1, tipLayer)
-	statPill(pills, "Manpower", r.manpower or "0", nil, nil, 2, tipLayer)
-	statPill(pills, "PowerProj", r.pp or "0", nil, nil, 3, tipLayer)
-	statPill(pills, "Stability", r.stability or "0", nil, nil, 4, tipLayer)
-	statPill(pills, "Legitimacy", r.legitimacy or "0", nil, nil, 5, tipLayer)
+	local statPills = {
+		treasury = statPill(pills, "Treasury", 1, true, tipLayer),
+		manpower = statPill(pills, "Manpower", 2, false, tipLayer),
+		pp = statPill(pills, "PowerProj", 3, false, tipLayer),
+		stability = statPill(pills, "Stability", 4, false, tipLayer),
+		legitimacy = statPill(pills, "Legitimacy", 5, false, tipLayer),
+	}
+
+	local function setResources(res)
+		res = res or {}
+		statPills.treasury.value.Text = res.treasury or "0"
+		statPills.treasury.delta.Text = res.treasuryDelta or ""
+		statPills.treasury.delta.TextColor3 = Colors.delta(res.treasuryDeltaNum or 0)
+		statPills.manpower.value.Text = res.manpower or "0"
+		statPills.pp.value.Text = res.pp or "0"
+		statPills.stability.value.Text = res.stability or "0"
+		statPills.legitimacy.value.Text = res.legitimacy or "0"
+	end
+	setResources(r)
 
 	local menuRow = Instance.new("Frame")
 	menuRow.Name = "MenuRow"
@@ -265,10 +282,29 @@ function CountryBar.create(config)
 	end
 	setActive("Politics")
 
+	-- In-place update: mutate the existing labels/flag instead of destroying + recreating the whole
+	-- bar on every economy/army delta. Name/government/flag only change on a (rare) country switch.
+	local currentCode = config.code
+	local function update(cfg)
+		cfg = cfg or {}
+		nameLabel.Text = cfg.name or "Unknown"
+		local c = cfg.culture and ("  \u{00B7}  " .. cfg.culture) or ""
+		govLabel.Text = (cfg.government or "") .. c
+		if cfg.code and cfg.code ~= currentCode then
+			currentCode = cfg.code
+			flag:Destroy()
+			flag = CountryBadge.create({ code = cfg.code, countryColor = cfg.color, size = "lg" })
+			flag.AnchorPoint = Vector2.new(0, 0)
+			flag.Position = UDim2.fromOffset(0, 0)
+			flag.Parent = content
+		end
+		setResources(cfg.resources)
+	end
+
 	if config.parent then
 		root.Parent = config.parent
 	end
-	return { root = root, setActive = setActive, buttons = buttons }
+	return { root = root, setActive = setActive, buttons = buttons, update = update }
 end
 
 return CountryBar
