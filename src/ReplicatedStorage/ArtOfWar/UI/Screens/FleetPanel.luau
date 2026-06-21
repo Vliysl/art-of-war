@@ -75,7 +75,6 @@ function FleetPanel.create(ctx)
 	local navalMissions = ctx.registries and ctx.registries.NavalMissions
 	local conns = {}
 	local handle
-	local dirty = false
 
 	local function missionDefs()
 		local out = {}
@@ -399,18 +398,11 @@ function FleetPanel.create(ctx)
 		end
 	end
 
-	local function scheduleRefresh()
-		if dirty then
-			return
+	local scheduleRefresh = ScreenKit.throttle(function()
+		if handle and handle.root and handle.root.Parent then
+			render()
 		end
-		dirty = true
-		task.defer(function()
-			dirty = false
-			if handle and handle.root and handle.root.Parent then
-				render()
-			end
-		end)
-	end
+	end)
 
 	local fleet = ctx.cache.getFleet(activeId)
 	local country = fleet and fleet.ownerTag and ctx.cache.getCountry(fleet.ownerTag)

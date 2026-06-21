@@ -107,7 +107,6 @@ function ArmyPanel.create(ctx)
 	local registries = ctx.registries
 	local conns = {}
 	local handle
-	local dirty = false
 
 	local activeArmyId = data.armyId
 	local provinceId = data.provinceId
@@ -411,18 +410,11 @@ function ArmyPanel.create(ctx)
 	})
 	render()
 
-	local function scheduleRefresh()
-		if dirty then
-			return
+	local scheduleRefresh = ScreenKit.throttle(function()
+		if handle and handle.root and handle.root.Parent then
+			render()
 		end
-		dirty = true
-		task.defer(function()
-			dirty = false
-			if handle and handle.root and handle.root.Parent then
-				render()
-			end
-		end)
-	end
+	end)
 	table.insert(conns, ctx.cache.onChangePrefix("armies", scheduleRefresh))
 	table.insert(conns, ctx.cache.onChangePrefix("countries", scheduleRefresh))
 

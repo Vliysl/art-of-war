@@ -472,19 +472,11 @@ function PoliticsScreen.create(ctx)
 		fn(handle.body, c)
 	end
 
-	local dirty = false
-	local function scheduleRefresh()
-		if dirty then
-			return
+	local scheduleRefresh = ScreenKit.throttle(function()
+		if handle and handle.root and handle.root.Parent then
+			render(currentTab)
 		end
-		dirty = true
-		task.defer(function()
-			dirty = false
-			if handle and handle.root and handle.root.Parent then
-				render(currentTab)
-			end
-		end)
-	end
+	end)
 
 	local c0 = country()
 	handle = ScreenKit.open(ctx, {

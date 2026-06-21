@@ -98,7 +98,6 @@ function MilitaryScreen.create(ctx)
 	local registries = ctx.registries
 	local conns = {}
 	local handle
-	local dirty = false
 
 	local function ownArmies()
 		local out = {}
@@ -225,18 +224,11 @@ function MilitaryScreen.create(ctx)
 		fn(handle.body)
 	end
 
-	local function scheduleRefresh()
-		if dirty then
-			return
+	local scheduleRefresh = ScreenKit.throttle(function()
+		if handle and handle.root and handle.root.Parent then
+			render(activeTab)
 		end
-		dirty = true
-		task.defer(function()
-			dirty = false
-			if handle and handle.root and handle.root.Parent then
-				render(activeTab)
-			end
-		end)
-	end
+	end)
 
 	handle = ScreenKit.open(ctx, {
 		name = "MilitaryScreen",

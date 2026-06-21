@@ -31,7 +31,6 @@ end
 function ResearchScreen.create(ctx)
 	local registry = (ctx.registries and ctx.registries.Technologies) or {}
 	local conns = {}
-	local dirty = false
 	local handle
 
 	local byTabCat = {}
@@ -222,18 +221,11 @@ function ResearchScreen.create(ctx)
 	end
 
 	local activeTab = "army"
-	local function scheduleRefresh()
-		if dirty then
-			return
+	local scheduleRefresh = ScreenKit.throttle(function()
+		if handle and handle.root and handle.root.Parent then
+			render(activeTab)
 		end
-		dirty = true
-		task.defer(function()
-			dirty = false
-			if handle and handle.root and handle.root.Parent then
-				render(activeTab)
-			end
-		end)
-	end
+	end)
 
 	handle = ScreenKit.open(ctx, {
 		name = "ResearchScreen",
