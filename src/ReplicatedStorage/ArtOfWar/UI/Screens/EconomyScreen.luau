@@ -524,13 +524,154 @@ function EconomyScreen.create(ctx)
 	end
 
 	local activeTab = "budget"
-	-- Throttled (ScreenKit.throttle) so an open Economy screen refreshes a couple of times a second
-	-- instead of rebuilding its body on every economy tick (treasury/income change continuously).
-	local scheduleRefresh = ScreenKit.throttle(function()
-		if handle and handle.root and handle.root.Parent then
-			render(activeTab)
+	local lastSig = nil
+	local dirty = false
+
+	-- Signature gating: rebuild the body only when something the CURRENT tab visibly renders changes.
+	-- The budget tab shows mostly live economic numbers (treasury, income/expense breakdowns, net), so
+	-- those are COARSENED into integer buckets and the body steps in visible increments instead of
+	-- rebuilding every micro-tick:
+	--   treasury        -> floor(treasury / 100)        (£100 steps)
+	--   net (inc-exp)   -> floor(net / 10)              (£10 steps)
+	--   income lines    -> provider + floor(amount/10)  (sorted; £10 steps)
+	--   expense lines   -> provider + floor(amount/10)  (sorted; £10 steps)
+	--   economyPolicy   -> exact (drives Current + active button state)
+	-- Production tab: per-good stockpile (floor(stock/10)) + net prod-cons (floor(net/10)), sorted by id.
+	-- Trade tab: sorted active+incoming trade order ids + state + totalCost bucket (floor/10).
+	-- Buildings tab: sorted build-queue ids + completion-progress bucket (5% steps); the catalog is
+	--   static (registry) so it is omitted. The buildable-province lists live only inside the modal,
+	--   not in the body, so they do not feed the body signature.
+	-- Manpower is NOT displayed on any Economy tab, so it is deliberately excluded.
+	local function contentSignature(tabKey)
+		local c = country()
+		local parts = { tabKey }
+		if not c then
+			parts[#parts + 1] = "noclaim"
+			return table.concat(parts, "|")
 		end
-	end)
+		if tabKey == "budget" then
+			-- Tokens use the SAME formatter (money()) the body displays, so the signature changes exactly
+			-- when a shown figure changes (a coarser bucket would freeze the Balance / a breakdown line).
+			local income = c.totalIncome or 0
+			local expenses = c.totalExpenses or 0
+			parts[#parts + 1] = "tr:" .. money(c.treasury)
+			parts[#parts + 1] = "net:" .. money(income - expenses)
+			parts[#parts + 1] = "pol:" .. tostring(c.economyPolicy)
+			local inc = {}
+			for provider, amount in c.incomeBreakdown or {} do
+				if type(amount) == "number" and amount ~= 0 then
+					inc[#inc + 1] = tostring(provider) .. "=" .. money(amount)
+				end
+			end
+			table.sort(inc)
+			parts[#parts + 1] = "inc:" .. table.concat(inc, ",")
+			local exp = {}
+			for provider, amount in c.expenseBreakdown or {} do
+				if type(amount) == "number" and amount ~= 0 then
+					exp[#exp + 1] = tostring(provider) .. "=" .. money(-math.abs(amount))
+				end
+			end
+			table.sort(exp)
+			parts[#parts + 1] = "exp:" .. table.concat(exp, ",")
+		elseif tabKey == "production" then
+			-- Mirror renderProduction EXACTLY: same entry set + sort (prod desc, then id) + the displayed
+			-- strings (abbreviate(stock), perDay(net)). NOT re-sorted, so a row REORDER also changes the
+			-- signature (lexicographic sorting would have hidden a prod-driven order swap).
+			local production = c.dailyProduction or {}
+			local consumption = c.dailyConsumption or {}
+			local stockpiles = c.stockpiles or {}
+			local seen, entries = {}, {}
+			local function consider(id)
+				if seen[id] then
+					return
+				end
+				seen[id] = true
+				entries[#entries + 1] =
+					{ id = id, prod = production[id] or 0, cons = consumption[id] or 0, stock = stockpiles[id] or 0 }
+			end
+			for id in production do
+				consider(id)
+			end
+			for id in consumption do
+				consider(id)
+			end
+			for id in stockpiles do
+				consider(id)
+			end
+			table.sort(entries, function(a, b)
+				if a.prod ~= b.prod then
+					return a.prod > b.prod
+				end
+				return tostring(a.id) < tostring(b.id)
+			end)
+			local rows = {}
+			for _, e in ipairs(entries) do
+				local net = e.prod - e.cons
+				rows[#rows + 1] = string.format(
+					"%s=%s/%s",
+					tostring(e.id),
+					tostring(abbreviate(e.stock) or "0"),
+					tostring(perDay(net) or "")
+				)
+			end
+			parts[#parts + 1] = "prod:" .. table.concat(rows, ",")
+		elseif tabKey == "trade" then
+			local mine = ctx.tag
+			local orders = {}
+			for id, ord in ctx.cache.allTradeOrders() do
+				local oid = ord.id or id
+				local relevant = (ord.state == "Pending" and ord.counterpartyTag == mine)
+					or (ord.state == "Active" and (ord.initiatorTag == mine or ord.counterpartyTag == mine))
+					or (ord.state == "Pending" and ord.initiatorTag == mine)
+				if relevant then
+					orders[#orders + 1] = string.format(
+						"%s:%s:%d",
+						tostring(oid),
+						tostring(ord.state),
+						math.floor((ord.totalCost or 0) / 10)
+					)
+				end
+			end
+			table.sort(orders)
+			parts[#parts + 1] = "trade:" .. table.concat(orders, ",")
+		elseif tabKey == "buildings" then
+			local now = SimClock.now()
+			local queue = {}
+			for _, item in ipairs(c.buildQueue or {}) do
+				local pct = 0
+				if item.startedAt and item.completesAt and item.completesAt > item.startedAt then
+					local t = now or item.startedAt
+					pct = math.clamp((t - item.startedAt) / (item.completesAt - item.startedAt), 0, 1)
+				end
+				queue[#queue + 1] =
+					string.format("%s:%s:%d", tostring(item.id), tostring(item.provinceId), math.floor(pct * 100 / 5))
+			end
+			table.sort(queue)
+			parts[#parts + 1] = "build:" .. table.concat(queue, ",")
+		end
+		return table.concat(parts, "|")
+	end
+
+	-- Deferred, signature-gated refresh: an open Economy screen rebuilds its body only when the active
+	-- tab's coarsened signature changes, so idle/micro-tick economy churn no longer rebuilds every tick.
+	local function scheduleRefresh()
+		if dirty then
+			return
+		end
+		dirty = true
+		task.defer(function()
+			dirty = false
+			if not (handle and handle.root and handle.root.Parent) then
+				return
+			end
+			local sig = contentSignature(activeTab)
+			if sig == lastSig then
+				return
+			end
+			lastSig = sig
+			render(activeTab)
+		end)
+	end
 
 	local c = country()
 	handle = ScreenKit.open(ctx, {
@@ -542,6 +683,7 @@ function EconomyScreen.create(ctx)
 		onTab = function(key)
 			activeTab = key
 			render(key)
+			lastSig = contentSignature(key)
 		end,
 	})
 
@@ -550,6 +692,7 @@ function EconomyScreen.create(ctx)
 	table.insert(conns, ctx.cache.onChangePrefix("provinces", scheduleRefresh))
 
 	render(activeTab)
+	lastSig = contentSignature(activeTab)
 
 	return {
 		root = handle.root,

@@ -2,7 +2,6 @@ local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
 local Colors = DesignSystem.Colors
 local Typography = DesignSystem.Typography
 local Spacing = DesignSystem.Spacing
-local Shells = DesignSystem.Shells
 
 local Tooltip = {}
 
@@ -25,12 +24,28 @@ end
 function Tooltip.create(config)
 	config = config or {}
 
-	local root = Shells.create("tooltip_shell", {
-		Name = "Tooltip",
-		Size = UDim2.fromOffset(config.width or 250, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		ZIndex = config.zIndex or 80,
-	})
+	-- Build the surface from a themed Frame (rounded corners + hairline border) instead of the
+	-- `tooltip_shell` 9-slice: that asset is a speech-bubble callout with a downward pointer tail, so
+	-- slicing it stretched the tail into a band and clipped the body's bottom row (mirrors the same fix
+	-- already made in ProvinceTooltip).
+	local root = Instance.new("Frame")
+	root.Name = "Tooltip"
+	root.Size = UDim2.fromOffset(config.width or 250, 0)
+	root.AutomaticSize = Enum.AutomaticSize.Y
+	root.BackgroundColor3 = Colors.SurfaceOverlay
+	root.BackgroundTransparency = 0.02
+	root.BorderSizePixel = 0
+	root.ZIndex = config.zIndex or 80
+	root:SetAttribute("AoWInputSink", false)
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = root
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Colors.BorderStrong
+	stroke.Thickness = 1
+	stroke.Parent = root
 
 	local pad = Instance.new("UIPadding")
 	pad.PaddingTop = UDim.new(0, Spacing.space3)
@@ -90,20 +105,37 @@ end
 
 function Tooltip.attach(target, builder, layerOverride)
 	local UserInputService = game:GetService("UserInputService")
+	local RunService = game:GetService("RunService")
 	if DesignSystem.Responsive.isTouch() then
 		return
 	end
 	local current
+	local primeConn
+	local function stopPrime()
+		if primeConn then
+			primeConn:Disconnect()
+			primeConn = nil
+		end
+	end
 	local function clear()
+		stopPrime()
 		if current then
 			current:Destroy()
 			current = nil
 		end
 	end
 	-- Cursor-follow that is UIScale-safe (divide by the host layer's ResponsiveScale) and clamps/
-	-- flips inside the viewport, so the tooltip lands at the cursor on any resolution.
+	-- flips inside the viewport, so the tooltip lands at the cursor on any resolution. Positioning needs
+	-- the tooltip's REAL height: the shell is AutomaticSize.Y, so AbsoluteSize is 0 on the frame it is
+	-- parented -- placing then (with a guessed height) made tall tooltips skip the bottom-edge flip and
+	-- clip. So `place` no-ops while AbsoluteSize is 0 (the tooltip stays parked offscreen), and the
+	-- RenderStepped follow snaps it to the cursor once the layout settles (mirrors ProvinceTooltip).
 	local function place()
 		if not current then
+			return
+		end
+		local size = current.AbsoluteSize
+		if size.Y <= 0 then
 			return
 		end
 		local sg = current.Parent
@@ -111,9 +143,7 @@ function Tooltip.attach(target, builder, layerOverride)
 		local scale = (us and us.Scale) or 1
 		local cam = workspace.CurrentCamera
 		local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
-		local size = current.AbsoluteSize
-		local w = size.X > 0 and size.X or current.Size.X.Offset * scale
-		local h = size.Y > 0 and size.Y or 120 * scale
+		local w, h = size.X, size.Y
 		local m = UserInputService:GetMouseLocation()
 		local x = m.X + 14
 		local y = m.Y + 16
@@ -129,16 +159,27 @@ function Tooltip.attach(target, builder, layerOverride)
 	end
 	target.MouseEnter:Connect(function()
 		clear()
-		local layer = layerOverride or target:FindFirstAncestorWhichIsA("ScreenGui")
+		-- Tooltips MUST host on the dedicated AoW_Tooltips layer (IgnoreGuiInset = true), not the row's
+		-- AoW_Screens ancestor (IgnoreGuiInset = false): GetMouseLocation + the cursor math in `place` are
+		-- in true top-left pixels, so an inset-respecting host shifts the tooltip ~36px down (the reported
+		-- offset + bottom clip). The layers are siblings under PlayerGui; fall back to the ancestor.
+		local sg = target:FindFirstAncestorWhichIsA("ScreenGui")
+		local tips = sg and sg.Parent and sg.Parent:FindFirstChild("AoW_Tooltips")
+		local layer = layerOverride or tips or sg
 		if not layer then
 			return
 		end
 		current = builder()
 		current:SetAttribute("AoWInputSink", false)
+		-- Park far offscreen (not Visible = false) while the AutomaticSize settles, then `place` snaps it to
+		-- the cursor every frame: avoids the one-frame top-left flash when ViewportSize is momentarily (0,0)
+		-- and the clamp would pin it to (8, 8). Mirrors ProvinceTooltip's showProvince/follow.
+		current.Position = UDim2.fromOffset(-4000, -4000)
+		current.Visible = true
 		current.Parent = layer
 		place()
+		primeConn = RunService.RenderStepped:Connect(place)
 	end)
-	target.MouseMoved:Connect(place)
 	target.MouseLeave:Connect(clear)
 	target.Destroying:Connect(clear)
 end

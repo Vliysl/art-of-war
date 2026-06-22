@@ -717,11 +717,136 @@ function PoliticsScreen.create(ctx)
 		fn(handle.body, c)
 	end
 
-	local scheduleRefresh = ScreenKit.throttle(function()
-		if handle and handle.root and handle.root.Parent then
-			render(currentTab)
+	local lastSig = nil
+	local dirty = false
+
+	-- Hash ONLY what the current tab visibly renders and can change. Continuous numbers
+	-- (PP/legitimacy/stability/prestige/clout/lawPass progress) are coarsened into integer
+	-- buckets so they step instead of rebuilding every economy micro-tick. Sets (policies,
+	-- doctrines, factions, cooldowns, leaders, transition) are sorted for stability. Static
+	-- registry-derived structure (available transitions, doctrine options, policy gating) is
+	-- driven by mutable country fields already in the signature (governmentForm, ideology, PP).
+	local function contentSignature(tabKey)
+		local c = country()
+		local parts = { tabKey }
+		if not c then
+			parts[#parts + 1] = "noclaim"
+			return table.concat(parts, "|")
 		end
-	end)
+		-- PP coarsened but kept fine enough to flip the transition/ideology button gates.
+		local ppBucket = math.floor((c.politicalPower or 0) / 5)
+		if tabKey == "overview" then
+			parts[#parts + 1] = "leg:" .. round(c.legitimacy)
+			parts[#parts + 1] = "stab:" .. tostring(c.stability)
+			parts[#parts + 1] = "pp:" .. tostring(c.politicalPower)
+			parts[#parts + 1] = "prest:" .. tostring(c.prestige)
+		elseif tabKey == "government" then
+			parts[#parts + 1] = "gov:" .. tostring(c.governmentForm)
+			parts[#parts + 1] = "ideo:" .. tostring(c.ideology)
+			parts[#parts + 1] = "pp:" .. ppBucket
+			local tr = c.transition
+			if type(tr) == "table" then
+				parts[#parts + 1] =
+					string.format("tr:%s>%s@%s", tostring(tr.from), tostring(tr.to), tostring(tr.completesAtDay))
+			else
+				parts[#parts + 1] = "tr:none"
+			end
+		elseif tabKey == "estates" then
+			local f = {}
+			if type(c.factions) == "table" then
+				for key, record in c.factions do
+					f[#f + 1] = string.format(
+						"%s=%s/%s",
+						tostring(record.id or key),
+						tostring(record.tier or "influential"),
+						tostring(math.floor((record.clout or 0) * 100))
+					)
+				end
+				table.sort(f)
+			end
+			parts[#parts + 1] = "fac:" .. table.concat(f, ",")
+		elseif tabKey == "leaders" then
+			local l = {}
+			local leaders = c.leaders or {}
+			local candidates = c.leaderCandidates or {}
+			for id, leader in leaders do
+				local traits = leader.traits and table.concat(leader.traits, "+") or ""
+				l[#l + 1] = string.format(
+					"%s:%s/%s/%s/%s",
+					tostring(id),
+					tostring(leader.title),
+					tostring(leader.firstName),
+					tostring(leader.lastName),
+					traits
+				)
+			end
+			for id, pool in candidates do
+				l[#l + 1] = string.format("cand:%s=%d", tostring(id), count(pool))
+			end
+			table.sort(l)
+			parts[#parts + 1] = "led:" .. table.concat(l, ",")
+		elseif tabKey == "policies" then
+			parts[#parts + 1] = "ideo:" .. tostring(c.ideology)
+			local active = {}
+			if type(c.activePolicies) == "table" then
+				for id in c.activePolicies do
+					active[#active + 1] = tostring(id)
+				end
+				table.sort(active)
+			end
+			parts[#parts + 1] = "pol:" .. table.concat(active, ",")
+		elseif tabKey == "laws" then
+			local pass = c.lawPass
+			if type(pass) == "table" then
+				parts[#parts + 1] = string.format(
+					"law:%s/%s/%s/%s",
+					tostring(pass.policyId),
+					tostring(pass.phase or 1),
+					tostring(pass.setbacksTotal or 0),
+					tostring(pass.ppSpent or 0)
+				)
+			else
+				parts[#parts + 1] = "law:none"
+			end
+			local cd = {}
+			if type(c.lawCooldowns) == "table" then
+				for id, day in c.lawCooldowns do
+					cd[#cd + 1] = tostring(id) .. "=" .. tostring(day)
+				end
+				table.sort(cd)
+			end
+			parts[#parts + 1] = "cd:" .. table.concat(cd, ",")
+		elseif tabKey == "doctrines" then
+			local d = {}
+			if type(c.doctrines) == "table" then
+				for slot, opt in c.doctrines do
+					d[#d + 1] = tostring(slot) .. "=" .. tostring(opt)
+				end
+				table.sort(d)
+			end
+			parts[#parts + 1] = "doc:" .. table.concat(d, ",")
+		end
+		return table.concat(parts, "|")
+	end
+
+	local function scheduleRefresh()
+		if dirty then
+			return
+		end
+		dirty = true
+		task.defer(function()
+			dirty = false
+			if not (handle and handle.root and handle.root.Parent) then
+				return
+			end
+			local sig = contentSignature(currentTab)
+			if sig == lastSig then
+				return
+			end
+			lastSig = sig
+			render(currentTab)
+		end)
+	end
 
 	local c0 = country()
 	handle = ScreenKit.open(ctx, {
@@ -733,6 +858,7 @@ function PoliticsScreen.create(ctx)
 		activeTab = "overview",
 		onTab = function(key)
 			render(key)
+			lastSig = contentSignature(key)
 		end,
 	})
 
@@ -741,6 +867,7 @@ function PoliticsScreen.create(ctx)
 	end
 
 	render("overview")
+	lastSig = contentSignature(currentTab)
 
 	return {
 		root = handle.root,

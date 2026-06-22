@@ -628,9 +628,15 @@ Shells.Data = {
 	},
 }
 
+local warnedShells = {}
+
 function Shells.create(name, props)
 	local def = Shells.Data[name]
 	if not def then
+		if not warnedShells[name] then
+			warnedShells[name] = true
+			warn("[AoW Shells] unknown shell '" .. tostring(name) .. "' -- rendering a blank frame")
+		end
 		local f = Instance.new("Frame")
 		f.BackgroundColor3 = Color3.fromRGB(22, 20, 16)
 		f.BorderSizePixel = 0

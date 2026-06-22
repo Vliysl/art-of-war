@@ -221,11 +221,56 @@ function ResearchScreen.create(ctx)
 	end
 
 	local activeTab = "army"
-	local scheduleRefresh = ScreenKit.throttle(function()
-		if handle and handle.root and handle.root.Parent then
-			render(activeTab)
+	local lastSig = nil
+	local dirty = false
+
+	-- The visible state is tech statuses (researched/locked/available) + the active research's progress.
+	-- It does NOT depend on treasury/manpower, so exclude those (they mutate every economy tick). The
+	-- active tech's progress IS displayed exactly ("X / Y RP"), so track exact floor(prog): this rebuilds
+	-- only per game-day WHILE a tech is researching (never when idle, which is the screenshotted case).
+	local function contentSignature(tabKey)
+		local c = country()
+		local parts = { tabKey }
+		if not c then
+			parts[#parts + 1] = "noclaim"
+			return table.concat(parts, "|")
 		end
-	end)
+		local active = c.research and c.research.active
+		parts[#parts + 1] = "a:" .. tostring(active)
+		if active and registry[active] then
+			parts[#parts + 1] = "p:" .. math.floor(progressOf(c, active))
+		end
+		local done = {}
+		if c.techs then
+			for id, v in pairs(c.techs) do
+				if v == true then
+					done[#done + 1] = id
+				end
+			end
+			table.sort(done)
+		end
+		parts[#parts + 1] = "t:" .. table.concat(done, ",")
+		return table.concat(parts, "|")
+	end
+
+	local function scheduleRefresh()
+		if dirty then
+			return
+		end
+		dirty = true
+		task.defer(function()
+			dirty = false
+			if not (handle and handle.root and handle.root.Parent) then
+				return
+			end
+			local sig = contentSignature(activeTab)
+			if sig == lastSig then
+				return
+			end
+			lastSig = sig
+			render(activeTab)
+		end)
+	end
 
 	handle = ScreenKit.open(ctx, {
 		name = "ResearchScreen",
@@ -235,10 +280,12 @@ function ResearchScreen.create(ctx)
 		activeTab = activeTab,
 		onTab = function(key)
 			activeTab = key
+			lastSig = contentSignature(key)
 			render(key)
 		end,
 	})
 	render(activeTab)
+	lastSig = contentSignature(activeTab)
 	table.insert(conns, ctx.cache.onChangePrefix("countries", scheduleRefresh))
 
 	return {

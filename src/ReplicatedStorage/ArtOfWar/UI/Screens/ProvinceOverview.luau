@@ -627,6 +627,82 @@ function ProvinceOverview.create(ctx)
 		fn(handle.body)
 	end
 
+	local lastSig = nil
+	local dirty = false
+
+	-- Hashes ONLY what the CURRENT owned tab visibly renders that can change, so an economy tick that
+	-- doesn't touch this province's displayed values is a no-op. Excludes raw treasury/manpower (never
+	-- shown on the owned tabs). Queue completion % is bucketed (3% steps) so progress bars step instead
+	-- of rebuilding every micro-tick. Available unit/building id sets are sorted for stability.
+	local function contentSignature(tabKey)
+		local parts = { tabKey }
+		if tabKey == "recruitment" then
+			local c = country()
+			local queue = (c and c.recruitQueue) or {}
+			local q = {}
+			for _, item in ipairs(queue) do
+				if item.provinceId == prov.id then
+					q[#q + 1] = string.format(
+						"%s:%s:%s:%d",
+						tostring(item.id),
+						tostring(item.unitTypeId),
+						tostring(item.count or 1),
+						math.floor(progressOf(item.queuedAt, item.completesAt) * 100 / 3)
+					)
+				end
+			end
+			table.sort(q)
+			parts[#parts + 1] = "rq:" .. table.concat(q, ",")
+			-- Available units come from the static registry, but include their ids so an unlock change reflects.
+			local units = {}
+			for id, def in pairs(unitTypes()) do
+				if type(def) == "table" and def.recruitCost ~= nil and def.unlockedByDefault ~= false then
+					units[#units + 1] = id
+				end
+			end
+			table.sort(units)
+			parts[#parts + 1] = "u:" .. table.concat(units, ",")
+		elseif tabKey == "buildings" then
+			local p = liveProvince()
+			parts[#parts + 1] =
+				string.format("t:%d:%d:%d", (p and p.infraTier) or 0, (p and p.devTier) or 0, (p and p.fortTier) or 0)
+			-- Built buildings list (also feeds canBuildHere eligibility).
+			local built = (p and p.buildings) or {}
+			local bsorted = {}
+			for _, bid in ipairs(built) do
+				bsorted[#bsorted + 1] = bid
+			end
+			table.sort(bsorted)
+			parts[#parts + 1] = "b:" .. table.concat(bsorted, ",")
+			-- Construction queue for this province (ids + bucketed progress).
+			local c = country()
+			local queue = (c and c.buildQueue) or {}
+			local q = {}
+			for _, item in ipairs(queue) do
+				if item.provinceId == prov.id then
+					q[#q + 1] = string.format(
+						"%s:%s:%d",
+						tostring(item.id),
+						tostring(item.buildingId),
+						math.floor(progressOf(item.startedAt, item.completesAt) * 100 / 3)
+					)
+				end
+			end
+			table.sort(q)
+			parts[#parts + 1] = "cq:" .. table.concat(q, ",")
+			-- Available-to-build building ids (canBuildHere depends on this province's infra/buildings/coastal).
+			local avail = {}
+			for id, def in pairs(buildingTypes()) do
+				if type(def) == "table" and not TIER_BUILDINGS[id] and canBuildHere(p, id, def) then
+					avail[#avail + 1] = id
+				end
+			end
+			table.sort(avail)
+			parts[#parts + 1] = "av:" .. table.concat(avail, ",")
+		end
+		return table.concat(parts, "|")
+	end
+
 	local TABS = { { key = "information", label = "Information" } }
 	if owns then
 		TABS[#TABS + 1] = { key = "recruitment", label = "Recruitment" }
@@ -645,15 +721,29 @@ function ProvinceOverview.create(ctx)
 		activeTab = owns and "information" or nil,
 		onTab = owns and function(key)
 			render(key)
+			lastSig = contentSignature(key)
 		end or nil,
 	})
 
 	if owns then
-		local scheduleRefresh = ScreenKit.throttle(function()
-			if handle and handle.root and handle.root.Parent then
-				render(currentTab)
+		local function scheduleRefresh()
+			if dirty then
+				return
 			end
-		end)
+			dirty = true
+			task.defer(function()
+				dirty = false
+				if not (handle and handle.root and handle.root.Parent) then
+					return
+				end
+				local sig = contentSignature(currentTab)
+				if sig == lastSig then
+					return
+				end
+				lastSig = sig
+				render(currentTab)
+			end)
+		end
 		if ctx.cache then
 			table.insert(conns, ctx.cache.onChangePrefix("countries", scheduleRefresh))
 			table.insert(conns, ctx.cache.onChangePrefix("provinces", scheduleRefresh))
@@ -661,6 +751,9 @@ function ProvinceOverview.create(ctx)
 	end
 
 	render("information")
+	if owns then
+		lastSig = contentSignature(currentTab)
+	end
 
 	return {
 		root = handle.root,

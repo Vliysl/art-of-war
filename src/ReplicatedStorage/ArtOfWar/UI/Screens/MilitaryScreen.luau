@@ -217,6 +217,8 @@ function MilitaryScreen.create(ctx)
 	}
 
 	local activeTab = "army"
+	local lastSig = nil
+	local dirty = false
 
 	local function render(tab)
 		handle.clearBody()
@@ -224,11 +226,66 @@ function MilitaryScreen.create(ctx)
 		fn(handle.body)
 	end
 
-	local scheduleRefresh = ScreenKit.throttle(function()
-		if handle and handle.root and handle.root.Parent then
-			render(activeTab)
+	-- Hash only what the CURRENT tab visibly renders and can change. The army tab shows the manpower
+	-- stat (coarsened to 1000-step buckets so the bar steps instead of rebuilding every economy tick),
+	-- levy manpower, and the owned-armies list (dominant unit + total + state). The navy tab shows the
+	-- fleet/ship counts and the owned-fleets list (dominant ship + total + status). Raw treasury and
+	-- other non-displayed values are deliberately excluded so they don't force rebuilds.
+	local function contentSignature(tabKey)
+		local country = ctx.cache.getCountry(ctx.tag)
+		local parts = { tabKey }
+		if tabKey == "navy" then
+			local fleets = ownFleets()
+			local shipTotal = 0
+			local items = {}
+			for _, f in ipairs(fleets) do
+				local info = fleetInfo(f, registries)
+				shipTotal += info.total
+				items[#items + 1] =
+					string.format("%s~%s~%d~%s", tostring(f.id), info.domName, info.total, tostring(f.status))
+			end
+			parts[#parts + 1] = "n:" .. #fleets
+			parts[#parts + 1] = "s:" .. shipTotal
+			parts[#parts + 1] = "f:" .. table.concat(items, ",")
+		else
+			if not country then
+				parts[#parts + 1] = "noclaim"
+			else
+				-- Exact (not bucketed): these are shown as exact numbers and only regen monthly / on
+				-- recruit, so the rare rebuild is fine and a bucket would freeze the displayed value.
+				parts[#parts + 1] = "mp:" .. tostring(country.manpower)
+				parts[#parts + 1] = "mx:" .. tostring(country.maxManpower)
+				parts[#parts + 1] = "lv:" .. tostring(country.levyManpower)
+			end
+			local items = {}
+			for _, a in ipairs(ownArmies()) do
+				local info = armyInfo(a, registries)
+				items[#items + 1] =
+					string.format("%s~%s~%d~%s", tostring(a.id), info.domName, info.total, tostring(a.state))
+			end
+			parts[#parts + 1] = "a:" .. table.concat(items, ",")
 		end
-	end)
+		return table.concat(parts, "|")
+	end
+
+	local function scheduleRefresh()
+		if dirty then
+			return
+		end
+		dirty = true
+		task.defer(function()
+			dirty = false
+			if not (handle and handle.root and handle.root.Parent) then
+				return
+			end
+			local sig = contentSignature(activeTab)
+			if sig == lastSig then
+				return
+			end
+			lastSig = sig
+			render(activeTab)
+		end)
+	end
 
 	handle = ScreenKit.open(ctx, {
 		name = "MilitaryScreen",
@@ -238,10 +295,12 @@ function MilitaryScreen.create(ctx)
 		activeTab = activeTab,
 		onTab = function(key)
 			activeTab = key
+			lastSig = contentSignature(key)
 			render(key)
 		end,
 	})
 	render(activeTab)
+	lastSig = contentSignature(activeTab)
 
 	table.insert(conns, ctx.cache.onChangePrefix("armies", scheduleRefresh))
 	table.insert(conns, ctx.cache.onChangePrefix("fleets", scheduleRefresh))
