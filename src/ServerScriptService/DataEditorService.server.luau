@@ -925,15 +925,29 @@ api.OnServerInvoke = function(player, command, payload)
 				end
 				local promotedList = promoteResult.result and promoteResult.result.promoted or {}
 				local synced = 0
+				local provincesChanged = false
 				for _, d in ipairs(promotedList) do
 					if d.kind == "province" then
 						pcall(syncProvinceToWorld, d.key)
+						provincesChanged = true
 					elseif d.kind == "country" then
 						pcall(syncCountryToWorld, d.key)
 					end
 					synced += 1
 					if synced % 200 == 0 then
 						task.wait()
+					end
+				end
+				-- Provinces were added/changed (e.g. painted tiles promoted to seeds): rebuild the
+				-- land adjacency graph so the freshly stamped province_id parts become movement nodes
+				-- this session, without waiting for a server restart.
+				if provincesChanged then
+					local adjMod = game.ServerScriptService.ArtOfWar.Systems:FindFirstChild("AdjacencyGraph")
+					if adjMod then
+						local adjOk, adj = pcall(require, adjMod)
+						if adjOk and adj and adj.build then
+							pcall(adj.build)
+						end
 					end
 				end
 			end

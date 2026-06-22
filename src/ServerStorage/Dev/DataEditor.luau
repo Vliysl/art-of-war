@@ -945,17 +945,14 @@ local function overlayModule()
 	return overlay
 end
 
-function DataEditor.save()
-	ensureLoaded()
-	local overlay = overlayModule()
-	if not overlay then
-		return {
-			mode  = "error",
-			error = "DataOverlay module not available — cannot save without it",
-		}
-	end
-
-	local promoted = {}
+-- Convert every painted-but-unpromoted owned tile into a real seed province (+ EU4 mapping)
+-- before a save persists anything. Both save paths MUST run this: a tile left as a raw
+-- tileOwners override is saved owner-only, so at boot it receives an owner attribute but no
+-- province record / eu4Map link / province_id and is invisible to movement, buildings, and
+-- ownership lookups. Returns the number of tiles promoted. Data-driven (iterates tileOwners;
+-- no country/province is named) and idempotent (already-seeded tiles are skipped).
+local function promotePaintedTiles()
+	local pending = {}
 	for partName, ownerTag in pairs(tileOwners) do
 		if type(ownerTag) == "string" and ownerTag ~= "" and ownerTag ~= "NONE" then
 			local eu4Pid = tonumber(partName:match("prov_(%d+)"))
@@ -966,11 +963,11 @@ function DataEditor.save()
 				end
 			end
 			if not alreadySeeded then
-				table.insert(promoted, { partName = partName, ownerTag = ownerTag })
+				table.insert(pending, { partName = partName, ownerTag = ownerTag })
 			end
 		end
 	end
-	for _, t in ipairs(promoted) do
+	for _, t in ipairs(pending) do
 		local country = countries[t.ownerTag]
 		local ok, result = pcall(DataEditor.promoteTile, {
 			partName = t.partName,
@@ -982,6 +979,20 @@ function DataEditor.save()
 			tileOwners[t.partName] = nil
 		end
 	end
+	return #pending
+end
+
+function DataEditor.save()
+	ensureLoaded()
+	local overlay = overlayModule()
+	if not overlay then
+		return {
+			mode  = "error",
+			error = "DataOverlay module not available — cannot save without it",
+		}
+	end
+
+	promotePaintedTiles()
 
 	local priorBaseline = baseline or {}
 	local counts = { countries = 0, provinces = 0, eu4map = 0, tiles = 0, cultures = 0, religions = 0, tombstones = 0 }
@@ -1747,6 +1758,9 @@ function DataEditor.promote(fieldSelections)
 	local draft = draftOverlayModule()
 	if not draft then return { ok = false, error = "DraftOverlay unavailable" } end
 	ensureLoaded()
+	-- Promote painted tiles to real seeds first so the diff carries province + eu4map adds
+	-- (which register) instead of raw owner-only tile overrides (which never register).
+	promotePaintedTiles()
 	local current = currentBundleForDraft()
 	local shared = sharedSnapshotBundle()
 	if not shared then return { ok = false, error = "could not snapshot shared" } end
