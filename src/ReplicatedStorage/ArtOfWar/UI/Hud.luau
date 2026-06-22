@@ -27,6 +27,7 @@ local MENU_KEYS = {
 	[Enum.KeyCode.Four] = "Diplomacy",
 	[Enum.KeyCode.Five] = "Research",
 	[Enum.KeyCode.Six] = "Missions",
+	[Enum.KeyCode.Seven] = "Settings",
 }
 local SCREEN_MODULES = {
 	Politics = "PoliticsScreen",

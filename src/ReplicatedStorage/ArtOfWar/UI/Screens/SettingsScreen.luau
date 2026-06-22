@@ -4,7 +4,6 @@ local ScreenKit = require(script.Parent.ScreenKit)
 local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
 local Colors = DesignSystem.Colors
 local Typography = DesignSystem.Typography
-local Spacing = DesignSystem.Spacing
 local Responsive = DesignSystem.Responsive
 local Components = script.Parent.Parent.Components
 local Button = require(Components.Button)
@@ -23,6 +22,7 @@ local MENU_KEYS = {
 	{ "Diplomacy", "4" },
 	{ "Research", "5" },
 	{ "Missions", "6" },
+	{ "Settings", "7" },
 }
 
 local CONTROL_KEYS = {
@@ -64,7 +64,7 @@ local function toggleRow(parent, label, getValue, setValue, order)
 		end,
 	})
 	btn.AnchorPoint = Vector2.new(1, 0.5)
-	btn.Position = UDim2.new(1, 0, 0.5, 0)
+	btn.Position = UDim2.fromScale(1, 0.5)
 end
 
 function SettingsScreen.create(ctx)

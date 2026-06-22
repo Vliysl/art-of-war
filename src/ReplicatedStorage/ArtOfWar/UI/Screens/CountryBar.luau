@@ -9,7 +9,7 @@ local Tooltip = require(script.Parent.Parent.Components.Tooltip)
 
 local CountryBar = {}
 
-local MENUS = { "Politics", "Economy", "Military", "Diplomacy", "Research", "Missions" }
+local MENUS = { "Politics", "Economy", "Military", "Diplomacy", "Research", "Missions", "Settings" }
 local PILL_W = 104
 local NAME_W = 200
 local PILLS_RESERVE = 300

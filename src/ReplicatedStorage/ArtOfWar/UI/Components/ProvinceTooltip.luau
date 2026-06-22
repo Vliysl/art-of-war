@@ -144,16 +144,22 @@ function ProvinceTooltip.create(parent)
 		societyRow.Visible = (info.society or "") ~= ""
 		devRow.Text = info.dev or ""
 		devRow.Visible = (info.dev or "") ~= ""
-		root.Position = UDim2.fromOffset(-4000, -4000)
-		root.Visible = true
+		-- Only park offscreen on the hidden->visible transition; re-parking while already visible (e.g. a
+		-- caller re-showing every frame) flickers the tooltip. When visible, `follow` keeps it on the cursor.
+		if not root.Visible then
+			root.Position = UDim2.fromOffset(-4000, -4000)
+			root.Visible = true
+		end
 		ensureFollow()
 	end
 
 	local function showWater(name)
 		setLand(false)
 		nameRow.Text = name or "Open Water"
-		root.Position = UDim2.fromOffset(-4000, -4000)
-		root.Visible = true
+		if not root.Visible then
+			root.Position = UDim2.fromOffset(-4000, -4000)
+			root.Visible = true
+		end
 		ensureFollow()
 	end
 

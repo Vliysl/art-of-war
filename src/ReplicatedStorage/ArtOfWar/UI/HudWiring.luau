@@ -607,6 +607,10 @@ function HudWiring.start(modules)
 	end
 
 	if ProvinceInteraction then
+		-- Dedupe the water tooltip: ProvinceInteraction fires onWater every 30Hz tick over ocean, so without
+		-- this showWater would re-run (and flicker) constantly. Reset whenever the hover state changes (land or
+		-- off-map) so re-entering a water body re-shows it.
+		local lastWaterName = nil
 		ProvinceInteraction.addSelectListener(function(part)
 			if nationSelectActive then
 				if part then
@@ -669,6 +673,9 @@ function HudWiring.start(modules)
 		end)
 
 		ProvinceInteraction.addHoverListener(function(part)
+			-- Hover state changed (this fires only on a province/nil transition), so we're no longer over a
+			-- stable water body -> clear the dedupe key so returning to water re-shows the water tooltip.
+			lastWaterName = nil
 			if nationSelectActive then
 				tooltip.hide()
 				if nationSelectApi then
@@ -690,16 +697,23 @@ function HudWiring.start(modules)
 			ProvinceInteraction.onWater(function(wx, wz)
 				if nationSelectActive then
 					tooltip.hide()
+					lastWaterName = nil
 					if nationSelectApi then
 						nationSelectApi.hoverCountry(nil)
 					end
 					return
 				end
 				if wx and wz then
-					local name = WaterBodies and WaterBodies.getWaterBodyAt and WaterBodies.getWaterBodyAt(wx, wz)
-					tooltip.showWater(name or "Open Water")
+					local name = (WaterBodies and WaterBodies.getWaterBodyAt and WaterBodies.getWaterBodyAt(wx, wz))
+						or "Open Water"
+					-- onWater fires every 30Hz tick over ocean; only (re)show when the water body actually changes.
+					if name ~= lastWaterName then
+						lastWaterName = name
+						tooltip.showWater(name)
+					end
 				else
 					tooltip.hide()
+					lastWaterName = nil
 				end
 			end)
 		end
