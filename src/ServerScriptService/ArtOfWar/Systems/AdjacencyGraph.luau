@@ -22,6 +22,7 @@ local positions = {}
 local neighbors = {}
 local coastalSet = {}
 local shoreByProvince = {}
+local bakedIds = {}       -- set of province ids present in the baked table (whatever its land set)
 local mode = "auto"       -- "auto" | "baked" | "legacy"
 local activeSource = "none"
 
@@ -100,9 +101,10 @@ local function tryLoadBaked()
 	for _ in baked do bakedCount += 1 end
 	if bakedCount == 0 then return false, 0, 0 end
 
-	local nbrs, coastal, shore = {}, {}, {}
+	local nbrs, coastal, shore, ids = {}, {}, {}, {}
 	for id in positions do nbrs[id] = {} end
 	for id, entry in baked do
+		ids[id] = true
 		if positions[id] ~= nil and type(entry) == "table" then
 			matchedCount += 1
 			local list = nbrs[id]
@@ -115,8 +117,86 @@ local function tryLoadBaked()
 		end
 	end
 	-- Stage into module state only after a successful parse.
-	neighbors, coastalSet, shoreByProvince = nbrs, coastal, shore
+	neighbors, coastalSet, shoreByProvince, bakedIds = nbrs, coastal, shore, ids
 	return true, bakedCount, matchedCount
+end
+
+-- When the baked table is used, any registered province NOT present in it (e.g. a tile
+-- promoted/reconciled after the table was last generated) would otherwise be a node with
+-- no neighbors -- an unreachable island. Link each such province to its closest registered
+-- provinces (bidirectionally) so it is reachable. We take the nearest few within the radius
+-- rather than every province in range, because the bare centroid radius badly over-connects
+-- (a province can have 100+ others within 300 studs); the cap approximates true bordering and
+-- keeps these provinces from becoming movement super-hubs. Provinces the baked table DOES know
+-- about (incl. genuine islands with an empty land set) are left untouched, so no false land
+-- bridges are created across water. Regenerate Data/ProvinceAdjacency to replace this with true
+-- bordering.
+local MAX_SYNTH_BORDERS = 8
+
+local function linkUnbakedRegistered()
+	local threshold = ctx.WorldConstants.AdjacencyThreshold
+	local thresholdSq = threshold * threshold
+	local patched, edges = 0, 0
+	for idA, posA in positions do
+		if not bakedIds[idA] then
+			local candidates = {}
+			for idB, posB in positions do
+				if idB ~= idA then
+					local dx = posA.X - posB.X
+					local dz = posA.Y - posB.Y
+					local distSq = dx * dx + dz * dz
+					if distSq <= thresholdSq then
+						table.insert(candidates, { id = idB, distSq = distSq })
+					end
+				end
+			end
+			table.sort(candidates, function(a, b)
+				return a.distSq < b.distSq
+			end)
+
+			neighbors[idA] = neighbors[idA] or {}
+			local existing = {}
+			for _, n in ipairs(neighbors[idA]) do
+				existing[n] = true
+			end
+			local linked = 0
+			for _, cand in ipairs(candidates) do
+				if linked >= MAX_SYNTH_BORDERS then
+					break
+				end
+				local idB = cand.id
+				if not existing[idB] then
+					table.insert(neighbors[idA], idB)
+					existing[idB] = true
+					neighbors[idB] = neighbors[idB] or {}
+					local back = false
+					for _, n in ipairs(neighbors[idB]) do
+						if n == idA then
+							back = true
+							break
+						end
+					end
+					if not back then
+						table.insert(neighbors[idB], idA)
+					end
+					edges += 1
+					linked += 1
+				end
+			end
+			if linked > 0 then
+				patched += 1
+			end
+		end
+	end
+	if patched > 0 then
+		print(
+			string.format(
+				"[AdjacencyGraph] geometry-linked %d registered province(s) absent from the baked table (%d edges) -- regenerate Data/ProvinceAdjacency to bake them",
+				patched,
+				edges
+			)
+		)
+	end
 end
 
 function AdjacencyGraph.build()
@@ -153,6 +233,10 @@ function AdjacencyGraph.build()
 	if not useBaked then
 		activeSource = "legacy"
 		computeNeighborsLegacy()
+	else
+		-- Legacy already links every node by geometry; in baked mode only patch the
+		-- registered provinces the baked table doesn't cover.
+		linkUnbakedRegistered()
 	end
 
 	local edgeCount = 0
