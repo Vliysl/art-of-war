@@ -318,6 +318,25 @@ function ProvinceStamper.stamp()
 	return stamped
 end
 
+-- Set of EU4 part ids that are currently mapped to some province. Lets the boot
+-- reconciler tell a genuinely un-promoted tile apart from one that already has (or is
+-- about to get) a real seed, so it never creates a duplicate mapping for the same part.
+function ProvinceStamper.mappedPartIds()
+	local set = {}
+	for _, eu4Pid in pairs(EU4_ID_MAP) do
+		set[eu4Pid] = true
+	end
+	return set
+end
+
+-- Link a freshly-registered province to its physical part and stamp it. The province
+-- record must already exist in WorldState; the part is found through the name index that
+-- stamp() built (partLookup is keyed by the prov_<id> token, present for every part).
+function ProvinceStamper.registerProvincePart(provinceId, eu4Pid)
+	EU4_ID_MAP[provinceId] = eu4Pid
+	return stampOne(provinceId)
+end
+
 function ProvinceStamper.refreshEU4Mappings()
 	local services = game:GetService("ServerStorage"):FindFirstChild("Services")
 	local overlayMod = services and services:FindFirstChild("DataOverlay")
@@ -344,6 +363,8 @@ function ProvinceStamper.register(context)
 		setTileOwner = ProvinceStamper.setTileOwner,
 		applyTileOwnership = ProvinceStamper.applyTileOwnership,
 		refreshEU4Mappings = ProvinceStamper.refreshEU4Mappings,
+		mappedPartIds = ProvinceStamper.mappedPartIds,
+		registerProvincePart = ProvinceStamper.registerProvincePart,
 	}
 	ctx.ProvinceStamper = ProvinceStamper.api
 

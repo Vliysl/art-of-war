@@ -66,6 +66,58 @@ local function rebuildSecondaryIndices()
 	totals.tradeGood = good
 end
 
+-- Insert a single province into every index after hydrate has already run, mirroring the
+-- per-record bookkeeping in hydrate + the rebuild passes. Used by the boot reconciler to
+-- enrol provinces it registers from owned-but-unmapped map tiles. Returns false if the
+-- registry has not been hydrated yet.
+local function registerProvince(id, record)
+	if not byOwner or not byArea then
+		return false
+	end
+	local clone = table.clone(record)
+	clone.cores = table.clone(record.cores or {})
+	if clone.goods == nil then
+		local g = {}
+		local tg = clone.tradeGood
+		if tg and tg ~= "" and tg ~= "none" then
+			g[tg] = clone.baseProduction or 0
+		end
+		clone.goods = g
+	else
+		clone.goods = table.clone(clone.goods)
+	end
+	ctx.WorldState.setProvince(id, clone)
+
+	local function push(index, key)
+		if key == nil then
+			return
+		end
+		local bucket = index[key] or {}
+		table.insert(bucket, id)
+		index[key] = bucket
+	end
+	local function bump(counter, key)
+		if key == nil then
+			return
+		end
+		counter[key] = (counter[key] or 0) + 1
+	end
+
+	push(byArea, clone.areaId)
+	push(byRegion, clone.regionId)
+	push(bySuperRegion, clone.superRegionId)
+	push(byOwner, clone.ownerTag)
+	push(byCulture, clone.culture)
+	push(byReligion, clone.religion)
+	push(byTradeGood, clone.tradeGood)
+	ownerOf[id] = clone.ownerTag
+	bump(totals.owner, clone.ownerTag)
+	bump(totals.culture, clone.culture)
+	bump(totals.religion, clone.religion)
+	bump(totals.tradeGood, clone.tradeGood)
+	return true
+end
+
 local function bindOwnershipEvents()
 	ctx.EventBus.subscribe(ctx.Channels.ProvinceOwnershipChanged, function(payload)
 		if not payload or payload.provinceId == nil then return end
@@ -89,6 +141,7 @@ function ProvinceRegistry.register(context)
 		cultureTotals = function() return totals.culture end,
 		religionTotals = function() return totals.religion end,
 		tradeGoodTotals = function() return totals.tradeGood end,
+		registerProvince = registerProvince,
 	}
 	ctx.ProvinceRegistry = ProvinceRegistry.api
 end

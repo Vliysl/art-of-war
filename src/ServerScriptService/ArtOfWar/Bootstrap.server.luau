@@ -192,6 +192,31 @@ if loadedSystems.ProvinceStamper and type(loadedSystems.ProvinceStamper.stamp) =
 	end
 end
 
+-- Reconcile owned-but-unregistered land tiles into real provinces before the adjacency graph is
+-- built, so painted territory that was never promoted to a seed still becomes a movement/economy/
+-- building-eligible province this session. Runs after stamping (owner attributes are settled) and
+-- before AdjacencyGraph.build (which then enrols the freshly stamped province_id parts and, in baked
+-- mode, geometry-links any registered province the baked adjacency table does not cover).
+if context.ProvinceReconciler and type(context.ProvinceReconciler.reconcile) == "function" then
+	local reconcileOk, reconcileReport = pcall(context.ProvinceReconciler.reconcile)
+	if reconcileOk and type(reconcileReport) == "table" then
+		if reconcileReport.found > 0 or reconcileReport.registered > 0 then
+			print(
+				string.format(
+					"[ArtOfWar] province reconciler: %d owned-but-unregistered tile(s) found, %d registered (%d unlinkable, %d already mapped, %d ghost owner)",
+					reconcileReport.found,
+					reconcileReport.registered,
+					reconcileReport.unlinkable,
+					reconcileReport.alreadyMapped,
+					reconcileReport.ghostOwner
+				)
+			)
+		end
+	elseif not reconcileOk then
+		warn("[ArtOfWar] ProvinceReconciler.reconcile errored: " .. tostring(reconcileReport))
+	end
+end
+
 do
 	local overlayModule = ServerStorage:FindFirstChild("Services")
 	overlayModule = overlayModule and overlayModule:FindFirstChild("DataOverlay")
