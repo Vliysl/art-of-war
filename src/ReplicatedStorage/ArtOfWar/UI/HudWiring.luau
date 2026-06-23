@@ -1,4 +1,5 @@
 local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
 
 local UI = script.Parent
 local ArtOfWar = UI.Parent
@@ -660,6 +661,19 @@ function HudWiring.start(modules)
 				ProvinceInteraction.clearSelectionSilent()
 				return
 			end
+			-- A plain (non-command) map click drops any selected army stack, so clicking a province
+			-- or empty tile deselects troops (parallels the X-key deselect). Clicking your OWN army is
+			-- consumed by ArmyView's classifier and never reaches this listener, so this cannot clobber
+			-- a fresh selection.
+			if ArmyView and ArmyView.deselect then
+				local sel = selectedArmies()
+				if sel and #sel > 0 then
+					ArmyView.deselect()
+					if PathPreview and PathPreview.clear then
+						PathPreview.clear()
+					end
+				end
+			end
 			if not part then
 				Hud.closeContext()
 				return
@@ -763,6 +777,28 @@ function HudWiring.start(modules)
 			Hud.openArmyPanel({ armyId = armyId, armyIds = ids, provinceId = provinceId })
 		end)
 	end
+
+	-- X deselects the current army stack (X is otherwise unbound in the live HUD). gameProcessed
+	-- guards typing in TextBoxes so we never steal it from input fields.
+	UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		if gameProcessed then
+			return
+		end
+		if input.KeyCode ~= Enum.KeyCode.X then
+			return
+		end
+		local sel = selectedArmies()
+		if not sel or #sel == 0 then
+			return
+		end
+		if ArmyView and ArmyView.deselect then
+			ArmyView.deselect()
+		end
+		Hud.closeContext()
+		if PathPreview and PathPreview.clear then
+			PathPreview.clear()
+		end
+	end)
 
 	claimedTag = resolveTag()
 	Hud.setContext({ tag = claimedTag })

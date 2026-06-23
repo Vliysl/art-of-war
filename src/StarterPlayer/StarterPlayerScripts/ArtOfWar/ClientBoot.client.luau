@@ -42,6 +42,7 @@ local ChatCommands        = safeRequire("ChatCommands")
 local ArmyView            = safeRequire("ArmyView")
 local CombatView          = safeRequire("CombatView")
 local SimClock            = safeRequire("SimClock")
+local MoveArrowView       = safeRequire("MoveArrowView")
 
 local map = workspace:WaitForChild("ArtOfWarMap", 120)
 local provinces = map and map:WaitForChild("Provinces", 120)
@@ -225,6 +226,7 @@ end)
 safeCall(ProvinceInteraction, "init")
 safeCall(ArmyView, "init")
 safeCall(CombatView, "init")
+safeCall(MoveArrowView, "init")
 
 if Remotes then
 	local Command = Remotes:FindFirstChild("Command")

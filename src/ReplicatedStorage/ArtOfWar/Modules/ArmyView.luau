@@ -10,7 +10,7 @@ local aow = ReplicatedStorage:WaitForChild("ArtOfWar")
 local ClientStateCache = require(aow.Modules:WaitForChild("ClientStateCache"))
 local ProvinceInteraction = require(aow.Modules:WaitForChild("ProvinceInteraction"))
 local MapModeController = require(aow.Modules:WaitForChild("MapModeController"))
-local Countries = require(aow:WaitForChild("Data"):WaitForChild("Countries"))
+local CameraController = require(aow.Modules:WaitForChild("CameraController"))
 
 local STATE_ICON = {
 	idle = "",
@@ -68,14 +68,6 @@ local RETREAT_LIFT = 6
 local HOP_TIME = 0.35
 local HOP_ARC = 7
 
--- On-map vitals strip normalization + tier colouring (matches ArmyPanel's bars).
-local ARMY_MORALE_MAX = 100
-local function tierColor(pct)
-	if pct >= 0.6 then return Color3.fromRGB(110, 180, 80) end   -- green
-	if pct >= 0.3 then return Color3.fromRGB(214, 178, 70) end   -- amber
-	return Color3.fromRGB(200, 70, 56)                            -- red
-end
-
 -- Reduced sizes — disc fits comfortably inside an ~86-stud province.
 -- The Base cylinder is laid flat: Cylinder shape's axis is along its X-axis.
 -- We bake CFrame.Angles(0,0,pi/2) into Base's offset so it lies flat.
@@ -91,6 +83,9 @@ local BB_STUDS_OFFSET = Vector3.new(0, BASE_SIZE.X + POLE_SIZE.Y + 8, 0)
 
 -- Module state
 local armyParts = {}
+local labelRefs = {} -- [armyId] = { bb = BillboardGui, scale = UIScale } cached so the per-frame size
+-- pass avoids FindFirstChild; populated lazily, cleared in destroyModelFor / ArmyView.destroy.
+local lastLabelCamCF = nil -- camera CFrame the label-size pass last ran for (skip recompute when still)
 local animTracks = {}                -- [armyId] = { Idle, Walk, Shoot, Reload }  AnimationTrack table
 local animState = {}                 -- [armyId] = currently-playing state name (cached to avoid restarting tracks)
 local combatAnimConns = {}           -- [armyId] = { shoot = conn, reload = conn }  signal handles for the shoot/reload loop
@@ -109,7 +104,7 @@ local mapFolder = nil
 local provincesFolder = nil
 local heartbeatConn = nil
 local renderConn = nil
-local stateSub, battleSub, countriesSub, snapshotSub
+local stateSub, battleSub, countriesSub, snapshotSub, provinceSub
 local cameraSub
 local cameraMode = "field"
 local onArmySelectedListeners = {}
@@ -190,20 +185,6 @@ local function getOwnerColor(ownerTag)
 	return FACTION_FALLBACK
 end
 
-local function getOwnerName(ownerTag)
-	if not ownerTag then return "?" end
-	local country = ClientStateCache.getCountry and ClientStateCache.getCountry(ownerTag)
-	if country then
-		local named = country.displayName or country.name
-		if type(named) == "string" and named ~= "" then return named end
-	end
-	local static = Countries[ownerTag]
-	if static and type(static.displayName) == "string" and static.displayName ~= "" then
-		return static.displayName
-	end
-	return tostring(ownerTag)
-end
-
 local function dominantUnit(army)
 	if not army or not army.composition then return nil, 0 end
 	local bestId, bestCount = nil, 0
@@ -275,6 +256,7 @@ local function destroyModelFor(armyId)
 	local model = armyParts[armyId]
 	if model and model.Parent then model:Destroy() end
 	armyParts[armyId] = nil
+	labelRefs[armyId] = nil
 	lastKnownState[armyId] = nil
 	hopState[armyId] = nil
 	lastFacing[armyId] = nil
@@ -285,126 +267,281 @@ local function destroyModelFor(armyId)
 	selectedArmyIds[armyId] = nil
 end
 
--- Sleek serif banner. Single-line text "[TAG] UnitName (#Count)". No corners, thin
--- bottom-rule in the faction color, near-flat dark plate. Adornee/offset/parent are caller-supplied.
-local function buildBannerGui(adornee, studsOffset, factionColor)
+-- Men-per-regiment + the overhead count formatter: full numbers with a SPACE thousands-separator
+-- ("1 000", "250 000" -- no comma/dot, region-safe), switching to "M" only at >= 1,000,000.
+local REGIMENT_STRENGTH = 1000
+local function abbrevMen(n)
+	n = math.floor((n or 0) + 0.5)
+	if n >= 1e6 then
+		local s = (string.format("%.1f", n / 1e6):gsub("%.0$", ""))
+		return s .. "M"
+	end
+	return (tostring(n):reverse():gsub("(%d%d%d)", "%1 "):reverse():gsub("^%s+", ""))
+end
+
+-- Shared overhead palette/fonts: match the in-world city/battle labels (Garamond serif, dark plate,
+-- brown hairline, gold accents). FACE_COUNT/FACE_TAG mirror UIStyle.FontFace.CinzelBold/Cinzel.
+local OVH_PLATE = Color3.fromRGB(18, 12, 8)
+local OVH_HAIRLINE = Color3.fromRGB(60, 40, 22)
+local OVH_CREAM = Color3.fromRGB(248, 240, 218)
+local OVH_SHOVEL = Color3.fromRGB(232, 196, 120)
+local FACE_COUNT = Font.new("rbxasset://fonts/families/Garamond.json", Enum.FontWeight.Heavy, Enum.FontStyle.Normal)
+local FACE_TAG = Font.new("rbxasset://fonts/families/Garamond.json", Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+local FACE_TAG_MONO = Font.new("rbxasset://fonts/families/RobotoMono.json", Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+local OVH_BORDER = Color3.fromRGB(58, 47, 31) -- province-panel CountryBadge subtle border
+local OVH_TAGWHITE = Color3.fromRGB(245, 241, 232) -- province-panel CountryBadge tag colour
+local BANNER_SCALE = 0.85 -- constant on-screen label size (keeps aspect ratio); the size knob
+-- Ornamental corner brackets for the count box: the game's button-corner assets (UIAssets.Btn.Bracket
+-- TL/TR/BL/BR), rendered at NATIVE colour like UIBuilder's secondaryButton (tinting them killed them on
+-- the dark plate). { assetId, anchor }.
+local CORNER_INSET = 2
+local CORNER_BRACKETS = {
+	{ "rbxassetid://101772359800958", Vector2.new(0, 0) },
+	{ "rbxassetid://91624005154949", Vector2.new(1, 0) },
+	{ "rbxassetid://81066501291130", Vector2.new(0, 1) },
+	{ "rbxassetid://139060617878581", Vector2.new(1, 1) },
+}
+-- A Roblox BillboardGui with an Offset Size GROWS on-screen as the camera gets farther (the "too big
+-- when zoomed out" quirk). To hold a CONSTANT on-screen size we counter it every frame: scale the label
+-- by LABEL_REF_DISTANCE / (camera->army distance). Labels also hide past LABEL_HIDE_ZOOM for a clean
+-- zoomed-out map. BANNER_DESIGN_W/H = base px; LABEL_REF_DISTANCE calibrates the constant size.
+local BANNER_DESIGN_W = 204
+local BANNER_DESIGN_H = 60
+local LABEL_REF_DISTANCE = 400 -- camera distance at which the label is BANNER_SCALE size (the size knob)
+local LABEL_HIDE_ZOOM = 11000
+
+-- Overhead banner (Rise-of-Nations style), laid out as three adjacent elements:
+--   [ crest panel ]  [ dark count box ]   shovel
+-- with a thin capture bar directly below the count box. The crest is its OWN panel (not inside the
+-- box). "Bg" is a transparent container kept ONLY so reconcileOne's bg:FindFirstChild lookups still
+-- resolve; CountLabel/EntShovel/EntValue/CaptureTrack are direct children of it (siblings of the box)
+-- so those lookups are unchanged. reconcileOne fills crest colour/tag, the count, the shovel and the
+-- capture bar by element name. Adornee/offset/parent are caller-supplied.
+local function buildBannerGui(adornee, studsOffset, _factionColor)
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "Label"
 	bb.Adornee = adornee
-	bb.Size = UDim2.fromOffset(220, 42)
+	bb.Size = UDim2.fromOffset(math.floor(BANNER_DESIGN_W * BANNER_SCALE + 0.5), math.floor(BANNER_DESIGN_H * BANNER_SCALE + 0.5))
 	bb.StudsOffset = studsOffset
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
 	bb.MaxDistance = 0
 	bb.Enabled = false
 
+	-- Transparent container (NOT a plate). Name "Bg" preserved for reconcileOne's lookups.
 	local bg = Instance.new("Frame")
 	bg.Name = "Bg"
 	bg.Size = UDim2.fromScale(1, 1)
-	bg.BackgroundColor3 = Color3.fromRGB(18, 12, 8)
-	bg.BackgroundTransparency = 0.18
+	bg.BackgroundTransparency = 1
 	bg.BorderSizePixel = 0
 	bg.Parent = bb
 
-	-- Thin faction-colored rule along the bottom edge (period flair, no corners).
-	local rule = Instance.new("Frame")
-	rule.Name = "Rule"
-	rule.AnchorPoint = Vector2.new(0, 1)
-	rule.Position = UDim2.new(0, 0, 1, 0)
-	rule.Size = UDim2.new(1, 0, 0, 1)
-	rule.BackgroundColor3 = factionColor
-	rule.BackgroundTransparency = 0
-	rule.BorderSizePixel = 0
-	rule.Parent = bg
+	-- Shrink the whole label uniformly (keeps aspect ratio); child offsets stay in the 204×56 design
+	-- space and UIScale maps them into the (scaled) BillboardGui canvas.
+	local uiScale = Instance.new("UIScale")
+	uiScale.Scale = BANNER_SCALE
+	uiScale.Parent = bg
 
-	-- Subtle outer hairline so the plate reads against any background.
-	local stroke = Instance.new("UIStroke")
-	stroke.Name = "Hairline"
-	stroke.Color = Color3.fromRGB(60, 40, 22)
-	stroke.Thickness = 1
-	stroke.Transparency = 0.35
-	stroke.Parent = bg
+	-- ── Crest panel (left, its own panel) ──────────────────────────────────────────────────────
+	local crest = Instance.new("Frame")
+	crest.Name = "Crest"
+	crest.Position = UDim2.fromOffset(2, 2)
+	crest.Size = UDim2.fromOffset(44, 44)
+	crest.BackgroundColor3 = Color3.fromRGB(60, 60, 60) -- recoloured (vivid) per-owner by reconcileOne
+	crest.BorderSizePixel = 0
+	crest.ZIndex = 2
+	crest.Parent = bg
+	local crestCorner = Instance.new("UICorner")
+	crestCorner.CornerRadius = UDim.new(0, 4)
+	crestCorner.Parent = crest
+	-- Subtle dark border, matching the province-panel CountryBadge (static, not gold, not recoloured).
+	local crestStroke = Instance.new("UIStroke")
+	crestStroke.Name = "AccentStroke"
+	crestStroke.Color = OVH_BORDER
+	crestStroke.Thickness = 1
+	crestStroke.Transparency = 0.5
+	crestStroke.Parent = crest
+	-- Future coat-of-arms: set CrestImage.Image to an asset id and it covers the colour+tag.
+	local crestImg = Instance.new("ImageLabel")
+	crestImg.Name = "CrestImage"
+	crestImg.Size = UDim2.fromScale(1, 1)
+	crestImg.BackgroundTransparency = 1
+	crestImg.Image = ""
+	crestImg.ScaleType = Enum.ScaleType.Crop
+	crestImg.ZIndex = 4
+	crestImg.Parent = crest
+	local crestImgCorner = Instance.new("UICorner")
+	crestImgCorner.CornerRadius = UDim.new(0, 4)
+	crestImgCorner.Parent = crestImg
+	-- Tag matches the province-panel badge: white RobotoMono, fixed size, centred (NOT TextScaled).
+	local crestTag = Instance.new("TextLabel")
+	crestTag.Name = "CrestTag"
+	crestTag.Size = UDim2.fromScale(1, 1)
+	crestTag.BackgroundTransparency = 1
+	crestTag.Text = ""
+	crestTag.TextColor3 = OVH_TAGWHITE
+	crestTag.FontFace = FACE_TAG_MONO
+	crestTag.TextSize = 16
+	crestTag.TextStrokeTransparency = 0.5
+	crestTag.TextStrokeColor3 = Color3.fromRGB(10, 8, 6)
+	crestTag.ZIndex = 5
+	crestTag.Parent = crest
 
-	-- Compact state pip on the right edge (drawn but blank by default; reconcileOne fills it).
-	local stateIcon = Instance.new("TextLabel")
-	stateIcon.Name = "StateIcon"
-	stateIcon.AnchorPoint = Vector2.new(1, 0.5)
-	stateIcon.Position = UDim2.new(1, -6, 0.5, 0)
-	stateIcon.Size = UDim2.fromOffset(16, 16)
-	stateIcon.BackgroundTransparency = 1
-	stateIcon.Text = ""
-	stateIcon.TextColor3 = Color3.fromRGB(206, 180, 120)
-	stateIcon.TextScaled = true
-	stateIcon.Font = Enum.Font.GothamBold
-	stateIcon.TextStrokeTransparency = 0
-	stateIcon.TextStrokeColor3 = Color3.fromRGB(20, 12, 8)
-	stateIcon.Parent = bg
+	-- ── Count box (dark plate, centre) ─────────────────────────────────────────────────────────
+	local box = Instance.new("Frame")
+	box.Name = "CountBox"
+	box.Position = UDim2.fromOffset(54, 2)
+	box.Size = UDim2.fromOffset(114, 44)
+	box.BackgroundColor3 = OVH_PLATE
+	box.BackgroundTransparency = 0.12
+	box.BorderSizePixel = 0
+	box.ZIndex = 1
+	box.Parent = bg
+	local boxCorner = Instance.new("UICorner")
+	boxCorner.CornerRadius = UDim.new(0, 4)
+	boxCorner.Parent = box
+	local boxStroke = Instance.new("UIStroke")
+	boxStroke.Color = OVH_HAIRLINE
+	boxStroke.Thickness = 1
+	boxStroke.Transparency = 0.3
+	boxStroke.Parent = box
+	local boxSheen = Instance.new("Frame")
+	boxSheen.Name = "Sheen"
+	boxSheen.Size = UDim2.fromScale(1, 1)
+	boxSheen.BackgroundColor3 = Color3.fromRGB(255, 240, 210)
+	boxSheen.BorderSizePixel = 0
+	boxSheen.ZIndex = 1
+	boxSheen.Parent = box
+	local boxSheenCorner = Instance.new("UICorner")
+	boxSheenCorner.CornerRadius = UDim.new(0, 4)
+	boxSheenCorner.Parent = boxSheen
+	local boxGrad = Instance.new("UIGradient")
+	boxGrad.Rotation = 90
+	boxGrad.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.86),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	boxGrad.Parent = boxSheen
 
-	-- Single-line caption: "[TAG] UnitType (#Count)" in serif.
-	local caption = Instance.new("TextLabel")
-	caption.Name = "UnitName"  -- name kept so reconcileOne :FindFirstChild("UnitName") still works
-	caption.Size = UDim2.new(1, -28, 0, 22)  -- top row; bottom reserved for the vitals strip
-	caption.Position = UDim2.fromOffset(8, 0)
-	caption.BackgroundTransparency = 1
-	caption.Text = ""
-	caption.TextColor3 = Color3.fromRGB(234, 216, 176)
-	caption.Font = Enum.Font.Garamond  -- serif; matches UIStyle.FontFace.Cinzel which aliases to Garamond
-	caption.TextSize = 16
-	caption.TextXAlignment = Enum.TextXAlignment.Left
-	caption.TextYAlignment = Enum.TextYAlignment.Center
-	caption.TextStrokeTransparency = 0.2
-	caption.TextStrokeColor3 = Color3.fromRGB(20, 12, 8)
-	caption.TextTruncate = Enum.TextTruncate.AtEnd
-	caption.Parent = bg
+	-- Ornamental corner brackets on the count box (native gold; the game's button-corner ornaments).
+	for _, c in ipairs(CORNER_BRACKETS) do
+		local a = c[2]
+		local brk = Instance.new("ImageLabel")
+		brk.Name = "Corner"
+		brk.BackgroundTransparency = 1
+		brk.Image = c[1]
+		brk.ScaleType = Enum.ScaleType.Fit
+		brk.Size = UDim2.fromOffset(12, 12)
+		brk.AnchorPoint = a
+		brk.Position =
+			UDim2.new(a.X, a.X == 0 and CORNER_INSET or -CORNER_INSET, a.Y, a.Y == 0 and CORNER_INSET or -CORNER_INSET)
+		brk.ZIndex = box.ZIndex + 4
+		brk.Parent = box
+	end
 
-	-- Legacy "Count" sibling kept as an empty no-op so any code that expects it doesn't crash.
-	local countLine = Instance.new("TextLabel")
-	countLine.Name = "Count"
-	countLine.Size = UDim2.fromScale(0, 0)
-	countLine.BackgroundTransparency = 1
-	countLine.Text = ""
-	countLine.Visible = false
-	countLine.Parent = bg
-
-	-- Vitals strip: stacked mini-bars (organization / morale / entrenchment),
-	-- updated by reconcileOne. Found by name, like UnitName/StateIcon.
-	local function miniBar(name, yOff, baseColor)
+	-- Morale (green) + Organization (yellow) thin bars below the count box (reconcileOne fills them).
+	-- Direct children of bg so bg:FindFirstChild resolves MoraleFill/OrgFill.
+	local function makeBar(name, y, fillColor)
 		local track = Instance.new("Frame")
 		track.Name = name .. "Track"
-		track.Size = UDim2.new(1, -34, 0, 3)
-		track.Position = UDim2.fromOffset(8, yOff)
+		track.Position = UDim2.fromOffset(54, y)
+		track.Size = UDim2.fromOffset(114, 3)
 		track.BackgroundColor3 = Color3.fromRGB(40, 30, 18)
-		track.BackgroundTransparency = 0.25
+		track.BackgroundTransparency = 0.1
 		track.BorderSizePixel = 0
+		track.ZIndex = 2
 		track.Parent = bg
+		local tc = Instance.new("UICorner")
+		tc.CornerRadius = UDim.new(0, 2)
+		tc.Parent = track
 		local fill = Instance.new("Frame")
-		fill.Name = name
+		fill.Name = name .. "Fill"
 		fill.Size = UDim2.fromScale(0, 1)
-		fill.BackgroundColor3 = baseColor
+		fill.BackgroundColor3 = fillColor
 		fill.BorderSizePixel = 0
+		fill.ZIndex = 3
 		fill.Parent = track
-		return fill
+		local fc = Instance.new("UICorner")
+		fc.CornerRadius = UDim.new(0, 2)
+		fc.Parent = fill
 	end
-	miniBar("OrgFill", 24, Color3.fromRGB(120, 180, 90))
-	miniBar("MoraleFill", 29, Color3.fromRGB(120, 180, 90))
-	miniBar("EntFill", 34, Color3.fromRGB(218, 168, 84))
+	makeBar("Morale", 47, Color3.fromRGB(90, 170, 80))
+	makeBar("Org", 51, Color3.fromRGB(220, 180, 70))
 
-	-- Supply pip (right of the bars): hidden when adequate, amber crowded, red starving.
-	local supplyPip = Instance.new("TextLabel")
-	supplyPip.Name = "SupplyPip"
-	supplyPip.AnchorPoint = Vector2.new(1, 1)
-	supplyPip.Position = UDim2.new(1, -6, 1, -2)
-	supplyPip.Size = UDim2.fromOffset(18, 14)
-	supplyPip.BackgroundTransparency = 1
-	supplyPip.Text = ""
-	supplyPip.TextColor3 = Color3.fromRGB(220, 176, 80)
-	supplyPip.Font = Enum.Font.GothamBold
-	supplyPip.TextSize = 12
-	supplyPip.TextStrokeTransparency = 0
-	supplyPip.TextStrokeColor3 = Color3.fromRGB(20, 12, 8)
-	supplyPip.Parent = bg
+	-- CountLabel sits ON the box but is a sibling of it (direct child of Bg) so reconcileOne's
+	-- bg:FindFirstChild("CountLabel") still resolves; higher ZIndex keeps it above the plate.
+	local count = Instance.new("TextLabel")
+	count.Name = "CountLabel"
+	count.Position = UDim2.fromOffset(54, 2)
+	count.Size = UDim2.fromOffset(114, 44)
+	count.BackgroundTransparency = 1
+	count.Text = ""
+	count.TextColor3 = OVH_CREAM
+	count.FontFace = FACE_COUNT
+	count.TextSize = 26
+	count.TextXAlignment = Enum.TextXAlignment.Center
+	count.TextYAlignment = Enum.TextYAlignment.Center
+	count.TextStrokeTransparency = 0.25
+	count.TextStrokeColor3 = OVH_PLATE
+	count.ZIndex = 4
+	count.Parent = bg
 
-	return bb, bg, stateIcon, caption
+	-- Capture progress bar directly below the count box (hidden until occupying).
+	local capTrack = Instance.new("Frame")
+	capTrack.Name = "CaptureTrack"
+	capTrack.Position = UDim2.fromOffset(54, 55)
+	capTrack.Size = UDim2.fromOffset(114, 3)
+	capTrack.BackgroundColor3 = Color3.fromRGB(44, 32, 18)
+	capTrack.BackgroundTransparency = 0.1
+	capTrack.BorderSizePixel = 0
+	capTrack.Visible = false
+	capTrack.ZIndex = 2
+	capTrack.Parent = bg
+	local capCorner = Instance.new("UICorner")
+	capCorner.CornerRadius = UDim.new(0, 2)
+	capCorner.Parent = capTrack
+	local capFill = Instance.new("Frame")
+	capFill.Name = "CaptureFill"
+	capFill.Size = UDim2.fromScale(0, 1)
+	capFill.BackgroundColor3 = Color3.fromRGB(235, 196, 90)
+	capFill.BorderSizePixel = 0
+	capFill.ZIndex = 3
+	capFill.Parent = capTrack
+	local capFillCorner = Instance.new("UICorner")
+	capFillCorner.CornerRadius = UDim.new(0, 2)
+	capFillCorner.Parent = capFill
+
+	-- ── Entrenchment: shovel glyph over its level, to the RIGHT of the box (hidden at 0) ─────────
+	local entIcon = Instance.new("TextLabel")
+	entIcon.Name = "EntShovel"
+	entIcon.Position = UDim2.fromOffset(172, 4)
+	entIcon.Size = UDim2.fromOffset(28, 24)
+	entIcon.BackgroundTransparency = 1
+	entIcon.Text = "\u{26CF}"
+	entIcon.TextColor3 = OVH_SHOVEL
+	entIcon.TextScaled = true
+	entIcon.TextStrokeTransparency = 0.4
+	entIcon.TextStrokeColor3 = Color3.fromRGB(16, 10, 6)
+	entIcon.Visible = false
+	entIcon.ZIndex = 2
+	entIcon.Parent = bg
+	local entVal = Instance.new("TextLabel")
+	entVal.Name = "EntValue"
+	entVal.Position = UDim2.fromOffset(172, 27)
+	entVal.Size = UDim2.fromOffset(28, 16)
+	entVal.BackgroundTransparency = 1
+	entVal.Text = ""
+	entVal.TextColor3 = OVH_SHOVEL
+	entVal.FontFace = FACE_TAG
+	entVal.TextSize = 14
+	entVal.TextXAlignment = Enum.TextXAlignment.Center
+	entVal.TextStrokeTransparency = 0.4
+	entVal.TextStrokeColor3 = Color3.fromRGB(16, 10, 6)
+	entVal.Visible = false
+	entVal.ZIndex = 2
+	entVal.Parent = bg
+
+	return bb
 end
 
 local function buildBannerPinModel(armyId, factionColor)
@@ -871,11 +1008,18 @@ local function reconcileOne(armyId)
 		-- Musketeer parts
 		local shako = model:FindFirstChild("Shako")
 		if shako then shako.Color = applied end
-		-- Banner stroke (works for both model types since Label is parented to Pole or Head)
+		-- Crest (works for both model types since Label is parented to Pole or Head): tint the plate
+		-- from the owner colour and stamp the 3-letter country tag.
 		local label = (model:FindFirstChild("Pole") and model.Pole:FindFirstChild("Label"))
 			or (model:FindFirstChild("Head") and model.Head:FindFirstChild("Label"))
-		local stroke = label and label:FindFirstChild("Bg") and label.Bg:FindFirstChild("AccentStroke")
-		if stroke then stroke.Color = color end
+		local crest = label and label:FindFirstChild("Bg") and label.Bg:FindFirstChild("Crest")
+		if crest then
+			-- Match the province-panel CountryBadge: HSV-darkened country colour.
+			local h, s, v = Color3.toHSV(color)
+			crest.BackgroundColor3 = Color3.fromHSV(h, math.min(s, 0.6), math.min(v, 0.35))
+			local tagLbl = crest:FindFirstChild("CrestTag")
+			if tagLbl then tagLbl.Text = string.upper(tostring(army.ownerTag or "")) end
+		end
 	end
 
 	-- Banner content: unit type + count, and total stack count if multiple armies
@@ -887,13 +1031,14 @@ local function reconcileOne(armyId)
 	local stack = stackInfo[key]
 	local stackExtra = stack and #stack.armyIds > 1 and (" +" .. (#stack.armyIds - 1)) or ""
 
-	if newlyCreated or last.unitName ~= nameText or last.count ~= count or last.stackExtra ~= stackExtra then
+	if newlyCreated or last.count ~= count or last.stackExtra ~= stackExtra then
 		local label = (model:FindFirstChild("Pole") and model.Pole:FindFirstChild("Label"))
 			or (model:FindFirstChild("Head") and model.Head:FindFirstChild("Label"))
 		local bg = label and label:FindFirstChild("Bg")
-		local caption = bg and bg:FindFirstChild("UnitName")
-		if caption then
-			caption.Text = string.format("%s · %s (%d%s)", getOwnerName(army.ownerTag), nameText, count, stackExtra)
+		local countLbl = bg and bg:FindFirstChild("CountLabel")
+		if countLbl then
+			local menText = abbrevMen(count * REGIMENT_STRENGTH)
+			countLbl.Text = (stackExtra ~= "") and (menText .. stackExtra) or menText
 		end
 	end
 
@@ -913,36 +1058,49 @@ local function reconcileOne(armyId)
 		setAnimState(armyId, state)
 	end
 
-	-- On-map vitals strip: org / morale / entrenchment mini-bars + supply pip.
-	-- Cheap (a few Size/Color writes); refreshed every reconcile so it tracks deltas.
+	-- On-map overhead extras: entrenchment as a shovel glyph + level, and the capture progress bar.
+	-- Cheap (a few writes); refreshed every reconcile so both track live deltas.
 	do
 		local vlabel = (model:FindFirstChild("Pole") and model.Pole:FindFirstChild("Label"))
 			or (model:FindFirstChild("Head") and model.Head:FindFirstChild("Label"))
 		local vbg = vlabel and vlabel:FindFirstChild("Bg")
 		if vbg then
-			local orgTrack = vbg:FindFirstChild("OrgFillTrack")
-			local moraleTrack = vbg:FindFirstChild("MoraleFillTrack")
-			local entTrack = vbg:FindFirstChild("EntFillTrack")
-			local orgFill = orgTrack and orgTrack:FindFirstChild("OrgFill")
+			-- Entrenchment: shovel + level, hidden at 0.
+			local entIcon = vbg:FindFirstChild("EntShovel")
+			local entVal = vbg:FindFirstChild("EntValue")
+			local entLevel = math.floor(army.entrenchment or 0)
+			if entIcon then entIcon.Visible = entLevel > 0 end
+			if entVal then
+				entVal.Visible = entLevel > 0
+				entVal.Text = tostring(entLevel)
+			end
+
+			-- Morale (green) + Organization (yellow) bars below the box.
+			local moraleTrack = vbg:FindFirstChild("MoraleTrack")
 			local moraleFill = moraleTrack and moraleTrack:FindFirstChild("MoraleFill")
-			local entFill = entTrack and entTrack:FindFirstChild("EntFill")
-			local supplyPip = vbg:FindFirstChild("SupplyPip")
-			local baseOrg = army.baseOrganization or 10
-			local orgPct = baseOrg > 0 and math.clamp((army.organization or baseOrg) / baseOrg, 0, 1) or 0
-			local moralePct = math.clamp((army.morale or 0) / ARMY_MORALE_MAX, 0, 1)
-			local entMax = army.entrenchmentMax or 5
-			local entPct = entMax > 0 and math.clamp((army.entrenchment or 0) / entMax, 0, 1) or 0
-			if orgFill then orgFill.Size = UDim2.fromScale(orgPct, 1); orgFill.BackgroundColor3 = tierColor(orgPct) end
-			if moraleFill then moraleFill.Size = UDim2.fromScale(moralePct, 1); moraleFill.BackgroundColor3 = tierColor(moralePct) end
-			if entFill then entFill.Size = UDim2.fromScale(entPct, 1) end
-			if supplyPip then
-				local s = army.supplyStatus
-				if s == "starving" then
-					supplyPip.Text = "\u{26A0}"; supplyPip.TextColor3 = Color3.fromRGB(230, 70, 60)
-				elseif s == "crowded" then
-					supplyPip.Text = "\u{26A0}"; supplyPip.TextColor3 = Color3.fromRGB(230, 180, 80)
+			if moraleFill then
+				moraleFill.Size = UDim2.fromScale(math.clamp((army.morale or 0) / 100, 0, 1), 1)
+			end
+			local orgTrack = vbg:FindFirstChild("OrgTrack")
+			local orgFill = orgTrack and orgTrack:FindFirstChild("OrgFill")
+			if orgFill then
+				local baseOrg = army.baseOrganization or 10
+				orgFill.Size = UDim2.fromScale(math.clamp((army.organization or baseOrg) / baseOrg, 0, 1), 1)
+			end
+
+			-- Capture progress: shown while this army is the occupier of its current province.
+			local capTrack = vbg:FindFirstChild("CaptureTrack")
+			local capFill = capTrack and capTrack:FindFirstChild("CaptureFill")
+			if capTrack then
+				local prov = ClientStateCache.getProvince(army.provinceId)
+				local occ = prov and prov.occupation
+				if occ and occ.byTag == army.ownerTag and (occ.required or 0) > 0 then
+					capTrack.Visible = true
+					if capFill then
+						capFill.Size = UDim2.fromScale(math.clamp((occ.progress or 0) / occ.required, 0, 1), 1)
+					end
 				else
-					supplyPip.Text = ""
+					capTrack.Visible = false
 				end
 			end
 		end
@@ -1186,6 +1344,18 @@ function ArmyView.init()
 		-- country fields (color, display name) -- read fresh on (re)build / owner change -- and the
 		-- snapshot sub below covers initial load, so country churn no longer forces a full army
 		-- reconcile each replication tick.
+
+		-- Province changes (e.g. siege occupation progress) live on the PROVINCE record, not the
+		-- army, so without this the overhead capture bar would go stale. Mark the armies standing on
+		-- the changed province dirty so reconcileOne re-reads province.occupation for the bar.
+		provinceSub = ClientStateCache.onChangePrefix("provinces", function(_, path)
+			local idStr = path and path:match("^provinces%.([^%.]+)")
+			local pid = idStr and tonumber(idStr)
+			if not pid then return end
+			for armyId, army in pairs(ClientStateCache.allArmies()) do
+				if army.provinceId == pid then dirtyArmies[armyId] = true end
+			end
+		end)
 	end
 
 	if ClientStateCache.onChange then
@@ -1210,6 +1380,51 @@ function ArmyView.init()
 	end)
 
 	renderConn = RunService.RenderStepped:Connect(function()
+		-- Constant on-screen label size: an Offset-Size BillboardGui grows as the camera moves away, so we
+		-- counter it by scaling the label INVERSELY with the camera->army distance (no clamp -- a clamp
+		-- would let it drift at the zoom extremes); labels hide past LABEL_HIDE_ZOOM. Efficiency: the
+		-- BillboardGui/UIScale refs are cached per army (no per-frame FindFirstChild), only the cheap
+		-- Enabled flag is written each frame, and the size recompute (GetPivot + Size) runs ONLY when the
+		-- camera actually moved (distances don't change otherwise) or a label is newly built.
+		do
+			local cam = workspace.CurrentCamera
+			local zoom = CameraController.getZoom and CameraController.getZoom()
+			if cam and type(zoom) == "number" then
+				local camCF = cam.CFrame
+				local camMoved = camCF ~= lastLabelCamCF
+				lastLabelCamCF = camCF
+				local camPos = camCF.Position
+				local visible = zoom <= LABEL_HIDE_ZOOM
+				for armyId, model in pairs(armyParts) do
+					local refs = labelRefs[armyId]
+					local isNew = refs == nil
+					if isNew then
+						local label = (model:FindFirstChild("Pole") and model.Pole:FindFirstChild("Label"))
+							or (model:FindFirstChild("Head") and model.Head:FindFirstChild("Label"))
+						if label then
+							local lbg = label:FindFirstChild("Bg")
+							refs = { bb = label, scale = lbg and lbg:FindFirstChildOfClass("UIScale") }
+							labelRefs[armyId] = refs
+						end
+					end
+					if refs then
+						refs.bb.Enabled = visible -- cheap; every frame so it overrides reconcile's enable
+						if visible and (camMoved or isNew) then
+							local dist = math.max((camPos - model:GetPivot().Position).Magnitude, 1)
+							local f = BANNER_SCALE * LABEL_REF_DISTANCE / dist
+							if refs.scale then
+								refs.scale.Scale = f
+							end
+							refs.bb.Size = UDim2.fromOffset(
+								math.floor(BANNER_DESIGN_W * f + 0.5),
+								math.floor(BANNER_DESIGN_H * f + 0.5)
+							)
+						end
+					end
+				end
+			end
+		end
+
 		if not next(hopState) then return end
 		local now = os.clock()
 		for armyId, hop in pairs(hopState) do
@@ -1249,6 +1464,7 @@ function ArmyView.destroy()
 	if battleSub then battleSub() end
 	if countriesSub then countriesSub() end
 	if snapshotSub then snapshotSub() end
+	if provinceSub then provinceSub() end
 	if cameraSub then cameraSub() end
 	for _, model in pairs(armyParts) do
 		if model.Parent then model:Destroy() end
@@ -1261,6 +1477,8 @@ function ArmyView.destroy()
 		end
 	end
 	armyParts = {}
+	labelRefs = {}
+	lastLabelCamCF = nil
 	lastKnownState = {}
 	dirtyArmies = {}
 	hopState = {}

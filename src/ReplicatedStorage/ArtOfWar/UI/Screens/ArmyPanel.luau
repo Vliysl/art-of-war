@@ -424,6 +424,10 @@ function ArmyPanel.create(ctx)
 			ScreenKit.note(body, "No regiments in this army.", 21)
 		end
 
+		-- Right-click is now the combat/move verb (the redundant Attack button was removed): moving
+		-- onto an adjacent at-war enemy tile auto-engages on arrival via CombatSystem.onArmyArrival.
+		ScreenKit.note(body, "Right-click a tile to move \u{00B7} an adjacent enemy to attack.", 39)
+
 		local actions = Instance.new("Frame")
 		actions.Name = "Actions"
 		actions.Size = UDim2.new(1, 0, 0, 0)
@@ -446,15 +450,6 @@ function ArmyPanel.create(ctx)
 			return b
 		end
 
-		addAction("Attack", "danger", function()
-			if ctx.requestTarget then
-				ctx.requestTarget({
-					kind = "attackProvince",
-					armyId = activeArmyId,
-					hint = "Click an enemy province to attack.",
-				})
-			end
-		end)
 		addAction("Reinforce", "secondary", function()
 			if ctx.requestTarget then
 				ctx.requestTarget({
@@ -464,6 +459,17 @@ function ArmyPanel.create(ctx)
 				})
 			end
 		end)
+		-- Auto Capture toggle: when on, the server walks this army along the frontline capturing the
+		-- nearest reachable enemy/unowned provinces until none remain (see AutoCaptureSystem).
+		if army.autoCapture then
+			addAction("Stop Capture", "primary", function()
+				ctx.fire("SetAutoCapture", activeArmyId, false)
+			end)
+		else
+			addAction("Auto Capture", "secondary", function()
+				ctx.fire("SetAutoCapture", activeArmyId, true)
+			end)
+		end
 		if army.movement then
 			addAction("Cancel Move", "ghost", function()
 				ctx.fire("CancelMove", activeArmyId)

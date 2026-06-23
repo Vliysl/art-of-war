@@ -1,5 +1,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local MoveArrowRender = require(script.Parent:WaitForChild("MoveArrowRender"))
+
 local PathPreview = {}
 
 local ADJACENCY_THRESHOLD = 300
@@ -200,51 +202,32 @@ local function clearLines()
 	activeLines = {}
 end
 
+local ARROW_WIDTH = 6.5
+local ARROW_THICK = 0.4
+
+-- Draw the route as a chunky flat ground arrow (shaft per leg + chevron head at the destination),
+-- tinted by friendly/hostile/blocked. Replaces the old thin neon line + dots.
 local function renderPath(path, color)
 	clearLines()
 	if not path or #path < 2 then return end
 	if not previewFolder then ensurePreviewFolder() end
 	if not previewFolder then return end
-	for i = 1, #path - 1 do
-		local a = positions[path[i]]
-		local b = positions[path[i + 1]]
-		if a and b then
-			local mid = (a + b) * 0.5 + Vector3.new(0, LINE_LIFT, 0)
-			local diff = b - a
-			local dist = diff.Magnitude
-			local part = Instance.new("Part")
-			part.Name = "PathSeg"
-			part.Size = Vector3.new(LINE_THICKNESS, LINE_THICKNESS, dist)
-			part.Color = color
-			part.Material = Enum.Material.Neon
-			part.Anchored = true
-			part.CanCollide = false
-			part.CanTouch = false
-			part.CanQuery = false
-			part.Massless = true
-			part.CastShadow = false
-			part.Transparency = 0.05
-			part.CFrame = CFrame.lookAt(mid, b + Vector3.new(0, LINE_LIFT, 0))
-			part.Parent = previewFolder
-			activeLines[#activeLines + 1] = part
-
-			local dot = Instance.new("Part")
-			dot.Name = "PathDot"
-			dot.Shape = Enum.PartType.Ball
-			dot.Size = Vector3.new(4, 4, 4)
-			dot.Color = color
-			dot.Material = Enum.Material.Neon
-			dot.Anchored = true
-			dot.CanCollide = false
-			dot.CanTouch = false
-			dot.CanQuery = false
-			dot.Massless = true
-			dot.CastShadow = false
-			dot.Transparency = 0.05
-			dot.CFrame = CFrame.new(b + Vector3.new(0, LINE_LIFT, 0))
-			dot.Parent = previewFolder
-			activeLines[#activeLines + 1] = dot
-		end
+	local pts = {}
+	for _, pid in ipairs(path) do
+		local pos = positions[pid]
+		if pos then pts[#pts + 1] = pos + Vector3.new(0, LINE_LIFT, 0) end
+	end
+	if #pts < 2 then return end
+	local parts = MoveArrowRender.buildArrow(pts, {
+		color = color,
+		width = ARROW_WIDTH,
+		thickness = ARROW_THICK,
+		transparency = 0.12,
+	})
+	for _, part in ipairs(parts) do
+		part.Name = "PathArrow"
+		part.Parent = previewFolder
+		activeLines[#activeLines + 1] = part
 	end
 end
 

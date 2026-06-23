@@ -555,6 +555,13 @@ InputValidator.register("CancelMove", {
 	schema = { { name = "armyId", type = "string" } },
 	rate = { count = 20, window = 10 },
 })
+InputValidator.register("SetAutoCapture", {
+	schema = {
+		{ name = "armyId", type = "string" },
+		{ name = "enabled", type = "boolean" },
+	},
+	rate = { count = 20, window = 10 },
+})
 
 InputValidator.register("DeclareWar", {
 	schema = { { name = "targetTag", type = "countryTag" } },
@@ -913,6 +920,17 @@ bindEvent("CancelMove", function(player, armyId)
 	local army = context.WorldState.getArmy(armyId)
 	if not army or army.ownerTag ~= tag then return end
 	system.cancelMovement(armyId, "player_cancelled")
+end)
+
+bindEvent("SetAutoCapture", function(player, armyId, enabled)
+	local auth = authority()
+	local system = loadedSystems.AutoCaptureSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	local army = context.WorldState.getArmy(armyId)
+	if not army or army.ownerTag ~= tag then return end
+	system.setAutoCapture(armyId, enabled)
 end)
 
 bindEvent("AttackProvince", function(player, armyId, targetProvinceId)

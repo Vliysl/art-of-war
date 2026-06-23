@@ -79,6 +79,9 @@ local function tickSiege()
 			local occ = prov.occupation
 			if not occ or occ.byTag ~= tag then occ = { byTag = tag, progress = 0 } end
 			occ.progress += speed
+			-- Replicate the completion threshold so the client can show progress/required as a
+			-- world-space capture bar without knowing WorldConstants.OccupationProgressRequired.
+			occ.required = required
 
 			-- Besieger attrition: forts bleed the besieging army each round.
 			local attr = (C.SiegeAttritionPerRound or 0.01) + fortTier * (C.SiegeAttritionFortScale or 0.004)

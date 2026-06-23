@@ -455,6 +455,52 @@ local function cancelStaleAttackMoves(tagA, tagB)
 	end
 end
 
+-- Nearest province the owner currently CONTROLS, reachable from `fromId` over the land graph.
+-- Plain BFS (no traversability gate): peace just concluded, so we only need a home anchor to
+-- route toward -- beginMovePath re-applies the real traversability/war gating leg by leg.
+local function nearestControlledProvince(ownerTag, fromId)
+	local adj = ctx.AdjacencyGraph
+	if not adj or not adj.getNeighbors then return nil end
+	local visited = { [fromId] = true }
+	local frontier = { fromId }
+	while #frontier > 0 do
+		local nextFrontier = {}
+		for _, cur in ipairs(frontier) do
+			for _, n in ipairs(adj.getNeighbors(cur)) do
+				if not visited[n] then
+					visited[n] = true
+					local p = ctx.WorldState.getProvince(n)
+					if p and p.controllerTag == ownerTag then
+						return n
+					end
+					table.insert(nextFrontier, n)
+				end
+			end
+		end
+		frontier = nextFrontier
+	end
+	return nil
+end
+
+-- On peace, send each belligerent's armies that are standing on territory they do not control
+-- back to their nearest controlled province. Idle/disengaged armies only (battles were already
+-- ended above); if no home is reachable the army is left in place rather than stranded-disbanded.
+local function returnTrespassers(tagA, tagB)
+	if not ctx.MovementSystem or not ctx.MovementSystem.beginMovePath then return end
+	for armyId, army in ctx.WorldState.allArmies() do
+		if not army.battleId and not army.movement and (army.ownerTag == tagA or army.ownerTag == tagB) then
+			local prov = ctx.WorldState.getProvince(army.provinceId)
+			local controller = prov and prov.controllerTag
+			if controller and controller ~= army.ownerTag and controller ~= "" and controller ~= "NONE" then
+				local home = nearestControlledProvince(army.ownerTag, army.provinceId)
+				if home then
+					ctx.MovementSystem.beginMovePath(armyId, home)
+				end
+			end
+		end
+	end
+end
+
 local function endWar(warId, terms)
 	local war = ctx.WorldState.getWar(warId)
 	if not war or war.status ~= "active" then return false, "war_not_active" end
@@ -480,6 +526,10 @@ local function endWar(warId, terms)
 
 	-- 3) Cancel in-flight attack moves
 	cancelStaleAttackMoves(war.attackerTag, war.defenderTag)
+
+	-- 3b) March trespassing armies home (control was finalized by the terms above, so this
+	-- sees the post-peace map). Runs after the cancel so freshly-idled armies are picked up.
+	returnTrespassers(war.attackerTag, war.defenderTag)
 
 	-- 4) Mark war ended
 	war.status = "ended"
