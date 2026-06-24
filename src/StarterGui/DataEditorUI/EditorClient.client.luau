@@ -9,7 +9,6 @@ local screen = script.Parent
 local api = ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Remotes"):WaitForChild("DataEditorAPI")
 
 local ProvinceInteraction
-local ProvinceCodes
 do
 	local aow = ReplicatedStorage:FindFirstChild("ArtOfWar")
 	local modules = aow and aow:FindFirstChild("Modules")
@@ -18,24 +17,12 @@ do
 		local ok, mod = pcall(require, piModule)
 		if ok then ProvinceInteraction = mod end
 	end
-	local pcModule = modules and modules:FindFirstChild("ProvinceCodes")
-	if pcModule then
-		local ok, mod = pcall(require, pcModule)
-		if ok then ProvinceCodes = mod end
-	end
 end
 
+-- Province display label: "[id] Name". The id is the canonical province id — the map part
+-- number (prov_<N>) after the identity collapse. The old cosmetic 5-letter code was removed.
 local function provinceLabel(idOrItem, record)
-	local code
-	if type(record) == "table" and type(record.code) == "string" and record.code ~= "" then
-		code = record.code
-	elseif ProvinceCodes and type(record) == "table" and type(record.name) == "string" then
-		code = ProvinceCodes.fromRecord(record)
-	end
 	local name = (type(record) == "table" and (record.name or record.displayCityName)) or ""
-	if code and code ~= "" then
-		return string.format("[%s] %s", code, name)
-	end
 	return string.format("[%s] %s", tostring(idOrItem), name)
 end
 
@@ -1387,13 +1374,11 @@ local function collectAllMapTiles()
 	for _, part in folder:GetChildren() do
 		if part:IsA("BasePart") then
 			local pretty = prettyTileName(part.Name)
-			local code = part:GetAttribute("province_code")
-				or (ProvinceCodes and ProvinceCodes.fromPartName(part.Name))
-			local display = (code and code ~= "") and ("[" .. code .. "] " .. pretty) or pretty
+			local partId = tonumber(part.Name:match("prov_(%d+)"))
 			list[part.Name] = {
 				partName = part.Name,
-				display  = display,
-				code     = code,
+				display  = partId and ("[" .. partId .. "] " .. pretty) or pretty,
+				partId   = partId,
 				seedId   = part:GetAttribute("province_id"),
 			}
 		end
@@ -1674,7 +1659,7 @@ local function buildProvincesSection(parent, ctx, order)
 			table.insert(pickerOptions, {
 				id = "seed:" .. tostring(id),
 				name = string.format("%s (%s)", provinceLabel(id, prov), ownerLabel),
-				sortKey = tostring(prov.code or prov.name or id):lower(),
+				sortKey = tostring(prov.name or id):lower(),
 			})
 		end
 	end
@@ -2060,10 +2045,9 @@ local function rebuildCountryForm()
 		for _, eu4 in pairs(s.eu4Map) do seededEU4[tostring(eu4)] = true end
 	end
 	for pid, p in pairs(s.provinces) do
-		local code = (p.code and p.code ~= "") and p.code or (ProvinceCodes and ProvinceCodes.fromRecord(p) or "?????")
 		table.insert(capitalOptions, {
 			id = "P:" .. tostring(pid),
-			name = string.format("[%s] %s", code, tostring(p.name or "")),
+			name = string.format("[%s] %s", tostring(pid), tostring(p.name or "")),
 			sortKey = string.format("1_%05d", tonumber(pid) or 0),
 		})
 	end
@@ -2071,10 +2055,9 @@ local function rebuildCountryForm()
 		if not partName or partName == "" or seenCapitalTile[partName] then return end
 		seenCapitalTile[partName] = true
 		local pretty = (partName:gsub("^prov_%d+_", "")):gsub("_", " ")
-		local code = ProvinceCodes and ProvinceCodes.fromPartName(partName) or "?????"
 		table.insert(capitalOptions, {
 			id = "T:" .. partName,
-			name = string.format("[%s] %s · %s", code, pretty, label),
+			name = string.format("%s · %s", pretty, label),
 			sortKey = string.format("2_%s", pretty:lower()),
 		})
 	end
@@ -2109,7 +2092,7 @@ local function rebuildCountryForm()
 			existing = "P:" .. tostring(country.capitalProvinceId)
 		end
 		return makeCombo(row, capitalOptions, existing, {
-			placeholder = "search code, name, or id…",
+			placeholder = "search name or id…",
 			hideIdSuffix = true,
 			maxButtons = 200,
 		})
@@ -2492,8 +2475,7 @@ local function rebuildProvinceForm()
 	if isNew then
 		headerLabel = "NEW PROVINCE"
 	else
-		local code = (prov and prov.code) or "?"
-		headerLabel = string.format("EDIT PROVINCE [%s] %s", tostring(code), tostring(prov.name or ""))
+		headerLabel = string.format("EDIT PROVINCE [%s] %s", tostring(state.selectedProvinceId), tostring(prov.name or ""))
 	end
 	makeSection(provinceForm, headerLabel, 1)
 
@@ -2503,16 +2485,10 @@ local function rebuildProvinceForm()
 	end
 
 	provinceFields.id = addField(2, "ID", function(row)
-		local box = makeTextBox(row, "42", prov and tostring(state.selectedProvinceId) or "")
-		box.TextEditable = isNew
+		local box = makeTextBox(row, s.collapsed and "(set by Map Part)" or "42", prov and tostring(state.selectedProvinceId) or "")
+		-- v3: a province's id IS its map part number, so it's derived from the Map Part picker, not typed.
+		box.TextEditable = isNew and not s.collapsed
 		return box
-	end)
-	provinceFields.code = addField(2, "Code (5-char)", function(row)
-		local default = prov and prov.code or ""
-		if (default == nil or default == "") and prov and ProvinceCodes then
-			default = ProvinceCodes.fromRecord(prov) or ""
-		end
-		return makeTextBox(row, "PARIS", default)
 	end)
 	provinceFields.name = addField(3, "Name", function(row)
 		return makeTextBox(row, "Paris", prov and prov.name or "")
@@ -2599,22 +2575,37 @@ local function rebuildProvinceForm()
 		return makeDropdown(row, boolList, prov and prov.hasShipyard == true and "true" or "false")
 	end)
 
-	makeSection(provinceForm, "BT PART MAPPING", 28)
-	provinceFields.btPartId = addField(29, "BT Part ID", function(row)
-		return makeTextBox(row, "183", s.eu4Map[state.selectedProvinceId] and tostring(s.eu4Map[state.selectedProvinceId]) or "")
+	makeSection(provinceForm, "MAP PART", 28)
+	-- Pick the map tile by its Studio name (search "prov_0001_Stockholm") instead of typing a raw
+	-- part-id number. The combo's value IS the part number (prov_<N>), which the server's
+	-- mapProvinceToPart writes into eu4Map. After the identity collapse, the part number == the id.
+	local partOptions = {}
+	for _, info in pairs(collectAllMapTiles()) do
+		if info.partId then
+			table.insert(partOptions, { id = info.partId, name = info.display, sortKey = (info.display or ""):lower() })
+		end
+	end
+	table.sort(partOptions, function(a, b) return a.sortKey < b.sortKey end)
+	provinceFields.btPartId = addField(29, "Map Part (Studio name)", function(row)
+		-- v3: a province's part IS its id, so the current part is just the id itself.
+		local existing = s.collapsed and state.selectedProvinceId or s.eu4Map[state.selectedProvinceId]
+		return makeCombo(row, partOptions, existing, {
+			placeholder = "search tile by name or number…",
+			maxButtons = 200,
+			onChange = function(partId)
+				-- v3: keep the (read-only) ID field in sync — picking the part picks the id.
+				if s.collapsed and isNew and provinceFields.id then
+					provinceFields.id.Text = tostring(partId or "")
+				end
+			end,
+		})
 	end)
 
 	local applyBtn = makeButton(provinceForm, isNew and "Create Province" or "Apply Changes", PALETTE.accent)
 	applyBtn.Size = UDim2.fromOffset(200, 32)
 	applyBtn.LayoutOrder = 99
 	applyBtn.MouseButton1Click:Connect(function()
-		local rawCode = (provinceFields.code.Text or ""):upper():gsub("[^%w]", "")
-		local cleanCode = rawCode == "" and "" or rawCode:sub(1, 5)
-		if cleanCode ~= "" and ProvinceCodes then
-			cleanCode = ProvinceCodes.sanitize(cleanCode)
-		end
 		local opts = {
-			code = cleanCode,
 			name = provinceFields.name.Text,
 			displayCityName = provinceFields.displayCityName.Text,
 			areaId = provinceFields.areaId.getValue(),
@@ -2637,6 +2628,16 @@ local function rebuildProvinceForm()
 			hasShipyard = provinceFields.hasShipyard.getValue() == "true",
 		}
 		local id = tonumber(provinceFields.id.Text) or 0
+		-- v3: the province id IS its map part number — derive it from the Map Part picker so a new
+		-- province can never be created with an id that doesn't match its part.
+		if isNew and s.collapsed then
+			local part = tonumber(provinceFields.btPartId.getValue())
+			if not part then
+				setStatus("Pick a Map Part — its number becomes the province id", PALETTE.bad)
+				return
+			end
+			id = part
+		end
 		if isNew and id < 1 then
 			setStatus("Province ID must be a positive integer", PALETTE.bad)
 			return
@@ -2663,14 +2664,14 @@ local function rebuildProvinceForm()
 			if call("addProvince", { id = id, opts = opts }) ~= nil then
 				setStatus("Created province " .. id, PALETTE.good)
 				state.selectedProvinceId = id
-				local bt = tonumber(provinceFields.btPartId.Text)
+				local bt = tonumber(provinceFields.btPartId.getValue())
 				if bt then call("mapProvinceToPart", { id = id, btPartId = bt }) end
 				refresh()
 			end
 		else
 			if call("updateProvince", { id = state.selectedProvinceId, opts = opts }) ~= nil then
 				setStatus("Updated province " .. state.selectedProvinceId, PALETTE.good)
-				local bt = tonumber(provinceFields.btPartId.Text)
+				local bt = tonumber(provinceFields.btPartId.getValue())
 				if bt then call("mapProvinceToPart", { id = state.selectedProvinceId, btPartId = bt }) end
 				refresh()
 			end
@@ -2702,7 +2703,6 @@ local function rebuildProvinceList(filter)
 		local cityName = tostring(p.displayCityName or "")
 		if filter == ""
 			or tostring(id):find(filter, 1, true)
-			or (p.code or ""):lower():find(filter, 1, true)
 			or provName:lower():find(filter, 1, true)
 			or cityName:lower():find(filter, 1, true)
 		then
@@ -2724,7 +2724,7 @@ local function rebuildProvinceList(filter)
 				Size = UDim2.new(1, -16, 0, 14),
 				Position = UDim2.fromOffset(8, 2),
 				BackgroundTransparency = 1,
-				Text = string.format("[%s]  %s%s", tostring(p.code or id), primary, secondary),
+				Text = string.format("[%s]  %s%s", tostring(id), primary, secondary),
 				TextColor3 = PALETTE.text,
 				Font = Enum.Font.GothamSemibold,
 				TextSize = 12,
@@ -2764,8 +2764,8 @@ local function rebuildProvinceList(filter)
 		table.sort(painted, function(a, b) return a.partName < b.partName end)
 		for _, t in ipairs(painted) do
 			local pretty = (t.partName:gsub("^prov_%d+_", "")):gsub("_", " ")
-			local code = ProvinceCodes and ProvinceCodes.fromPartName(t.partName) or "?????"
-			if filter == "" or pretty:lower():find(filter, 1, true) or code:lower():find(filter, 1, true) then
+			local partNum = t.partName:match("prov_(%d+)") or "?"
+			if filter == "" or pretty:lower():find(filter, 1, true) or tostring(partNum):find(filter, 1, true) then
 				order += 1
 				local item = newInstance("TextButton", {
 					Size = UDim2.new(1, -4, 0, 32),
@@ -2782,7 +2782,7 @@ local function rebuildProvinceList(filter)
 					Size = UDim2.new(1, -16, 0, 14),
 					Position = UDim2.fromOffset(8, 2),
 					BackgroundTransparency = 1,
-					Text = string.format("[%s]  %s", code, pretty),
+					Text = string.format("[%s]  %s", partNum, pretty),
 					TextColor3 = PALETTE.text,
 					Font = Enum.Font.GothamSemibold,
 					TextSize = 12,
@@ -2835,7 +2835,7 @@ local function rebuildMappingView()
 	local info = newInstance("TextLabel", {
 		Size = UDim2.new(1, 0, 0, 48),
 		BackgroundTransparency = 1,
-		Text = "Each seed province maps to a Beyond Typus EU4 part ID. The stamper uses that ID to locate the corresponding map tile. Edit a province under the Provinces tab to set its BT Part ID.",
+		Text = "Each seed province maps to a map tile (prov_<N>). The stamper uses that part to place the province on the map. Edit a province under the Provinces tab and pick its Map Part by Studio name.",
 		TextColor3 = PALETTE.textMuted,
 		Font = Enum.Font.Gotham,
 		TextSize = 12,
@@ -2844,6 +2844,34 @@ local function rebuildMappingView()
 		TextYAlignment = Enum.TextYAlignment.Top,
 		LayoutOrder = 1,
 	}, mappingScroll)
+
+	-- Collapse-readiness banner. The identity collapse (serial id -> part id) requires eu4Map to be
+	-- a clean bijection: duplicate part targets AND unmapped provinces both block it. Computed
+	-- client-side from the snapshot (the authoritative gate is server-side Editor.auditMapping).
+	do
+		local targetCount = {}
+		for _, pid in pairs(s.eu4Map or {}) do targetCount[pid] = (targetCount[pid] or 0) + 1 end
+		local dupes = 0
+		for _, n in pairs(targetCount) do if n > 1 then dupes += 1 end end
+		local unmapped = 0
+		for id in pairs(s.provinces or {}) do
+			if (s.eu4Map or {})[id] == nil then unmapped += 1 end
+		end
+		local ready = dupes == 0 and unmapped == 0
+		newInstance("TextLabel", {
+			Size = UDim2.new(1, 0, 0, 22),
+			BackgroundTransparency = 1,
+			Text = ready
+				and "\u{2713} Mapping is a clean bijection — ready to collapse."
+				or string.format("\u{26A0} %d duplicate part target(s), %d unmapped province(s) — resolve before collapsing.", dupes, unmapped),
+			TextColor3 = ready and PALETTE.good or PALETTE.warn,
+			Font = Enum.Font.GothamBold,
+			TextSize = 12,
+			TextWrapped = true,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			LayoutOrder = 2,
+		}, mappingScroll)
+	end
 
 	local ids = {}
 	for id in pairs(s.provinces) do table.insert(ids, id) end
@@ -3429,7 +3457,7 @@ deleteBtn.MouseButton1Click:Connect(function()
 		end
 		local id = state.selectedProvinceId
 		local prov = state.snapshot and state.snapshot.provinces and state.snapshot.provinces[id]
-		local provLabel = prov and (prov.code and prov.code ~= "" and string.format("[%s] %s", prov.code, prov.name or "?") or (prov.name or "?")) or tostring(id)
+		local provLabel = prov and string.format("[%s] %s", tostring(id), prov.name or "?") or tostring(id)
 		showConfirm({
 			title = "Delete province?",
 			message = string.format("Delete province %d (%s)? This is reversible until you Save.", id, provLabel),

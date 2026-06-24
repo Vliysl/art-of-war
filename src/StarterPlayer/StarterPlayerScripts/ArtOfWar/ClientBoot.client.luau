@@ -151,8 +151,7 @@ do
 					ClientStateCache = ClientStateCache,
 					MapModeController = MapModeController,
 					ProvinceInteraction = ProvinceInteraction,
-					ProvinceCodes = safeRequire("ProvinceCodes"),
-					ArmyView = ArmyView,
+										ArmyView = ArmyView,
 					PathPreview = safeRequire("PathPreview"),
 					WaterBodies = safeRequire("WaterBodies"),
 				})

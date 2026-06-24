@@ -78,9 +78,6 @@ local function syncCountryToWorld(tag)
 	end
 end
 
-local ProvinceCodes =
-	tryRequire(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Modules"):WaitForChild("ProvinceCodes"))
-
 local function stampTileAttributes(part, ownerTag, partName, map)
 	if not part then
 		return
@@ -112,9 +109,6 @@ local function stampTileAttributes(part, ownerTag, partName, map)
 		local pretty = (partName or part.Name):gsub("prov_%d+_", ""):gsub("_", " ")
 		part:SetAttribute("province_name", pretty)
 	end
-	if ProvinceCodes and part:GetAttribute("province_code") == nil then
-		part:SetAttribute("province_code", ProvinceCodes.fromPartName(partName or part.Name))
-	end
 	if not map then
 		return
 	end
@@ -130,9 +124,6 @@ local function stampTileAttributes(part, ownerTag, partName, map)
 			end
 			if part:GetAttribute("religion") then
 				wp:SetAttribute("religion", part:GetAttribute("religion"))
-			end
-			if part:GetAttribute("province_code") then
-				wp:SetAttribute("province_code", part:GetAttribute("province_code"))
 			end
 		end
 	end
@@ -205,6 +196,7 @@ local PAINT_COMMANDS = {
 local SNAPSHOT_COMMANDS = {
 	dumpDataStore = true,
 	reloadState = true,
+	auditMapping = true,
 }
 
 local lastCallByPlayer = {}
@@ -491,6 +483,7 @@ local function snapshotState()
 		return list
 	end
 	return {
+		collapsed = (Editor.isCollapsed and Editor.isCollapsed()) or false,
 		countries = state.countries,
 		provinces = state.provinces,
 		eu4Map = state.eu4Map,
@@ -1134,6 +1127,9 @@ api.OnServerInvoke = function(player, command, payload)
 			end
 		end
 		return result
+	elseif command == "auditMapping" then
+		-- Read-only: validates the serial<->part bijection (the gate for the identity collapse).
+		return safeCall(Editor.auditMapping)
 	elseif command == "isStagingEnabled" then
 		return { ok = true, result = { enabled = STAGING_ENABLED } }
 	end

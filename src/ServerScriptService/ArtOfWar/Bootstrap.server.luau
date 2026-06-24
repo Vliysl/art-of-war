@@ -257,13 +257,41 @@ task.spawn(function()
 		local stamper = loadedSystems.ProvinceStamper
 		if not stamper or type(stamper.refreshEU4Mappings) ~= "function" then break end
 		if type(ov) == "table" and type(ov.retryNow) == "function" then pcall(ov.retryNow) end
+
+		-- Re-hydrate late-arriving province RECORDS into WorldState. If KIND_PROVINCES throttled at
+		-- boot, those records never entered the registry — refreshEU4Mappings + stamp alone would
+		-- leave getProvince(id) nil (stamp finds no record, so the province stays invisible to
+		-- movement/economy/buildings). Enrol any overlay province not yet in WorldState via the
+		-- incremental registry path (guarded by getProvince==nil so we never double-index).
+		local hydratedLate = 0
+		local registry = context.ProvinceRegistry
+		if type(ov) == "table" and type(ov.snapshot) == "function"
+			and registry and type(registry.registerProvince) == "function" then
+			local okSnap, snap = pcall(ov.snapshot, false)
+			if okSnap and type(snap) == "table" and type(snap.provinces) == "table" then
+				for id, rec in pairs(snap.provinces) do
+					local nid = tonumber(id) or id
+					if type(rec) == "table" and context.WorldState.getProvince(nid) == nil then
+						if registry.registerProvince(nid, rec) then
+							hydratedLate += 1
+						end
+					end
+				end
+			end
+		end
+
 		local recovered = 0
 		pcall(function() recovered = stamper.refreshEU4Mappings() or 0 end)
-		if recovered > 0 then
-			-- Keep healing across the whole window: mappings can trickle in over several
-			-- throttled reads, so re-stamp on each recovery rather than bailing on the first.
-			if type(stamper.stamp) == "function" then pcall(stamper.stamp) end
-			print(string.format("[ArtOfWar] map self-healed: recovered %d province tile mappings after a throttled boot and re-stamped", recovered))
+		if recovered > 0 or hydratedLate > 0 then
+			-- Keep healing across the whole window: mappings/records can trickle in over several
+			-- throttled reads. Delta-stamp (only parts not yet stamped) rather than re-stamping all
+			-- ~2,800 provinces on every retry.
+			if type(stamper.stampMissing) == "function" then
+				pcall(stamper.stampMissing)
+			elseif type(stamper.stamp) == "function" then
+				pcall(stamper.stamp)
+			end
+			print(string.format("[ArtOfWar] map self-healed: recovered %d province tile mappings, %d late province records after a throttled boot and re-stamped", recovered, hydratedLate))
 		end
 	end
 end)

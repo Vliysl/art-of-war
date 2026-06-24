@@ -162,6 +162,21 @@ local function loadTileOverlay()
 	return out
 end
 
+-- True when the world is on the collapsed (v3) schema: province ids ARE map part numbers, so new
+-- content takes its part number as its id and there is no separate eu4Map bridge. Own overlay
+-- require (this runs before overlayModule() is defined later in the file).
+local function isCollapsedMode()
+	local services = game:GetService("ServerStorage"):FindFirstChild("Services")
+	local overlayMod = services and services:FindFirstChild("DataOverlay")
+	if not overlayMod then return false end
+	local ok, overlay = pcall(require, overlayMod)
+	return ok and overlay and overlay.isCollapsed and overlay.isCollapsed() == true
+end
+
+function DataEditor.isCollapsed()
+	return isCollapsedMode()
+end
+
 function DataEditor.load()
 	local data = dataFolder()
 	countries = deepClone(loadClone(data:WaitForChild("Countries")))
@@ -178,6 +193,12 @@ function DataEditor.load()
 	if overlayMod then
 		local ok, overlay = pcall(require, overlayMod)
 		if ok and overlay and overlay.snapshot then
+			if overlay.isCollapsed and overlay.isCollapsed() then
+				-- v3: the @v3 overlay snapshot is authoritative and part-id keyed. Discard the
+				-- serial-keyed source so the editor's in-memory state is purely part-id keyed too.
+				provinces = {}
+				countries = {}
+			end
 			local snapOk, snap = pcall(overlay.snapshot, false)
 			if snapOk and type(snap) == "table" then
 				if type(snap.countries) == "table" then
@@ -517,7 +538,6 @@ function DataEditor.addProvince(id, opts)
 		id = id,
 		name = opts.name or ("Province " .. id),
 		displayCityName = opts.displayCityName or opts.name,
-		code = opts.code,
 		areaId = opts.areaId,
 		regionId = opts.regionId,
 		superRegionId = opts.superRegionId,
@@ -580,7 +600,14 @@ function DataEditor.promoteTile(opts)
 	local partName = opts.partName
 
 	local eu4Pid = tonumber(partName:match("prov_(%d+)"))
-	if eu4Pid then
+	local collapsed = isCollapsedMode()
+
+	-- Already promoted? v3: the part number IS the province id. v2: scan the eu4Map for the part.
+	if collapsed then
+		if eu4Pid and provinces[eu4Pid] then
+			return { id = eu4Pid, existing = true }
+		end
+	elseif eu4Pid then
 		for sid, mappedEu4 in pairs(eu4Map) do
 			if mappedEu4 == eu4Pid then
 				return { id = sid, existing = true }
@@ -588,26 +615,36 @@ function DataEditor.promoteTile(opts)
 		end
 	end
 
-	local maxId = 0
-	for id in pairs(provinces) do
-		local n = tonumber(id) or 0
-		if n > maxId then maxId = n end
-	end
-	local services = game:GetService("ServerStorage"):FindFirstChild("Services")
-	local overlayMod = services and services:FindFirstChild("DataOverlay")
-	if overlayMod then
-		local okOl, overlay = pcall(require, overlayMod)
-		if okOl and overlay and overlay.snapshot then
-			local okSn, snap = pcall(overlay.snapshot, false)
-			if okSn and type(snap) == "table" and type(snap.provinces) == "table" then
-				for id in pairs(snap.provinces) do
-					local n = tonumber(id) or 0
-					if n > maxId then maxId = n end
+	-- Allocate the new id. v3: the part number itself (one id, no bridge). v2: one above the
+	-- current max across the in-memory provinces AND the overlay snapshot.
+	local newId
+	if collapsed then
+		if not eu4Pid then
+			error("promoteTile: part '" .. partName .. "' has no prov_<N> number to use as a province id")
+		end
+		newId = eu4Pid
+	else
+		local maxId = 0
+		for id in pairs(provinces) do
+			local n = tonumber(id) or 0
+			if n > maxId then maxId = n end
+		end
+		local services = game:GetService("ServerStorage"):FindFirstChild("Services")
+		local overlayMod = services and services:FindFirstChild("DataOverlay")
+		if overlayMod then
+			local okOl, overlay = pcall(require, overlayMod)
+			if okOl and overlay and overlay.snapshot then
+				local okSn, snap = pcall(overlay.snapshot, false)
+				if okSn and type(snap) == "table" and type(snap.provinces) == "table" then
+					for id in pairs(snap.provinces) do
+						local n = tonumber(id) or 0
+						if n > maxId then maxId = n end
+					end
 				end
 			end
 		end
+		newId = maxId + 1
 	end
-	local newId = maxId + 1
 
 	local areaId, regionId, superRegionId, terrain, climate
 	local map = workspace:FindFirstChild("ArtOfWarMap")
@@ -622,13 +659,27 @@ function DataEditor.promoteTile(opts)
 			end
 		end
 		local closestSeedId, closestDist = nil, math.huge
-		for sid, mappedEu4 in pairs(eu4Map) do
-			local seedPart = partsByEU4[mappedEu4]
-			if seedPart then
-				local d = (seedPart.Position - targetPart.Position).Magnitude
-				if d < closestDist then
-					closestDist = d
-					closestSeedId = sid
+		if collapsed then
+			-- v3: province id == part id, so look the seed's part up directly by province id.
+			for pid in pairs(provinces) do
+				local seedPart = partsByEU4[pid]
+				if seedPart then
+					local d = (seedPart.Position - targetPart.Position).Magnitude
+					if d < closestDist then
+						closestDist = d
+						closestSeedId = pid
+					end
+				end
+			end
+		else
+			for sid, mappedEu4 in pairs(eu4Map) do
+				local seedPart = partsByEU4[mappedEu4]
+				if seedPart then
+					local d = (seedPart.Position - targetPart.Position).Magnitude
+					if d < closestDist then
+						closestDist = d
+						closestSeedId = sid
+					end
 				end
 			end
 		end
@@ -710,7 +761,8 @@ function DataEditor.promoteTile(opts)
 		coastal = false,
 		hasShipyard = false,
 	}
-	if eu4Pid then eu4Map[newId] = eu4Pid end
+	-- v2 only: record the serial->part bridge. In v3 the id already IS the part number.
+	if eu4Pid and not collapsed then eu4Map[newId] = eu4Pid end
 
 	return {
 		id = newId,
@@ -733,10 +785,14 @@ function DataEditor.assignProvince(id, ownerTag)
 	if ownerTag ~= "NONE" then
 		local country = countries[ownerTag]
 		if country then
-			if type(country.primaryCulture) == "string" and country.primaryCulture ~= "" then
+			-- Only SEED culture/religion when the province has none yet — never clobber a
+			-- province's existing (possibly custom) culture/religion on an owner reassignment.
+			if (province.culture == nil or province.culture == "")
+				and type(country.primaryCulture) == "string" and country.primaryCulture ~= "" then
 				province.culture = country.primaryCulture
 			end
-			if type(country.stateReligion) == "string" and country.stateReligion ~= "" then
+			if (province.religion == nil or province.religion == "")
+				and type(country.stateReligion) == "string" and country.stateReligion ~= "" then
 				province.religion = country.stateReligion
 			end
 		end
@@ -771,6 +827,14 @@ function DataEditor.mapProvinceToPart(seedId, btPartId)
 	ensureLoaded()
 	seedId = tonumber(seedId); btPartId = tonumber(btPartId)
 	assert(seedId and btPartId, "both ids must be numbers")
+	if isCollapsedMode() then
+		-- v3: a province's id already IS its part number — there is no separate mapping. An identity
+		-- mapping is a harmless no-op; pointing it at a DIFFERENT part would be a re-id (not supported).
+		if seedId ~= btPartId then
+			error(string.format("collapsed schema: province %d is bound to its part by identity; cannot remap to part %d", seedId, btPartId))
+		end
+		return true
+	end
 	pushHistory(string.format("mapProvinceToPart %d -> %d", seedId, btPartId))
 	eu4Map[seedId] = btPartId
 	return true
@@ -803,6 +867,151 @@ end
 function DataEditor.tileOwnerOf(partName)
 	ensureLoaded()
 	return tileOwners[partName]
+end
+
+-- Read-only audit of the serial<->part (eu4Map) mapping. This is the HARD GATE for the
+-- Phase C identity collapse (serial id -> part id): the collapse is only valid if eu4Map is a
+-- BIJECTION over the live province set — every province maps to exactly one part (totality) and
+-- no two provinces share a part (injectivity). It also surfaces orphan mappings and (in play
+-- mode) provinces whose part never received a province_id stamp. Never mutates state.
+function DataEditor.auditMapping()
+	ensureLoaded()
+
+	local function countOf(t)
+		local n = 0
+		for _ in pairs(t) do n += 1 end
+		return n
+	end
+
+	-- 1. Injectivity: detect parts targeted by more than one serial.
+	local partToSerials = {}
+	for sid, pid in pairs(eu4Map) do
+		local bucket = partToSerials[pid]
+		if not bucket then bucket = {}; partToSerials[pid] = bucket end
+		table.insert(bucket, sid)
+	end
+	local duplicateTargets = {}
+	for pid, serials in pairs(partToSerials) do
+		if #serials > 1 then
+			table.sort(serials)
+			table.insert(duplicateTargets, { partId = pid, serials = serials })
+		end
+	end
+	table.sort(duplicateTargets, function(a, b) return (a.partId or 0) < (b.partId or 0) end)
+
+	-- 2. Totality: every live province record has an eu4Map entry.
+	local provincesWithoutMapping = {}
+	for id in pairs(provinces) do
+		if eu4Map[id] == nil then table.insert(provincesWithoutMapping, id) end
+	end
+	table.sort(provincesWithoutMapping)
+
+	-- 3a. Orphans: a mapping whose serial has no province record.
+	local mappingsWithoutRecord = {}
+	for sid in pairs(eu4Map) do
+		if provinces[sid] == nil then table.insert(mappingsWithoutRecord, sid) end
+	end
+	table.sort(mappingsWithoutRecord)
+
+	-- 3b/4. Part-presence + stamp checks need the live map (play mode). Skipped in edit mode.
+	local partIdsPresent, stampedByPart = nil, nil
+	local map = workspace:FindFirstChild("ArtOfWarMap")
+	local provs = map and map:FindFirstChild("Provinces")
+	if provs then
+		partIdsPresent, stampedByPart = {}, {}
+		for _, part in pairs(provs:GetChildren()) do
+			if part:IsA("BasePart") then
+				local pid = tonumber(part.Name:match("prov_(%d+)"))
+				if pid then
+					partIdsPresent[pid] = part.Name
+					stampedByPart[pid] = part:GetAttribute("province_id")
+				end
+			end
+		end
+	end
+
+	-- 3b. Mapping targets a part that does not exist in the workspace map.
+	local mappingsToMissingPart = {}
+	if partIdsPresent then
+		for sid, pid in pairs(eu4Map) do
+			if partIdsPresent[pid] == nil then
+				table.insert(mappingsToMissingPart, { serial = sid, partId = pid })
+			end
+		end
+		table.sort(mappingsToMissingPart, function(a, b) return (a.serial or 0) < (b.serial or 0) end)
+	end
+
+	-- 4. Registered-but-unstamped: a province whose mapped part carries no province_id attribute.
+	local registeredButUnstamped = {}
+	if stampedByPart then
+		for sid in pairs(provinces) do
+			local pid = eu4Map[sid]
+			if pid and stampedByPart[pid] == nil then
+				table.insert(registeredButUnstamped, sid)
+			end
+		end
+		table.sort(registeredButUnstamped)
+	end
+
+	local injective = #duplicateTargets == 0
+	local total = #provincesWithoutMapping == 0
+	return {
+		injective = injective,
+		total = total,
+		collapseReady = injective and total,
+		mapChecked = provs ~= nil, -- false in edit mode (part-presence/stamp checks skipped)
+		duplicateTargets = duplicateTargets,
+		provincesWithoutMapping = provincesWithoutMapping,
+		mappingsWithoutRecord = mappingsWithoutRecord,
+		mappingsToMissingPart = mappingsToMissingPart,
+		registeredButUnstamped = registeredButUnstamped,
+		counts = {
+			provinces = countOf(provinces),
+			mappings = countOf(eu4Map),
+			duplicateTargets = #duplicateTargets,
+			provincesWithoutMapping = #provincesWithoutMapping,
+			mappingsWithoutRecord = #mappingsWithoutRecord,
+			mappingsToMissingPart = #mappingsToMissingPart,
+			registeredButUnstamped = #registeredButUnstamped,
+		},
+	}
+end
+
+-- Pretty-print the mapping audit to the console (developer convenience).
+function DataEditor.printMappingAudit()
+	local r = DataEditor.auditMapping()
+	local c = r.counts
+	print(string.format("[MappingAudit] %d provinces, %d mappings | collapseReady=%s (injective=%s total=%s)%s",
+		c.provinces, c.mappings, tostring(r.collapseReady), tostring(r.injective), tostring(r.total),
+		r.mapChecked and "" or " [edit mode: part/stamp checks skipped]"))
+	if #r.duplicateTargets > 0 then
+		print(string.format("  DUPLICATE TARGETS (%d) — two provinces share one part (BLOCKS collapse):", #r.duplicateTargets))
+		for _, d in ipairs(r.duplicateTargets) do
+			print(string.format("    part %s  <-  serials { %s }", tostring(d.partId), table.concat(d.serials, ", ")))
+		end
+	end
+	if #r.provincesWithoutMapping > 0 then
+		print(string.format("  PROVINCES WITHOUT MAPPING (%d) — no part assigned (BLOCKS collapse): %s",
+			#r.provincesWithoutMapping, table.concat(r.provincesWithoutMapping, ", ")))
+	end
+	if #r.mappingsWithoutRecord > 0 then
+		print(string.format("  ORPHAN MAPPINGS (%d) — mapping with no province record (warn): %s",
+			#r.mappingsWithoutRecord, table.concat(r.mappingsWithoutRecord, ", ")))
+	end
+	if #r.mappingsToMissingPart > 0 then
+		local bits = {}
+		for _, m in ipairs(r.mappingsToMissingPart) do table.insert(bits, string.format("%s->part %s", m.serial, m.partId)) end
+		print(string.format("  MAPPINGS TO MISSING PART (%d) — target part absent from map (warn): %s",
+			#r.mappingsToMissingPart, table.concat(bits, ", ")))
+	end
+	if #r.registeredButUnstamped > 0 then
+		print(string.format("  REGISTERED BUT UNSTAMPED (%d) — mapped part has no province_id stamp (warn): %s",
+			#r.registeredButUnstamped, table.concat(r.registeredButUnstamped, ", ")))
+	end
+	if r.collapseReady and #r.mappingsWithoutRecord == 0 and #r.registeredButUnstamped == 0 then
+		print("  OK — mapping is a clean bijection; safe to collapse.")
+	end
+	return r
 end
 
 local function buildCountriesSource()
@@ -856,9 +1065,6 @@ local function buildProvincesSource()
 		local parts = {}
 		table.insert(parts, string.format('name = %q', p.name or ""))
 		table.insert(parts, string.format('displayCityName = %q', p.displayCityName or p.name or ""))
-		if type(p.code) == "string" and p.code ~= "" then
-			table.insert(parts, string.format('code = %q', p.code))
-		end
 		table.insert(parts, string.format('areaId = %q', p.areaId or ""))
 		table.insert(parts, string.format('regionId = %q', p.regionId or ""))
 		table.insert(parts, string.format('superRegionId = %q', p.superRegionId or ""))
@@ -928,6 +1134,67 @@ end
 local function buildCulturesSource()  return buildIdentityRecordsSource(cultures, "groupId") end
 local function buildReligionsSource() return buildIdentityRecordsSource(religions, "group") end
 
+-- General Lua value serializer for nested record tables (ideologies/governments carry nested
+-- `modifiers`/`transitions`/`color`). Handles strings, numbers, booleans, and tables with
+-- string/number keys; arrays render inline-ish, maps render sorted for stable diffs.
+local function serializeLua(value, indent)
+	indent = indent or "\t"
+	local t = type(value)
+	if t == "string" then return escapeString(value) end
+	if t == "number" or t == "boolean" then return tostring(value) end
+	if t ~= "table" then return "nil" end
+	local n, isArray = 0, true
+	for k in pairs(value) do
+		n += 1
+		if type(k) ~= "number" then isArray = false end
+	end
+	if n == 0 then return "{}" end
+	local inner = indent .. "\t"
+	local parts = {}
+	if isArray and #value == n then
+		for _, v in ipairs(value) do
+			table.insert(parts, inner .. serializeLua(v, inner))
+		end
+	else
+		for _, k in ipairs(sortedKeys(value)) do
+			local keyStr
+			if type(k) == "string" and isIdent(k) then
+				keyStr = k
+			elseif type(k) == "number" then
+				keyStr = "[" .. tostring(k) .. "]"
+			else
+				keyStr = "[" .. escapeString(tostring(k)) .. "]"
+			end
+			table.insert(parts, inner .. keyStr .. " = " .. serializeLua(value[k], inner))
+		end
+	end
+	return "{\n" .. table.concat(parts, ",\n") .. "\n" .. indent .. "}"
+end
+
+local function buildRecordsModuleSource(records)
+	local nl = string.char(10)
+	local lines = { "return {" }
+	for _, id in ipairs(sortedKeys(records)) do
+		local keyStr = isIdent(id) and id or ("[" .. escapeString(id) .. "]")
+		table.insert(lines, "\t" .. keyStr .. " = " .. serializeLua(records[id], "\t") .. ",")
+	end
+	table.insert(lines, "}")
+	return table.concat(lines, nl) .. nl
+end
+
+local function buildIdeologiesSource()      return buildRecordsModuleSource(ideologies) end
+local function buildGovernmentTypesSource() return buildRecordsModuleSource(governments) end
+
+local function buildTileOwnersSource()
+	local nl = string.char(10)
+	local lines = { "return {" }
+	for _, name in ipairs(sortedKeys(tileOwners)) do
+		table.insert(lines, string.format("\t[%s] = %s,", escapeString(name), escapeString(tostring(tileOwners[name]))))
+	end
+	table.insert(lines, "}")
+	return table.concat(lines, nl) .. nl
+end
+
 local function trySetSource(script, source)
 	local ok, err = pcall(function()
 		script.Source = source
@@ -953,16 +1220,24 @@ end
 -- no country/province is named) and idempotent (already-seeded tiles are skipped).
 local function promotePaintedTiles()
 	local pending = {}
+	local collapsed = isCollapsedMode()
+	-- Build the set of already-seeded part ids ONCE (was an O(tiles x mappings) nested scan).
+	local seededParts = {}
+	if not collapsed then
+		for _, mappedEu4 in pairs(eu4Map) do seededParts[mappedEu4] = true end
+	end
 	for partName, ownerTag in pairs(tileOwners) do
 		if type(ownerTag) == "string" and ownerTag ~= "" and ownerTag ~= "NONE" then
 			local eu4Pid = tonumber(partName:match("prov_(%d+)"))
-			local alreadySeeded = false
-			if eu4Pid then
-				for _, mappedEu4 in pairs(eu4Map) do
-					if mappedEu4 == eu4Pid then alreadySeeded = true; break end
-				end
+			local skip
+			if collapsed then
+				-- v3: a tile is seeded when a province already exists at its part number. Tiles with
+				-- no prov_<N> number can't become a part-id province, so skip them.
+				skip = (eu4Pid == nil) or (provinces[eu4Pid] ~= nil)
+			else
+				skip = (eu4Pid ~= nil) and (seededParts[eu4Pid] == true)
 			end
-			if not alreadySeeded then
+			if not skip then
 				table.insert(pending, { partName = partName, ownerTag = ownerTag })
 			end
 		end
@@ -1193,15 +1468,45 @@ function DataEditor.save()
 	}
 end
 
+local function stageOutputs(entries, clearAll)
+	local folder = game:GetService("ServerStorage"):FindFirstChild("DataEditorOutput")
+	if not folder then
+		folder = Instance.new("Folder")
+		folder.Name = "DataEditorOutput"
+		folder.Parent = game:GetService("ServerStorage")
+	end
+	if clearAll then
+		for _, child in folder:GetChildren() do child:Destroy() end
+	end
+	for _, entry in ipairs(entries) do
+		local existing = folder:FindFirstChild(entry.name .. ".lua")
+		if existing then existing:Destroy() end
+		local sv = Instance.new("StringValue")
+		sv.Name = entry.name .. ".lua"
+		sv.Value = entry.src
+		sv.Parent = folder
+	end
+	return folder
+end
+
 function DataEditor.exportToLua()
 	ensureLoaded()
 	local data = dataFolder()
+	-- Module-backed sources (written directly to their ModuleScript in edit mode).
 	local sources = {
-		{ name = "Countries", src = buildCountriesSource() },
-		{ name = "Provinces", src = buildProvincesSource() },
-		{ name = "EU4IDMap",  src = buildEU4MapSource() },
-		{ name = "Cultures",  src = buildCulturesSource() },
-		{ name = "Religions", src = buildReligionsSource() },
+		{ name = "Countries",       src = buildCountriesSource() },
+		{ name = "Provinces",       src = buildProvincesSource() },
+		{ name = "EU4IDMap",        src = buildEU4MapSource() },
+		{ name = "Cultures",        src = buildCulturesSource() },
+		{ name = "Religions",       src = buildReligionsSource() },
+		{ name = "Ideologies",      src = buildIdeologiesSource() },
+		{ name = "GovernmentTypes", src = buildGovernmentTypesSource() },
+	}
+	-- Tile ownership has no source ModuleScript (it lives only in the DataOverlay), so it can't be
+	-- written back to source. Always stage it as a recoverable StringValue so "export then commit"
+	-- captures it rather than silently dropping it.
+	local stageOnly = {
+		{ name = "TileOwners", src = buildTileOwnersSource() },
 	}
 
 	local errors = {}
@@ -1221,27 +1526,22 @@ function DataEditor.exportToLua()
 	end
 
 	if allOk then
+		stageOutputs(stageOnly, false)
 		return {
 			mode    = "source",
-			message = "Exported to ModuleScript source. Save the place (Ctrl+S) to persist across sessions.",
+			message = "Exported Countries/Provinces/EU4IDMap/Cultures/Religions/Ideologies/GovernmentTypes to ModuleScript source. TileOwners staged in ServerStorage.DataEditorOutput (no source module). Save the place (Ctrl+S) to persist across sessions.",
 		}
 	end
 
-	local folder = game:GetService("ServerStorage"):FindFirstChild("DataEditorOutput") or Instance.new("Folder")
-	folder.Name = "DataEditorOutput"
-	folder.Parent = game:GetService("ServerStorage")
-	for _, child in folder:GetChildren() do child:Destroy() end
-
-	for _, entry in ipairs(sources) do
-		local sv = Instance.new("StringValue")
-		sv.Name = entry.name .. ".lua"
-		sv.Value = entry.src
-		sv.Parent = folder
-	end
+	-- Failure path (e.g. running on a live server): stage everything for recovery.
+	local all = {}
+	for _, e in ipairs(sources) do table.insert(all, e) end
+	for _, e in ipairs(stageOnly) do table.insert(all, e) end
+	stageOutputs(all, true)
 
 	return {
 		mode    = "export",
-		message = "Source ModuleScripts cannot be written from a running server. Stop the playtest (F8 or shift+F5), then run Export again from edit mode — the editor will write directly to the ModuleScript sources. The current playtest's edits have been staged in ServerStorage.DataEditorOutput as a fallback if you need to recover them.",
+		message = "Source ModuleScripts cannot be written from a running server. Stop the playtest (F8 or shift+F5), then run Export again from edit mode — the editor will write directly to the ModuleScript sources. The current playtest's edits (including Ideologies/GovernmentTypes/TileOwners) have been staged in ServerStorage.DataEditorOutput as a fallback if you need to recover them.",
 		errors  = errors,
 	}
 end
@@ -1824,6 +2124,104 @@ function DataEditor.promote(fieldSelections)
 	return { ok = (flush.failures == 0 or flush.failures == nil), promoted = applied, flush = flush }
 end
 
+-- Phase C orchestrator — build and write the part-id-keyed @v3 aggregates from the current
+-- (v2, serial-keyed) merged state. ADDITIVE: the serial-keyed v2 keys are never touched, so
+-- rollback is a single flag flip. Validates the bijection first and ABORTS if it is not clean.
+-- Does NOT flip the schema flag (boot stays on v2) unless opts.commit == true — run a dry pass,
+-- verify, then re-run with { commit = true }.
+function DataEditor.collapseToPartIds(opts)
+	opts = opts or {}
+	ensureLoaded()
+	local overlay = overlayModule()
+	if not overlay or not overlay.writeCollapsedV3 then
+		return { ok = false, error = "DataOverlay.writeCollapsedV3 unavailable (update DataOverlay first)" }
+	end
+
+	local audit = DataEditor.auditMapping()
+	if not audit.collapseReady then
+		return {
+			ok = false,
+			error = string.format("mapping is not a clean bijection (%d duplicate target(s), %d unmapped province(s)) — resolve before collapsing",
+				audit.counts.duplicateTargets, audit.counts.provincesWithoutMapping),
+			audit = audit,
+		}
+	end
+
+	local startedAt = os.time()
+	-- Re-key provinces serial -> part. record.id must equal its new key (validateIndividual asserts).
+	local provincesV3, provmapV3, sourceCount = {}, {}, 0
+	for serialId, record in pairs(provinces) do
+		local partId = eu4Map[serialId]
+		if partId == nil then
+			return { ok = false, error = string.format("province %s has no eu4Map entry", tostring(serialId)), audit = audit }
+		end
+		if provincesV3[partId] ~= nil then
+			return { ok = false, error = string.format("two provinces map to part %s", tostring(partId)), audit = audit }
+		end
+		local clone = deepClone(record)
+		clone.id = partId
+		provincesV3[partId] = clone
+		provmapV3[partId] = serialId
+		sourceCount += 1
+	end
+
+	-- Re-map capitalProvinceId serial -> part on every country (the only province-valued field).
+	local countriesV3 = {}
+	for tag, record in pairs(countries) do
+		local clone = deepClone(record)
+		local capSerial = clone.capitalProvinceId
+		if capSerial ~= nil and eu4Map[capSerial] ~= nil then
+			clone.capitalProvinceId = eu4Map[capSerial]
+		end
+		-- If a capital has no mapping it is left as-is; DataLoader validates + self-heals capitals.
+		countriesV3[tag] = clone
+	end
+
+	local writeReport = overlay.writeCollapsedV3(provincesV3, countriesV3, provmapV3, {
+		startedAt = startedAt,
+		sourceCount = sourceCount,
+	})
+	local verify = overlay.verifyCollapsedV3 and overlay.verifyCollapsedV3(provincesV3, countriesV3) or nil
+
+	local committed = false
+	if opts.commit == true then
+		if not (writeReport.ok and verify and verify.ok) then
+			return { ok = false, error = "refusing to commit — @v3 write/verify did not pass", write = writeReport, verify = verify, audit = audit }
+		end
+		local cOk, cErr = overlay.commitCollapse()
+		if not cOk then
+			return { ok = false, error = "commit (schema flip) failed: " .. tostring(cErr), write = writeReport, verify = verify }
+		end
+		committed = true
+	end
+
+	return {
+		ok = writeReport.ok and (verify == nil or verify.ok),
+		committed = committed,
+		write = writeReport,
+		verify = verify,
+		audit = audit,
+		message = committed
+			and string.format("Collapsed to part-id schema (v3): %d provinces, %d countries. Schema flag flipped. Now regenerate ProvinceAdjacency/SeaZones in play mode, then verify per the runbook.", sourceCount, writeReport.countries.count)
+			or string.format("Wrote @v3 aggregates (additive, v2 intact): %d provinces, %d countries. NOT committed — verify, then re-run with { commit = true }.", sourceCount, writeReport.countries.count),
+	}
+end
+
+-- Roll the schema flag back to v2 (the serial-keyed data, untouched, becomes authoritative again).
+-- Re-publish the pre-collapse code commit afterward.
+function DataEditor.rollbackCollapse()
+	local overlay = overlayModule()
+	if not overlay or not overlay.rollbackCollapse then
+		return { ok = false, error = "DataOverlay.rollbackCollapse unavailable" }
+	end
+	local ok, err = overlay.rollbackCollapse()
+	return {
+		ok = ok,
+		error = (not ok) and tostring(err) or nil,
+		message = ok and "Schema flag flipped back to v2. The serial-keyed data is authoritative again — re-publish the pre-collapse code." or nil,
+	}
+end
+
 function DataEditor.help()
 	print([[
 DataEditor API:
@@ -1858,7 +2256,7 @@ DataEditor API:
   Editor.updateReligion(id, opts)              - patch a religion
   Editor.removeReligion(id)                    - remove a religion
 
-  Editor.undo() / Editor.redo()                - traverse history (max 30 entries)
+  Editor.undo() / Editor.redo()                - traverse history (max 8 entries)
   Editor.canUndo() / Editor.canRedo()          - boolean checks
   Editor.diffAgainstBaseline()                 - return per-kind add/modify/remove counts
   Editor.dumpDataStore(forceRefresh)           - inspect current overlay snapshot

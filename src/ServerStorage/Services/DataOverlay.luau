@@ -31,6 +31,19 @@ local ALL_KINDS = { KIND_COUNTRIES, KIND_PROVINCES, KIND_EU4MAP, KIND_TILES, KIN
 local SCHEMA_KEY     = "meta:schema_version"
 local SCHEMA_VERSION = "v2"
 
+-- Identity-collapse (Phase C) schema. When the stored schema == COLLAPSED_VERSION the world is
+-- keyed by the map PART id (prov_<N>): provinces/countries are read from parallel "@v3" keys while
+-- the original serial-keyed v2 keys are left completely intact, so a rollback is a single schema
+-- flag flip. eu4Map is no longer consulted (the part number IS the id).
+local COLLAPSED_VERSION  = "v3"
+local COLLAPSED_KEYS = {
+	[KIND_PROVINCES] = "aggregate:provinces@v3",
+	[KIND_COUNTRIES] = "aggregate:countries@v3",
+}
+local PROVMAP_KEY        = "aggregate:provmap@v3"      -- partId -> serialId (inverse lineage)
+local MIGRATION_META_KEY = "meta:migration@v3"
+local RELAY_VERIFIED_KEY = "meta:relay_verified@v3"
+
 local TOMBSTONE_MARKER = { __deleted = true }
 DataOverlay.TOMBSTONE = TOMBSTONE_MARKER
 
@@ -68,7 +81,17 @@ local cache = {
 	coolingUntil = {},
 	migrated     = false,
 	migrating    = false,
+	collapsed    = false, -- true when schema == COLLAPSED_VERSION (part-id keyed world)
 }
+
+-- Resolve the live DataStore key for a kind, honoring collapse mode. cache.collapsed is set by
+-- load() (which reads the schema flag FIRST) before any readAggregate/writeAggregate runs.
+local function keyFor(kind)
+	if cache.collapsed and COLLAPSED_KEYS[kind] then
+		return COLLAPSED_KEYS[kind]
+	end
+	return AGGREGATE_KEYS[kind]
+end
 
 local lastMigrateAt = 0
 
@@ -137,8 +160,9 @@ end
 
 local function readAggregate(kind)
 	local ds = store()
-	local ok, raw = withRetry(function() return ds:GetAsync(AGGREGATE_KEYS[kind]) end,
-		"GetAsync " .. AGGREGATE_KEYS[kind])
+	local k = keyFor(kind)
+	local ok, raw = withRetry(function() return ds:GetAsync(k) end,
+		"GetAsync " .. k)
 	if not ok then return {}, "read_failed" end
 	if raw == nil then return {}, "empty" end
 	local decoded = decodeValue(raw)
@@ -161,8 +185,9 @@ local function writeAggregate(kind, map)
 		warn("[DataOverlay] failed to encode " .. kind .. ": " .. tostring(payload))
 		return false, "encode_failed"
 	end
-	return withRetry(function() ds:SetAsync(AGGREGATE_KEYS[kind], payload) end,
-		"SetAsync " .. AGGREGATE_KEYS[kind])
+	local k = keyFor(kind)
+	return withRetry(function() ds:SetAsync(k, payload) end,
+		"SetAsync " .. k)
 end
 
 local function readSchemaVersion()
@@ -249,6 +274,11 @@ local LOAD_RETRY_INTERVAL = 30
 
 function DataOverlay.load()
 	if cache.loaded then return cache end
+	-- Read the schema flag FIRST: cache.collapsed selects which key family every aggregate read
+	-- below uses (v2 serial keys vs the @v3 part-id keys). Committing to ONE family per boot.
+	local schema = readSchemaVersion()
+	cache.collapsed = (schema == COLLAPSED_VERSION)
+	cache.migrated = (schema == SCHEMA_VERSION) or cache.collapsed
 	local kinds = ALL_KINDS
 	for _, kind in ipairs(kinds) do
 		local data, status = readAggregate(kind)
@@ -257,7 +287,6 @@ function DataOverlay.load()
 		cache.lastRetryAt[kind] = os.clock()
 	end
 	cache.loaded = true
-	cache.migrated = readSchemaVersion() == SCHEMA_VERSION
 	local function tally(t) local n = 0 for _ in pairs(t or {}) do n += 1 end return n end
 	local anyFailed = false
 	for _, kind in ipairs(kinds) do
@@ -659,6 +688,14 @@ end
 
 function DataOverlay.applyTo(bundle)
 	ensureLoaded()
+	if cache.collapsed then
+		-- v3: provinces & countries are authoritative and COMPLETE in the @v3 overlay (part-id keyed,
+		-- written by the migration). Discard the serial-keyed source for these two kinds so the merged
+		-- bundle ends up purely part-id keyed. (bundle.eu4Map is never populated by loadBundle, so the
+		-- eu4Map merge below is already a no-op.)
+		bundle.provinces = {}
+		bundle.countries = {}
+	end
 	local healings = {}
 	local allowDelete = {
 		[KIND_PROVINCES]   = deletesAreSafe(KIND_PROVINCES, bundle),
@@ -830,8 +867,9 @@ function DataOverlay.verifyWrites(edits)
 	local liveByKind = {}
 	local function loadLive(kind)
 		if liveByKind[kind] ~= nil then return liveByKind[kind] end
-		local ok, raw = withRetry(function() return ds:GetAsync(AGGREGATE_KEYS[kind]) end,
-			"verify " .. AGGREGATE_KEYS[kind], 3)
+		local vk = keyFor(kind)
+		local ok, raw = withRetry(function() return ds:GetAsync(vk) end,
+			"verify " .. vk, 3)
 		if not ok then
 			liveByKind[kind] = false
 		else
@@ -881,6 +919,10 @@ local localRevision = 0
 
 function DataOverlay.pushToRelay(edits)
 	if not RelayConfig.RELAY_ENABLED or not RelayConfig.isConfigured() then return false, "relay_not_configured" end
+	-- Do not mirror edits to the paired universe while this universe is freshly collapsed (v3) but
+	-- not yet relay-verified — the paired universe may still be on v2 and part-id edits would corrupt
+	-- it. Cleared via DataOverlay.setRelayVerified() once both universes are migrated + verified.
+	if DataOverlay.relaySuppressed() then return false, "relay_suppressed_pending_v3_verification" end
 	localRevision += 1
 	local body = {
 		universe = RelayConfig.universeLabel(),
@@ -978,6 +1020,134 @@ function DataOverlay.snapshot(forceRefresh)
 		migrating = cache.migrating == true,
 		dirty     = (function() local out = {} for k in pairs(cache.dirty) do out[k] = true end return out end)(),
 	}
+end
+
+-- ===========================================================================================
+-- Phase C — reversible identity collapse (serial id -> part id). All writers below are ADDITIVE:
+-- they write parallel @v3 keys and NEVER touch the serial-keyed v2 keys, so rollback is a single
+-- schema flag flip. The actual flip (commitCollapse) is a deliberate, separately-invoked step.
+-- ===========================================================================================
+
+function DataOverlay.isCollapsed()
+	ensureLoaded()
+	return cache.collapsed == true
+end
+
+local function countOf(t)
+	local n = 0
+	for _ in pairs(t or {}) do n += 1 end
+	return n
+end
+
+local function rawWriteKey(key, map)
+	local ds = store()
+	local serializable = {}
+	for k, v in pairs(map) do serializable[tostring(k)] = v end
+	local encodeOk, payload = pcall(HttpService.JSONEncode, HttpService, serializable)
+	if not encodeOk then return false, "encode_failed" end
+	return withRetry(function() ds:SetAsync(key, payload) end, "SetAsync " .. key, 3)
+end
+
+local function rawReadKey(key)
+	local ds = store()
+	local ok, raw = withRetry(function() return ds:GetAsync(key) end, "GetAsync " .. key, 3)
+	if not ok then return nil, "read_failed" end
+	local decoded = decodeValue(raw)
+	if type(decoded) ~= "table" then return {}, "empty" end
+	return decoded, "loaded"
+end
+
+-- Write the part-id-keyed @v3 aggregates + the partId->serial lineage map + a migration-meta
+-- stamp. Purely additive (never overwrites v2 keys). Does NOT flip the schema flag and does NOT
+-- push to the relay. The caller must have validated the bijection (DataEditor.auditMapping).
+function DataOverlay.writeCollapsedV3(provincesV3, countriesV3, provmapV3, meta)
+	assert(type(provincesV3) == "table", "provincesV3 table required")
+	assert(type(countriesV3) == "table", "countriesV3 table required")
+	assert(type(provmapV3) == "table", "provmapV3 table required")
+	local okP, errP = rawWriteKey(COLLAPSED_KEYS[KIND_PROVINCES], provincesV3)
+	local okC, errC = rawWriteKey(COLLAPSED_KEYS[KIND_COUNTRIES], countriesV3)
+	local okM, errM = rawWriteKey(PROVMAP_KEY, provmapV3)
+	local stamp = {
+		startedAt    = meta and meta.startedAt or os.time(),
+		completedAt  = os.time(),
+		sourceCount  = meta and meta.sourceCount or nil,
+		writtenCount = countOf(provincesV3),
+		countries    = countOf(countriesV3),
+	}
+	rawWriteKey(MIGRATION_META_KEY, stamp)
+	return {
+		ok        = okP and okC and okM,
+		provinces = { ok = okP, count = countOf(provincesV3), err = errP },
+		countries = { ok = okC, count = countOf(countriesV3), err = errC },
+		provmap   = { ok = okM, count = countOf(provmapV3), err = errM },
+		meta      = stamp,
+	}
+end
+
+-- Re-read the @v3 keys and confirm they match the expected sets by count + per-key presence.
+function DataOverlay.verifyCollapsedV3(expectedProvinces, expectedCountries)
+	local liveP = rawReadKey(COLLAPSED_KEYS[KIND_PROVINCES]) or {}
+	local liveC = rawReadKey(COLLAPSED_KEYS[KIND_COUNTRIES]) or {}
+	local function presenceMatch(expected, live)
+		local missing = 0
+		for k in pairs(expected or {}) do
+			if live[tostring(k)] == nil then missing += 1 end
+		end
+		return missing
+	end
+	local pMissing = presenceMatch(expectedProvinces, liveP)
+	local cMissing = presenceMatch(expectedCountries, liveC)
+	return {
+		ok = pMissing == 0 and cMissing == 0
+			and countOf(liveP) == countOf(expectedProvinces)
+			and countOf(liveC) == countOf(expectedCountries),
+		provinces = { expected = countOf(expectedProvinces), actual = countOf(liveP), missing = pMissing },
+		countries = { expected = countOf(expectedCountries), actual = countOf(liveC), missing = cMissing },
+	}
+end
+
+function DataOverlay.readProvmapV3()
+	return (rawReadKey(PROVMAP_KEY)) or {}
+end
+
+-- Flip the schema flag to v3 (the atomic commit point) / back to v2 (rollback). Boot reads this
+-- flag first and selects the key family accordingly. Neither call moves any aggregate data.
+function DataOverlay.commitCollapse()
+	local ok, err = writeSchemaVersion(COLLAPSED_VERSION)
+	if ok then
+		cache.collapsed = true
+		-- Invalidate so the next read reloads aggregates from the @v3 key family (the in-memory
+		-- cache still holds v2 serial-keyed data; a save now would write it to the wrong keys).
+		cache.loaded = false
+	end
+	return ok, err
+end
+
+function DataOverlay.rollbackCollapse()
+	local ok, err = writeSchemaVersion(SCHEMA_VERSION)
+	if ok then
+		cache.collapsed = false
+		cache.loaded = false
+	end
+	return ok, err
+end
+
+-- Relay safety: while collapsed but not yet relay-verified, suppress relay pushes so a freshly
+-- migrated universe cannot mirror part-id edits into a paired universe that is still on v2.
+function DataOverlay.relaySuppressed()
+	ensureLoaded()
+	if not cache.collapsed then return false end
+	if cache.relayVerified == nil then
+		local meta = rawReadKey(RELAY_VERIFIED_KEY)
+		cache.relayVerified = type(meta) == "table" and meta.verified == true
+	end
+	return not cache.relayVerified
+end
+
+function DataOverlay.setRelayVerified()
+	local ok, err = rawWriteKey(RELAY_VERIFIED_KEY, { verified = true, stampedAt = os.time() })
+	if ok then cache.relayVerified = true end
+	return ok, err
 end
 
 function DataOverlay.invalidate()

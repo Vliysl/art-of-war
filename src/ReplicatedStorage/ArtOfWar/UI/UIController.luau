@@ -12,7 +12,6 @@ local TopBar = require(uiFolder:WaitForChild("TopBar"))
 local CountryPanel = require(uiFolder:WaitForChild("CountryPanel"))
 local ProvinceTooltip = require(uiFolder:WaitForChild("ProvinceTooltip"))
 local ProvinceDetailPanel = require(uiFolder:WaitForChild("ProvinceDetailPanel"))
-local ProvinceCodes = require(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Modules"):WaitForChild("ProvinceCodes"))
 local ArmyPanel = require(uiFolder:WaitForChild("ArmyPanel"))
 local ClaimScreen = require(uiFolder:WaitForChild("ClaimScreen"))
 local BottomBar = require(uiFolder:WaitForChild("BottomBar"))
@@ -343,8 +342,7 @@ local function recordForPart(part)
 	local ownerCountry = ClientStateCache.getCountry(owner)
 	local rawName = part:GetAttribute("province_name") or part.Name
 	local prettyName = tostring(rawName):gsub("^prov_%d+_", ""):gsub("_", " ")
-	local code = part:GetAttribute("province_code") or ProvinceCodes.fromPartName(part.Name)
-	return {
+	local code = part:GetAttribute("province_code")	return {
 		id              = nil,
 		code            = code,
 		name            = prettyName,
@@ -515,7 +513,7 @@ local function onHoverProvince(part)
 		local prettyFallbackName = tostring(rawFallbackName):gsub("^prov_%d+_", ""):gsub("_", " ")
 		local fallback = {
 			id = nil,
-			code = part:GetAttribute("province_code") or ProvinceCodes.fromPartName(part.Name),
+			code = part:GetAttribute("province_code"),
 			name = prettyFallbackName,
 			displayCityName = prettyFallbackName,
 			ownerTag = owner,

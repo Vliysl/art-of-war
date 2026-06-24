@@ -7,7 +7,6 @@ local rightWrapLookup = {}
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SOURCE_EU4_MAP = require(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Data"):WaitForChild("EU4IDMap"))
-local ProvinceCodes = require(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Modules"):WaitForChild("ProvinceCodes"))
 
 local EU4_ID_MAP = {}
 for k, v in pairs(SOURCE_EU4_MAP) do EU4_ID_MAP[k] = v end
@@ -23,6 +22,28 @@ do
 			end
 		end
 	end
+end
+
+-- Identity-collapse mode. When the DataOverlay schema is v3, province ids ARE map part ids, so the
+-- eu4Map bridge is bypassed: the part is found directly by the province id. Refreshed from the
+-- overlay at stamp time (and at register) since the overlay loads its schema flag at boot.
+local COLLAPSED = false
+local function refreshMode()
+	local services = game:GetService("ServerStorage"):FindFirstChild("Services")
+	local overlayMod = services and services:FindFirstChild("DataOverlay")
+	if overlayMod then
+		local ok, overlay = pcall(require, overlayMod)
+		if ok and overlay and overlay.isCollapsed then
+			local okC, collapsed = pcall(overlay.isCollapsed)
+			if okC then COLLAPSED = collapsed == true end
+		end
+	end
+end
+
+-- Resolve a province id to its physical part id. v3: the id IS the part id. v2: bridge via eu4Map.
+local function resolvePartId(provinceId)
+	if COLLAPSED then return provinceId end
+	return EU4_ID_MAP[provinceId]
 end
 
 local YIELD_EVERY = 500
@@ -107,7 +128,6 @@ end
 
 local function writeAttrs(part, record)
 	part:SetAttribute("province_id", record.id)
-	part:SetAttribute("province_code", ProvinceCodes.fromRecord(record, part.Name))
 	part:SetAttribute("province_name", record.displayCityName or record.name)
 	part:SetAttribute("owner", record.ownerTag)
 	part:SetAttribute("controller", record.controllerTag)
@@ -144,7 +164,7 @@ end
 local function stampOne(provinceId)
 	local record = ctx.WorldState.getProvince(provinceId)
 	if not record then return false end
-	local eu4Pid = EU4_ID_MAP[provinceId]
+	local eu4Pid = resolvePartId(provinceId)
 	if not eu4Pid then return false end
 	local part = partLookup[eu4Pid]
 	if not part then return false end
@@ -288,13 +308,14 @@ function ProvinceStamper.setTileOwner(partName, ownerTag)
 end
 
 function ProvinceStamper.stamp()
+	refreshMode()
 	buildLookups()
 	applyTileMaterials()
 	local provinces = ctx.WorldState.allProvinces()
 	local stamped, unmatched, processed = 0, 0, 0
 	for seedId, record in provinces do
 		processed += 1
-		local eu4Pid = EU4_ID_MAP[seedId]
+		local eu4Pid = resolvePartId(seedId)
 		if eu4Pid then
 			local part = partLookup[eu4Pid]
 			if part then
@@ -311,10 +332,30 @@ function ProvinceStamper.stamp()
 	stampUnowned()
 	applyTileOwnershipOverlay()
 	if unmatched > 0 then
-		warn(string.format("[ProvinceStamper] %d seed provinces had no matching EU4 part", unmatched))
+		warn(string.format("[ProvinceStamper] %d seed provinces had no matching map part", unmatched))
 	end
 	local map = workspace:FindFirstChild("ArtOfWarMap")
 	if map then map:SetAttribute("provincesStamped", true) end
+	return stamped
+end
+
+-- Delta stamp: only stamp provinces whose part has not been stamped yet (province_id attribute
+-- absent). Used by the boot self-heal loop so recovering late records/mappings doesn't re-stamp
+-- all ~2,800 provinces on every retry. Assumes lookups are already built (stamp() ran at boot).
+function ProvinceStamper.stampMissing()
+	refreshMode()
+	if next(partLookup) == nil then buildLookups() end
+	local stamped, processed = 0, 0
+	for seedId, record in ctx.WorldState.allProvinces() do
+		processed += 1
+		local eu4Pid = resolvePartId(seedId)
+		local part = eu4Pid and partLookup[eu4Pid]
+		if part and part:GetAttribute("province_id") == nil then
+			stampTriple(part, record)
+			stamped += 1
+		end
+		if processed % YIELD_EVERY == 0 then task.wait() end
+	end
 	return stamped
 end
 
@@ -323,8 +364,15 @@ end
 -- about to get) a real seed, so it never creates a duplicate mapping for the same part.
 function ProvinceStamper.mappedPartIds()
 	local set = {}
-	for _, eu4Pid in pairs(EU4_ID_MAP) do
-		set[eu4Pid] = true
+	if COLLAPSED then
+		-- v3: every registered province's id IS a mapped part id.
+		for provinceId in ctx.WorldState.allProvinces() do
+			set[provinceId] = true
+		end
+	else
+		for _, eu4Pid in pairs(EU4_ID_MAP) do
+			set[eu4Pid] = true
+		end
 	end
 	return set
 end
@@ -357,9 +405,12 @@ end
 
 function ProvinceStamper.register(context)
 	ctx = context
+	refreshMode()
 	ProvinceStamper.api = {
 		stampOne = stampOne,
 		stamp = ProvinceStamper.stamp,
+		stampMissing = ProvinceStamper.stampMissing,
+		isCollapsed = function() return COLLAPSED end,
 		setTileOwner = ProvinceStamper.setTileOwner,
 		applyTileOwnership = ProvinceStamper.applyTileOwnership,
 		refreshEU4Mappings = ProvinceStamper.refreshEU4Mappings,

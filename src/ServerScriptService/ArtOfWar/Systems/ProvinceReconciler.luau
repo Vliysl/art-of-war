@@ -160,9 +160,17 @@ function ProvinceReconciler.reconcile()
 		return a.eu4Pid < b.eu4Pid
 	end)
 
+	-- v3 (collapsed): a tile's part number IS its province id, so register it under that id directly
+	-- (no serial allocation, no eu4Map bridge). v2: take the next id above the current max.
+	local collapsed = stamper.isCollapsed and stamper.isCollapsed() == true
 	for _, entry in ipairs(broken) do
-		maxId += 1
-		local newId = maxId
+		local newId
+		if collapsed then
+			newId = entry.eu4Pid
+		else
+			maxId += 1
+			newId = maxId
+		end
 		local record = buildRecord(entry.part, newId, entry.owner, nearestRecord(entry.part.Position))
 		registry.registerProvince(newId, record)
 		stamper.registerProvincePart(newId, entry.eu4Pid)
