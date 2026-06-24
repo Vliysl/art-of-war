@@ -109,7 +109,7 @@ local function buildStatics(army, fromPos, toPos)
 		end
 	end
 
-	for _, h in ipairs(MoveArrowRender.arrowhead(lastPos, prevPos, { color = COLOR_SHAFT, width = WIDTH, thickness = THICK, transparency = 0.05 })) do
+	for _, h in ipairs(MoveArrowRender.solidArrowhead(lastPos, prevPos, { color = COLOR_SHAFT, width = WIDTH, thickness = THICK, transparency = 0.05 })) do
 		h.Parent = arrowsFolder
 		statics[#statics + 1] = h
 	end

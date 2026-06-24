@@ -202,7 +202,7 @@ local function clearLines()
 	activeLines = {}
 end
 
-local ARROW_WIDTH = 6.5
+local ARROW_WIDTH = 9
 local ARROW_THICK = 0.4
 
 -- Draw the route as a chunky flat ground arrow (shaft per leg + chevron head at the destination),
@@ -222,7 +222,7 @@ local function renderPath(path, color)
 		color = color,
 		width = ARROW_WIDTH,
 		thickness = ARROW_THICK,
-		transparency = 0.12,
+		transparency = 0,
 	})
 	for _, part in ipairs(parts) do
 		part.Name = "PathArrow"
