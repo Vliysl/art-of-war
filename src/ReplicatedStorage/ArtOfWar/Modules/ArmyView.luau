@@ -11,6 +11,7 @@ local ClientStateCache = require(aow.Modules:WaitForChild("ClientStateCache"))
 local ProvinceInteraction = require(aow.Modules:WaitForChild("ProvinceInteraction"))
 local MapModeController = require(aow.Modules:WaitForChild("MapModeController"))
 local CameraController = require(aow.Modules:WaitForChild("CameraController"))
+local ProvincePositions = require(aow.Modules:WaitForChild("ProvincePositions"))
 
 local STATE_ICON = {
 	idle = "",
@@ -101,7 +102,6 @@ local selectedArmyId = nil
 local selectedArmyIds = {}          -- multi-selection set
 local armiesFolder = nil
 local mapFolder = nil
-local provincesFolder = nil
 local heartbeatConn = nil
 local renderConn = nil
 local stateSub, battleSub, countriesSub, snapshotSub, provinceSub
@@ -116,7 +116,6 @@ local function ensureFolder()
 	if armiesFolder and armiesFolder.Parent then return armiesFolder end
 	mapFolder = workspace:FindFirstChild("ArtOfWarMap")
 	if not mapFolder then return nil end
-	provincesFolder = mapFolder:FindFirstChild("Provinces")
 	armiesFolder = mapFolder:FindFirstChild("Armies")
 	if not armiesFolder then
 		armiesFolder = Instance.new("Folder")
@@ -127,17 +126,9 @@ local function ensureFolder()
 end
 
 local function locateProvincePart(provinceId)
-	if not provincesFolder then
-		mapFolder = workspace:FindFirstChild("ArtOfWarMap")
-		provincesFolder = mapFolder and mapFolder:FindFirstChild("Provinces")
-	end
-	if not provincesFolder then return nil end
-	for _, part in provincesFolder:GetChildren() do
-		if part:IsA("BasePart") and part:GetAttribute("province_id") == provinceId then
-			return part
-		end
-	end
-	return nil
+	-- Resolve by the stable part NAME (via ProvincePositions), never the stale province_id attribute,
+	-- so a unit token never caches a wrong (e.g. ocean) position during the boot re-stamp window.
+	return ProvincePositions.partOf(provinceId)
 end
 
 local function provinceCenter(provinceId)

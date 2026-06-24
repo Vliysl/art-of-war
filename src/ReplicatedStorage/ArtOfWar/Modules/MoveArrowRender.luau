@@ -239,15 +239,20 @@ function MoveArrowRender.buildArrow(points, opts)
 		if d < 0.02 then
 			return
 		end
-		local mid = (a + b) * 0.5
+		-- Lengthen each plank only BACKWARD (toward `a`, over the previous joint) and keep the FAR
+		-- end exactly at `b`. That way the last shaft segment ends precisely at the arrowhead base
+		-- instead of poking `overlap/2` into the narrowing head (which clipped through it).
+		local a2 = a - (b - a).Unit * overlap
+		local len = d + overlap
+		local mid = (a2 + b) * 0.5
 		local o = Instance.new("Part")
 		configPart(o, outlineColor, outT, material)
-		o.Size = Vector3.new(width + border * 2, thick, d + overlap)
+		o.Size = Vector3.new(width + border * 2, thick, len)
 		o.CFrame = CFrame.lookAt(mid - LOWER, b - LOWER)
 		parts[#parts + 1] = o
 		local p = Instance.new("Part")
 		configPart(p, color, topT, material)
-		p.Size = Vector3.new(width, thick, d + overlap)
+		p.Size = Vector3.new(width, thick, len)
 		p.CFrame = CFrame.lookAt(mid, b)
 		parts[#parts + 1] = p
 	end

@@ -420,6 +420,13 @@ InputValidator.register("CancelTradeOrder", {
 InputValidator.register("RequestFullState", {
 	rate = { count = 2, window = 30 },
 })
+InputValidator.register("RequestPreviewPath", {
+	schema = {
+		{ name = "fromProvinceId", type = "integer" },
+		{ name = "toProvinceId", type = "integer" },
+	},
+	rate = { count = 30, window = 5 },
+})
 InputValidator.register("SetIdeology", {
 	schema = { { name = "ideologyId", type = "policyId" } },
 	rate = { count = 2, window = 15 },
@@ -937,6 +944,17 @@ bindEvent("MoveArmyPath", function(player, armyId, finalProvinceId)
 	if not army or army.ownerTag ~= tag then return end
 	local ok, reason = system.beginMovePath(armyId, finalProvinceId)
 	if not ok and reason then notifyMoveRejected(tag, reason) end
+end)
+
+-- Server-authoritative move PREVIEW: returns the exact route the player's army would take, so the
+-- client renders the real path instead of recomputing its own (which could diverge from movement).
+bindFunction("RequestPreviewPath", function(player, fromProvinceId, toProvinceId)
+	local auth = authority()
+	local system = loadedSystems.MovementSystem
+	if not auth or not system or not system.computePreviewPath then return nil end
+	local tag = auth.tagFor(player)
+	if not tag then return nil end
+	return system.computePreviewPath(fromProvinceId, toProvinceId, tag)
 end)
 
 bindEvent("CancelMove", function(player, armyId)

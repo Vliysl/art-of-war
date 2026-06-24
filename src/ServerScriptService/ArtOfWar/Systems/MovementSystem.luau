@@ -187,6 +187,37 @@ local function beginMovePath(armyId, finalProvinceId)
 	return true
 end
 
+-- Read-only preview: the EXACT route an army owned by `ownerTag` would take from `fromProvinceId`
+-- to `toProvinceId` right now -- same AdjacencyGraph + traversability gate that beginMovePath uses,
+-- so the client preview is guaranteed identical to the actual move. Returns
+--   { ok = bool, blocked = bool, hostile = bool, nodes = { provinceId... } }
+-- where nodes includes the start province. blocked => no friendly path (client draws a stub).
+local function computePreviewPath(fromProvinceId, toProvinceId, ownerTag)
+	fromProvinceId = tonumber(fromProvinceId)
+	toProvinceId = tonumber(toProvinceId)
+	if not fromProvinceId or not toProvinceId then return { ok = false } end
+	if fromProvinceId == toProvinceId then return { ok = true, nodes = {} } end
+
+	local destProv = ctx.WorldState.getProvince(toProvinceId)
+	local hostile = destProv ~= nil and destProv.controllerTag ~= nil
+		and destProv.controllerTag ~= ownerTag and destProv.controllerTag ~= "NONE"
+		and destProv.controllerTag ~= ""
+
+	if not ctx.AdjacencyGraph.isRegistered(fromProvinceId) or not ctx.AdjacencyGraph.isRegistered(toProvinceId) then
+		return { ok = true, blocked = true, hostile = hostile, nodes = { fromProvinceId, toProvinceId } }
+	end
+	-- Mirror beginMovePath: the final tile is always steppable (so you can land on a hostile target).
+	local function passable(provId)
+		if provId == toProvinceId then return true end
+		return provinceTraversable(provId, ownerTag)
+	end
+	local path = ctx.AdjacencyGraph.findPath(fromProvinceId, toProvinceId, passable)
+	if not path or #path < 2 then
+		return { ok = true, blocked = true, hostile = hostile, nodes = { fromProvinceId, toProvinceId } }
+	end
+	return { ok = true, blocked = false, hostile = hostile, nodes = path }
+end
+
 local function continuePath(army)
 	local mp = army.movementPath
 	if not mp then return end
@@ -273,6 +304,7 @@ function MovementSystem.register(context)
 		cancelMovement = cancelMovement,
 		effectiveSpeed = effectiveSpeed,
 		continuePath = continuePath,
+		computePreviewPath = computePreviewPath,
 	}
 	context.MovementSystem = api
 	for k, v in pairs(api) do MovementSystem[k] = v end
