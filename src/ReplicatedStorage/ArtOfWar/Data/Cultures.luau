@@ -1,4 +1,15 @@
 return {
+	-- Added 2026-06-24: registry-gap cultures surfaced by the world-data accuracy audit.
+	uyghur = { id = "uyghur", displayName = "Uyghur", groupId = "turkic" },
+	yakut = { id = "yakut", displayName = "Yakut (Sakha)", groupId = "turkic" },
+	aboriginal_australian = { id = "aboriginal_australian", displayName = "Aboriginal Australian", groupId = "australian_aboriginal" },
+	omotic = { id = "omotic", displayName = "Omotic", groupId = "ethiopian" },
+	slovene = { id = "slovene", displayName = "Slovene", groupId = "slavic_south" },
+	evenk = { id = "evenk", displayName = "Evenk", groupId = "siberian" },
+	chukchi = { id = "chukchi", displayName = "Chukchi", groupId = "siberian" },
+	koryak = { id = "koryak", displayName = "Koryak", groupId = "siberian" },
+	buryat = { id = "buryat", displayName = "Buryat", groupId = "mongolic" },
+	tsimshian = { id = "tsimshian", displayName = "Tsimshian", groupId = "tlingit_group" },
 	acehnese = { id = "acehnese", displayName = "Acehnese", groupId = "austronesian" },
 	afrikaner = { id = "afrikaner", displayName = "Afrikaner", groupId = "germanic" },
 	ahom = { id = "ahom", displayName = "Ahom", groupId = "tai" },

@@ -1,4 +1,6 @@
 return {
+	australian_aboriginal = { id = "australian_aboriginal", displayName = "Aboriginal Australian" },
+	siberian = { id = "siberian", displayName = "Siberian" },
 	latin = { id = "latin", displayName = "Latin" },
 	iberian = { id = "iberian", displayName = "Iberian" },
 	british = { id = "british", displayName = "British" },
