@@ -23,6 +23,7 @@ local targetFrames = 0
 local hoverClock = 0
 
 local onHovered, onSelected, onWater, onRightClicked = nil, nil, nil, nil
+local onDragSelected = nil
 local selectListeners = {}
 local multiSelectListeners = {}
 local hoverListeners = {}
@@ -137,6 +138,7 @@ end
 
 local CLICK_DRAG_THRESHOLD = 6
 local mb1DownPos = nil
+local mb1Dragging = false
 local mb2Down = false
 local mb2DownProvince = nil
 local mb2Moved = false
@@ -341,6 +343,59 @@ function ProvinceInteraction.clearSelectionSilent()
 	clearSelectionSilent()
 end
 
+-- Drag-select rectangle. A small 2D box drawn while the player left-drags over the map. The GUI uses
+-- IgnoreGuiInset so its (0,0) matches GetMouseLocation / WorldToViewportPoint space, keeping the box
+-- aligned with the cursor and consistent with the army hit-test (ArmyView.selectArmiesInScreenRect).
+local dragGui, dragFrame
+local function ensureDragGui()
+	if dragFrame and dragFrame.Parent then
+		return dragFrame
+	end
+	local player = Players.LocalPlayer
+	local pg = player and player:FindFirstChildOfClass("PlayerGui")
+	if not pg then
+		return nil
+	end
+	dragGui = Instance.new("ScreenGui")
+	dragGui.Name = "AoWDragSelect"
+	dragGui.ResetOnSpawn = false
+	dragGui.IgnoreGuiInset = true
+	dragGui.DisplayOrder = 50
+	dragGui.Parent = pg
+
+	dragFrame = Instance.new("Frame")
+	dragFrame.Name = "Box"
+	dragFrame.BackgroundColor3 = SELECT_FILL
+	dragFrame.BackgroundTransparency = 0.8
+	dragFrame.BorderSizePixel = 0
+	dragFrame.Visible = false
+	dragFrame.ZIndex = 10
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = SELECT_OUTLINE
+	stroke.Thickness = 1.5
+	stroke.Transparency = 0.1
+	stroke.Parent = dragFrame
+	dragFrame.Parent = dragGui
+	return dragFrame
+end
+
+local function updateDragRect(a, b)
+	local frame = ensureDragGui()
+	if not frame then
+		return
+	end
+	local minX, minY = math.min(a.X, b.X), math.min(a.Y, b.Y)
+	frame.Position = UDim2.fromOffset(minX, minY)
+	frame.Size = UDim2.fromOffset(math.abs(a.X - b.X), math.abs(a.Y - b.Y))
+	frame.Visible = true
+end
+
+local function hideDragRect()
+	if dragFrame then
+		dragFrame.Visible = false
+	end
+end
+
 function ProvinceInteraction.init()
 	ensureHighlights()
 	rebuildFilter()
@@ -432,6 +487,7 @@ function ProvinceInteraction.init()
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then
 			local mp = UserInputService:GetMouseLocation()
 			mb1DownPos = Vector2.new(mp.X, mp.Y)
+			mb1Dragging = false
 		end
 	end)
 
@@ -440,6 +496,20 @@ function ProvinceInteraction.init()
 			mb2Accum += math.abs(input.Delta.X) + math.abs(input.Delta.Y)
 			if mb2Accum > CLICK_DRAG_THRESHOLD then
 				mb2Moved = true
+			end
+		end
+		-- Left-drag = box select. Once the press travels past the click threshold, draw the
+		-- selection rectangle and keep it tracking the cursor until release.
+		if mb1DownPos and input.UserInputType == Enum.UserInputType.MouseMovement then
+			local mp = UserInputService:GetMouseLocation()
+			if not mb1Dragging then
+				if math.abs(mp.X - mb1DownPos.X) > CLICK_DRAG_THRESHOLD
+					or math.abs(mp.Y - mb1DownPos.Y) > CLICK_DRAG_THRESHOLD then
+					mb1Dragging = true
+				end
+			end
+			if mb1Dragging then
+				updateDragRect(mb1DownPos, Vector2.new(mp.X, mp.Y))
 			end
 		end
 	end)
@@ -466,18 +536,33 @@ function ProvinceInteraction.init()
 			return
 		end
 		local downPos = mb1DownPos
+		local wasDragging = mb1Dragging
 		mb1DownPos = nil
+		mb1Dragging = false
+		-- Box-select takes priority: a drag resolves the rectangle and skips single-click selection.
+		if wasDragging then
+			hideDragRect()
+			if downPos and onDragSelected then
+				local mp = UserInputService:GetMouseLocation()
+				local minV = Vector2.new(math.min(downPos.X, mp.X), math.min(downPos.Y, mp.Y))
+				local maxV = Vector2.new(math.max(downPos.X, mp.X), math.max(downPos.Y, mp.Y))
+				local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+					or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
+				onDragSelected(minV, maxV, shift)
+			end
+			return
+		end
 		if not downPos or processed then
 			return
 		end
 		if isMouseOverUI() then
 			return
 		end
-		local mp = UserInputService:GetMouseLocation()
-		if math.abs(mp.X - downPos.X) > CLICK_DRAG_THRESHOLD or math.abs(mp.Y - downPos.Y) > CLICK_DRAG_THRESHOLD then
-			return
-		end
-		if tryClassifierRaycasts() then
+		local alt = UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt)
+			or UserInputService:IsKeyDown(Enum.KeyCode.RightAlt)
+		-- Alt bypasses unit selection so a click selects the TILE under a unit (the underlying
+		-- province is inspectable even when an army token sits on top of it).
+		if not alt and tryClassifierRaycasts() then
 			-- A classifier (e.g. ArmyView) already handled this click and selected a unit.
 			-- Clear the province highlight silently so we don't deselect that unit; the
 			-- province detail panel is hidden by the army-selected listener in UIController.
@@ -514,6 +599,11 @@ function ProvinceInteraction.onWater(cb)
 end
 function ProvinceInteraction.onRightClick(cb)
 	onRightClicked = cb
+end
+-- cb(rectMin: Vector2, rectMax: Vector2, additive: boolean) fired when a left-drag box select ends.
+-- Coordinates are in viewport space (GetMouseLocation / WorldToViewportPoint).
+function ProvinceInteraction.onDragSelect(cb)
+	onDragSelected = cb
 end
 function ProvinceInteraction.setRightClickPredicate(fn)
 	rightClickArmed = (type(fn) == "function") and fn or function()

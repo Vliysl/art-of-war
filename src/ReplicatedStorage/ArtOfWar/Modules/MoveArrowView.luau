@@ -23,10 +23,8 @@ local FILL_LIFT_EPS = 0.3
 local WIDTH = MoveArrowRender.DEFAULT_WIDTH or 7
 local THICK = 0.45
 local FILL_WIDTH = WIDTH * 0.72
-local HEAD_LEN = 11 -- arrowhead length; the shaft stops this far short of the tip so they don't clip
 
 local COLOR_SHAFT = Color3.fromRGB(34, 32, 40)   -- dark body / unfilled track
-local COLOR_QUEUED = Color3.fromRGB(74, 86, 116)  -- faint future legs
 local COLOR_FILL = Color3.fromRGB(245, 205, 70)   -- yellow "charging" fill
 
 local mapFolder, provincesFolder, arrowsFolder
@@ -87,12 +85,13 @@ local function destroyArrow(armyId)
 	arrows[armyId] = nil
 end
 
--- Dark shaft for the current leg + faint planks for queued legs + an arrowhead at the final tile.
--- The FINAL plank stops `HEAD_LEN` short of the destination so the arrowhead continues cleanly from
--- the shaft instead of clipping into it.
+-- Dark smoothed banner over the whole route (current leg + any queued steps) ending in a solid
+-- arrowhead at the final tile. Uses the SAME smoothed geometry as the hover preview
+-- (MoveArrowRender.buildArrow: Chaikin + resample + overlapping two-layer ribbon) so the committed
+-- arrow flows as one continuous banner instead of zig-zagging plank-to-plank between centroids.
 local function buildStatics(army, fromPos, toPos)
 	local statics = {}
-	-- Ordered leg endpoints: current leg (fromPos -> toPos), then any queued steps.
+	-- Ordered route: current leg (fromPos -> toPos), then any queued steps.
 	local points = { fromPos, toPos }
 	local mp = army.movementPath
 	if mp and mp.steps then
@@ -101,29 +100,15 @@ local function buildStatics(army, fromPos, toPos)
 			if c then points[#points + 1] = c end
 		end
 	end
-	local lastPos = points[#points]
-	local prevPos = points[#points - 1]
-	local toHead = lastPos - prevPos
-	local headDir = toHead.Magnitude > 1e-3 and toHead.Unit or Vector3.new(0, 0, 1)
-	local headLen = math.min(HEAD_LEN, toHead.Magnitude * 0.9)
-	local shaftEnd = lastPos - headDir * headLen
 
-	for i = 1, #points - 1 do
-		local a = points[i]
-		local b = (i == #points - 1) and shaftEnd or points[i + 1] -- last plank stops short for the head
-		local isCurrent = (i == 1)
-		local leg = MoveArrowRender.plank(a, b, {
-			color = isCurrent and COLOR_SHAFT or COLOR_QUEUED,
-			width = isCurrent and WIDTH or WIDTH * 0.85,
-			thickness = THICK,
-			transparency = isCurrent and 0.05 or 0.4,
-		})
-		if leg then leg.Parent = arrowsFolder; statics[#statics + 1] = leg end
-	end
-
-	for _, h in ipairs(MoveArrowRender.solidArrowhead(lastPos, shaftEnd, { color = COLOR_SHAFT, width = WIDTH, thickness = THICK, transparency = 0.05, headLength = headLen })) do
-		h.Parent = arrowsFolder
-		statics[#statics + 1] = h
+	for _, p in ipairs(MoveArrowRender.buildArrow(points, {
+		color = COLOR_SHAFT,
+		width = WIDTH,
+		thickness = THICK,
+		transparency = 0.05,
+	})) do
+		p.Parent = arrowsFolder
+		statics[#statics + 1] = p
 	end
 	return statics
 end

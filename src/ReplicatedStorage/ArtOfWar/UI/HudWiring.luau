@@ -751,8 +751,29 @@ function HudWiring.start(modules)
 				for _, armyId in ipairs(sel) do
 					fire("MoveArmyPath", armyId, id)
 				end
+				-- Issuing the move drops the selection (HOI4-style): clear the preview, deselect the
+				-- stack, and close the army panel. The in-progress move arrow is driven by replicated
+				-- state (MoveArrowView), not selection, so it stays visible after deselect.
 				if PathPreview and PathPreview.clear then
 					PathPreview.clear()
+				end
+				if ArmyView and ArmyView.deselect then
+					ArmyView.deselect()
+				end
+				Hud.closeContext()
+			end)
+		end
+
+		-- Drag-box select: select every owned army stack inside the rectangle. Shift adds to the
+		-- current selection. An empty (non-additive) box clears the selection and closes the panel.
+		if ArmyView and ArmyView.selectArmiesInScreenRect and ProvinceInteraction.onDragSelect then
+			ProvinceInteraction.onDragSelect(function(rectMin, rectMax, additive)
+				local n = ArmyView.selectArmiesInScreenRect(rectMin, rectMax, additive)
+				if (not n or n == 0) and not additive then
+					Hud.closeContext()
+					if PathPreview and PathPreview.clear then
+						PathPreview.clear()
+					end
 				end
 			end)
 		end

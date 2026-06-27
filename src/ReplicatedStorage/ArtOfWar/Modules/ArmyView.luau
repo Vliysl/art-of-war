@@ -44,7 +44,7 @@ local INFANTRY_UNIT_IDS = {
 }
 
 local MUSKETEER_TEMPLATE = nil
-local MUSKETEER_TARGET_HEIGHT = 12  -- world studs (model spans this much vertically after scaling)
+local MUSKETEER_TARGET_HEIGHT = 16.8  -- world studs (model spans this much vertically after scaling; 40% larger than the original 12)
 
 local function getMusketeerTemplate()
 	if MUSKETEER_TEMPLATE then return MUSKETEER_TEMPLATE end
@@ -62,12 +62,11 @@ end
 
 
 local BASE_LIFT = 1
-local MOVING_LIFT = 4
-local RETREAT_LIFT = 6
 -- HOI4-style movement: the token WAITS at its origin while the move arrow fills
--- (server-timed), then plays this quick cosmetic "hop" into the new tile on arrival.
+-- (server-timed), then glides straight into the new tile on arrival. The glide is a flat
+-- slide (no vertical arc) at the terrain-derived height, so the unit never bounces and
+-- never creeps upward over repeated moves.
 local HOP_TIME = 0.35
-local HOP_ARC = 7
 
 -- Reduced sizes — disc fits comfortably inside an ~86-stud province.
 -- The Base cylinder is laid flat: Cylinder shape's axis is along its X-axis.
@@ -798,7 +797,8 @@ local function buildMusketeerModel(armyId, factionColor)
 	-- Find the Head for BillboardGui adornee.
 	local head = model:FindFirstChild("Head") or model.PrimaryPart
 
-	local bb = buildBannerGui(head, Vector3.new(0, 18, 0), factionColor)
+	-- Offset scaled with the 40%-larger model so the label keeps clearance above the taller head.
+	local bb = buildBannerGui(head, Vector3.new(0, 25, 0), factionColor)
 	bb.Parent = head
 
 	-- Selection highlight on the model
@@ -819,13 +819,45 @@ local function buildMusketeerModel(armyId, factionColor)
 	return model
 end
 
+-- Unit tokens are pure presentation: never collide with the map, each other, or the player.
+-- The builders already set this, but enforce it uniformly here so a stray colliding part in a
+-- model template (or a future builder) can't reintroduce physics shoving.
+local function ensureNoCollide(model)
+	if not model then return end
+	for _, p in model:GetDescendants() do
+		if p:IsA("BasePart") then
+			p.CanCollide = false
+			p.CanTouch = false
+		end
+	end
+end
+
+-- Zero any residual velocity on un-anchored rig parts (the musketeer limbs). The HumanoidRootPart
+-- is anchored so the assembly should already be inert, but this is cheap insurance against a limb
+-- retaining motion after a glide and slowly floating the visible mesh off the token.
+local function zeroModelVelocity(model)
+	if not model then return end
+	for _, p in model:GetDescendants() do
+		if p:IsA("BasePart") and not p.Anchored then
+			pcall(function()
+				p.AssemblyLinearVelocity = Vector3.zero
+				p.AssemblyAngularVelocity = Vector3.zero
+			end)
+		end
+	end
+end
+
 -- Dispatch builder: choose model based on dominant unit's modelType.
 local function buildModel(armyId, factionColor, dominantUnitId)
 	local mt = modelTypeFor(dominantUnitId)
+	local model
 	if mt == "musketeer" then
-		return buildMusketeerModel(armyId, factionColor)
+		model = buildMusketeerModel(armyId, factionColor)
+	else
+		model = buildBannerPinModel(armyId, factionColor)
 	end
-	return buildBannerPinModel(armyId, factionColor)
+	ensureNoCollide(model)
+	return model
 end
 
 local function applyTransparency(model, target)
@@ -879,14 +911,12 @@ local function computePosition(army, state)
 	local center = provinceCenter(army.provinceId)
 	if not center then return nil end
 	local x, z, topY = center.x, center.z, center.topY
-	local lift = 0
 
-	if state == "moving" or state == "retreating" then
-		-- The token holds at its ORIGIN province while the move arrow fills (the
-		-- army's provinceId stays the origin until the server relocates it on
-		-- completion, which then triggers the arrival hop). No continuous slide.
-		lift = state == "retreating" and RETREAT_LIFT or MOVING_LIFT
-	elseif state == "attacking" then
+	-- The token holds at its ORIGIN province while the move arrow fills (its provinceId
+	-- stays the origin until the server relocates it on completion, which then triggers the
+	-- arrival glide). It sits at terrain height the whole time -- no moving/retreat lift, so
+	-- there is no vertical snap when a move is ordered and no upward drift over repeated moves.
+	if state == "attacking" then
 		local origin = army.originProvinceId and provinceCenter(army.originProvinceId)
 		if origin then
 			x = center.x + (origin.x - center.x) * 0.3
@@ -902,7 +932,7 @@ local function computePosition(army, state)
 	end
 
 	-- (No hover-expand: only the strongest per stack is rendered, always centered.)
-	local y = topY + BASE_LIFT + lift + modelLift
+	local y = topY + BASE_LIFT + modelLift
 	return Vector3.new(x, y, z)
 end
 
@@ -1287,6 +1317,33 @@ function ArmyView.getSelectedArmyIds()
 	return list
 end
 
+-- Drag-box select: select every locally-owned army stack whose rendered token projects inside the
+-- given viewport-space rectangle. One model is rendered per stack, so we collect the provinces those
+-- tokens sit on and select each FULL stack (matching click-to-select). `additive` (Shift) adds to the
+-- current selection; otherwise it replaces. Returns the number of armies now selected.
+function ArmyView.selectArmiesInScreenRect(rectMin, rectMax, additive)
+	local cam = workspace.CurrentCamera
+	if not cam then return 0 end
+	if not additive then ArmyView.deselect() end
+	local allArmies = ClientStateCache.allArmies()
+	local provincesHit = {}
+	for armyId, model in pairs(armyParts) do
+		local army = allArmies[armyId]
+		if army and model and model.Parent and isLocallyOwned(army.ownerTag) then
+			local sp, onScreen = cam:WorldToViewportPoint(model:GetPivot().Position)
+			if onScreen and sp.X >= rectMin.X and sp.X <= rectMax.X and sp.Y >= rectMin.Y and sp.Y <= rectMax.Y then
+				provincesHit[army.provinceId] = true
+			end
+		end
+	end
+	for provinceId in pairs(provincesHit) do
+		selectStackOnProvince(provinceId, true) -- add the whole stack (additive within the box)
+	end
+	local count = 0
+	for _ in pairs(selectedArmyIds) do count += 1 end
+	return count
+end
+
 function ArmyView.setBundle(bundle)
 	bundleRef = bundle
 	-- Force re-render of banner text after bundle becomes known
@@ -1424,9 +1481,12 @@ function ArmyView.init()
 				hopState[armyId] = nil
 			else
 				local a = math.clamp((now - hop.t0) / HOP_TIME, 0, 1)
-				local p = hop.from:Lerp(hop.to, a)
-				p = Vector3.new(p.X, p.Y + math.sin(a * math.pi) * HOP_ARC, p.Z)
-				-- Face the direction of travel during the hop, and keep that heading.
+				-- Smoothstep ease-in-out for a clean slide; NO vertical arc, so the token glides
+				-- straight from tile to tile (following terrain height between from/to) instead of
+				-- bouncing. Y is interpolated only between the two terrain-derived endpoints.
+				local e = a * a * (3 - 2 * a)
+				local p = hop.from:Lerp(hop.to, e)
+				-- Face the direction of travel during the glide, and keep that heading.
 				local flat = Vector3.new(hop.to.X - hop.from.X, 0, hop.to.Z - hop.from.Z)
 				if flat.Magnitude > 0.01 then
 					local dir = flat.Unit
@@ -1437,6 +1497,7 @@ function ArmyView.init()
 				end
 				if a >= 1 then
 					model:PivotTo(facingCFrame(armyId, hop.to, nil))
+					zeroModelVelocity(model)
 					hopState[armyId] = nil
 				end
 			end

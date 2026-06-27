@@ -21,7 +21,7 @@ local SMOOTH_ITERS = 2     -- Chaikin corner-cut passes (more = rounder bends)
 local RIBBON_SPACING = 14  -- studs between ribbon planks along the smoothed curve
 local RIBBON_MAX_SEG = 60  -- hard cap on ribbon planks (long paths just space out further)
 local RIBBON_BORDER = 1.4  -- half-width of the dark outline that peeks out past the colour
-local BUILD_HEAD_LEN = 20
+local BUILD_HEAD_LEN = 15 -- arrowhead length for buildArrow (shorter = stubbier, less awkward at bends)
 local BUILD_HEAD_WIDTH_MULT = 1.0 -- banner: point base width == body width (uniform 5-sided banner)
 local OUTLINE_DARKEN = 0.62       -- how far the auto outline colour is lerped toward black
 local LOWER = Vector3.new(0, 0.06, 0) -- world-Y drop for the outline layer (sits just under the top)
@@ -122,8 +122,11 @@ function MoveArrowRender.solidArrowhead(tip, from, opts)
 	local parts = {}
 	for i = 0, slices - 1 do
 		local tc = (i + 0.5) / slices
+		-- Evaluate the taper at the slice's BACK edge so the first (base) slice is the full base width
+		-- and butts flush against the shaft instead of starting a half-slice in (which pinched the join).
+		local tcw = i / slices
 		local center = base:Lerp(tip, tc)
-		local w = math.max(halfBase * 2 * (1 - tc), 0.6)
+		local w = math.max(halfBase * 2 * (1 - tcw), 0.6)
 		local sliceLen = L / slices + 0.25 -- slight overlap along travel so slices read as one mass
 		local a = center - side * (w * 0.5)
 		local b = center + side * (w * 0.5)
@@ -227,47 +230,70 @@ function MoveArrowRender.buildArrow(points, opts)
 		pts = points
 	end
 
-	-- Head direction + the point where the shaft should stop so the head sits cleanly at the tip.
+	-- Head direction + the arrowhead base (ribbonEnd). The shaft is trimmed to END exactly at ribbonEnd
+	-- so the solid head sits cleanly past it -- even when the head is longer than one resample step
+	-- (otherwise the last full-size plank runs under the head base and the head clips into it).
 	local tip = pts[#pts]
 	local headDir = tip - pts[#pts - 1]
 	headDir = (headDir.Magnitude < 1e-3) and (points[#points] - points[1]) or headDir
 	headDir = headDir.Unit
-	local ribbonEnd = tip - headDir * headLen
+	local totalLen = 0
+	for i = 1, #pts - 1 do
+		totalLen += (pts[i + 1] - pts[i]).Magnitude
+	end
+	local hLen = math.min(headLen, totalLen * 0.6) -- never let the head exceed the whole arrow
+	local ribbonEnd = tip - headDir * hLen
 
-	local function ribbonSeg(a, b, topT, outT)
+	local function ribbonSeg(a, b, topT, outT, isLast)
 		local d = (b - a).Magnitude
 		if d < 0.02 then
 			return
 		end
-		-- Lengthen each plank only BACKWARD (toward `a`, over the previous joint) and keep the FAR
-		-- end exactly at `b`. That way the last shaft segment ends precisely at the arrowhead base
-		-- instead of poking `overlap/2` into the narrowing head (which clipped through it).
-		local a2 = a - (b - a).Unit * overlap
-		local len = d + overlap
-		local mid = (a2 + b) * 0.5
+		local dir = (b - a).Unit
+		-- Centre each plank over its own span, overhanging BOTH joints equally so neighbours overlap
+		-- symmetrically around each corner -- the bend then reads as one continuous ribbon. (Extending
+		-- only the back end pinned the plank at `b` and left the outside of every corner notched, which
+		-- looked choppy.) EXCEPTION: the final shaft segment (isLast) must end exactly at the arrowhead
+		-- base, so it overhangs backward only and never pokes into the narrowing head.
+		local a2, b2
+		if isLast then
+			a2 = a - dir * overlap
+			b2 = b
+		else
+			a2 = a - dir * (overlap * 0.5)
+			b2 = b + dir * (overlap * 0.5)
+		end
+		local len = (b2 - a2).Magnitude
+		local mid = (a2 + b2) * 0.5
 		local o = Instance.new("Part")
 		configPart(o, outlineColor, outT, material)
 		o.Size = Vector3.new(width + border * 2, thick, len)
-		o.CFrame = CFrame.lookAt(mid - LOWER, b - LOWER)
+		o.CFrame = CFrame.lookAt(mid - LOWER, b2 - LOWER)
 		parts[#parts + 1] = o
 		local p = Instance.new("Part")
 		configPart(p, color, topT, material)
 		p.Size = Vector3.new(width, thick, len)
-		p.CFrame = CFrame.lookAt(mid, b)
+		p.CFrame = CFrame.lookAt(mid, b2)
 		parts[#parts + 1] = p
 	end
 
-	-- Collect shaft segments (all but the head), then stop the last one at ribbonEnd.
-	local segs = {}
-	for i = 1, #pts - 2 do
-		segs[#segs + 1] = { pts[i], pts[i + 1] }
+	-- Trim the shaft to end EXACTLY at the arrowhead base: drop the trailing resampled points that fall
+	-- inside the head, then finish the shaft on ribbonEnd itself. The final plank is thus shortened to
+	-- make room for the head instead of the head clipping into a full-size plank.
+	local shaftPts = {}
+	for i = 1, #pts do
+		shaftPts[i] = pts[i]
 	end
-	local secondLast = pts[#pts - 1]
-	local toEnd = ribbonEnd - secondLast
-	local headFrom = secondLast
-	if toEnd.Magnitude > 0.5 and toEnd:Dot(headDir) > 0 then
-		segs[#segs + 1] = { secondLast, ribbonEnd }
-		headFrom = ribbonEnd
+	while #shaftPts > 1 and (shaftPts[#shaftPts] - ribbonEnd):Dot(headDir) > 0 do
+		shaftPts[#shaftPts] = nil
+	end
+	if (shaftPts[#shaftPts] - ribbonEnd).Magnitude > 0.5 then
+		shaftPts[#shaftPts + 1] = ribbonEnd
+	end
+
+	local segs = {}
+	for i = 1, #shaftPts - 1 do
+		segs[#segs + 1] = { shaftPts[i], shaftPts[i + 1] }
 	end
 
 	-- Draw the uniform-width banner body. Optional gentle fade-in over the first few segments.
@@ -278,15 +304,15 @@ function MoveArrowRender.buildArrow(points, opts)
 			topT = math.min(transparency + (0.4 - transparency) * (1 - fade), 0.4)
 			outT = math.min(outlineTransparency + (0.55 - outlineTransparency) * (1 - fade), 0.55)
 		end
-		ribbonSeg(seg[1], seg[2], topT, outT)
+		ribbonSeg(seg[1], seg[2], topT, outT, idx == #segs)
 	end
 
-	for _, h in ipairs(MoveArrowRender.solidArrowhead(tip, headFrom, {
+	for _, h in ipairs(MoveArrowRender.solidArrowhead(tip, ribbonEnd, {
 		color = color,
 		transparency = transparency,
 		material = material,
 		width = width,
-		headLength = headLen,
+		headLength = hLen,
 		headWidth = opts.headWidth,
 		thickness = thick,
 		border = border,
