@@ -132,18 +132,26 @@ local function squareButton(parent, variant, glyph, width, sizeKey, onClick, gly
 		lbl.TextXAlignment = Enum.TextXAlignment.Center
 		lbl.TextYAlignment = Enum.TextYAlignment.Center
 	end
-	-- Diamond styling: rotate the background square 45° into a diamond (the glyph label is a sibling of
-	-- Bg, not a child, so it stays upright), sized so the diamond's diagonal fits the button bounds, with
-	-- a faint inset inner border for the engraved "window" look. The TextButton isn't rotated, so the
-	-- click area is unchanged. Hover/disabled tweens still target Bg, so they keep working.
+	-- Diamond styling: rotate a SQUARE background 45° (the glyph label is a sibling of Bg, not a child,
+	-- so it stays upright). The square side comes from the SMALLER button dimension so the diamond is
+	-- symmetric (the button is a touch taller than wide, which skewed it). Sharp points (no UICorner);
+	-- a stronger outer border (the variant stroke, thickened) + a paler inset inner border. The
+	-- TextButton isn't rotated, so the click area is unchanged; hover/disabled tweens still target Bg.
 	local bg = btn:FindFirstChild("Bg")
 	if bg then
+		local w, h = btn.Size.X.Offset, btn.Size.Y.Offset
+		local side = math.min(w > 0 and w or h, h) * 0.72
 		bg.AnchorPoint = Vector2.new(0.5, 0.5)
 		bg.Position = UDim2.fromScale(0.5, 0.5)
-		bg.Size = UDim2.fromScale(0.7, 0.7)
+		bg.Size = UDim2.fromOffset(side, side)
 		bg.Rotation = 45
+		-- Sharp diamond points: drop the rounded corner.
 		local corner = bg:FindFirstChildOfClass("UICorner")
-		if corner then corner.CornerRadius = UDim.new(0, 3) end
+		if corner then corner:Destroy() end
+		-- Outer border = the stronger tone (slightly thicker so it reads as the dominant edge).
+		local outer = bg:FindFirstChildOfClass("UIStroke")
+		if outer then outer.Thickness = 1.5 end
+		-- Inner border = a paler, inset line (sharp, no UICorner).
 		local inner = Instance.new("Frame")
 		inner.Name = "InnerBorder"
 		inner.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -151,13 +159,10 @@ local function squareButton(parent, variant, glyph, width, sizeKey, onClick, gly
 		inner.Size = UDim2.new(1, -6, 1, -6)
 		inner.BackgroundTransparency = 1
 		inner.ZIndex = bg.ZIndex + 1
-		local ic = Instance.new("UICorner")
-		ic.CornerRadius = UDim.new(0, 2)
-		ic.Parent = inner
 		local istroke = Instance.new("UIStroke")
-		istroke.Color = Colors.BorderActive
+		istroke.Color = Colors.BorderSubtle
 		istroke.Thickness = 1
-		istroke.Transparency = 0.55
+		istroke.Transparency = 0.15
 		istroke.Parent = inner
 		inner.Parent = bg
 	end
