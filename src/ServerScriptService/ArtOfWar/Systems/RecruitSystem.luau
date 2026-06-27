@@ -55,109 +55,99 @@ local function unitOf(unitTypeId)
 end
 
 -- ---------------------------------------------------------------------
--- Manpower pools: Levies vs Professionals (spec 6.5.2 / B.5, Phase 4).
--- unit.class ("levy"|"professional") picks the country pool field:
---   levy -> country.levyManpower (capped by country.levyCap from provinces)
---   professional -> country.manpower (the existing pool; legacy behavior)
+-- Manpower: a single UNIFIED national pool (country.manpower) capped by
+-- country.manpowerCap. The cap is population-based -- each owned+controlled
+-- province contributes max(floor(population * ManpowerPopFraction),
+-- ManpowerProvinceFloor). The old levy/professional split is gone: every unit
+-- draws from country.manpower. Regen is continuous (RoN-style) toward the cap.
+-- (The legacy province baseManpower factor is no longer used.)
 -- ---------------------------------------------------------------------
-local function poolFieldForUnit(unit)
-    if unit and unit.class == "levy" then return "levyManpower" end
+local function poolFieldForUnit(_unit)
     return "manpower"
 end
 
-local function isAcceptedCulture(country, cultureId)
-    if not cultureId then return true end
-    if country.primaryCulture == cultureId then return true end
-    local accepted = country.acceptedCultures
-    if type(accepted) == "table" then
-        for _, c in ipairs(accepted) do
-            if c == cultureId then return true end
-        end
-        if accepted[cultureId] then return true end
-    end
-    return false
-end
-
-local function provinceLevyContribution(province, country)
+local function provinceManpowerContribution(province)
     local C = ctx.WorldConstants
-    local baseMP = province.baseManpower or 0
-    if baseMP <= 0 then return 0 end
-    local devTier = province.devTier or 1
-    local devFactor = 1 + math.max(0, devTier - 1) * (C.LevyDevFactorPerTier or 0.1)
-    local cultureMod = isAcceptedCulture(country, province.culture) and 1 or (C.LevyForeignCultureMod or 0.5)
-    local autonomy = math.clamp(province.autonomy or 0, 0, 1)
-    local autonomyMod = 1 - autonomy * (C.LevyAutonomyMaxReduction or 1.0)
-    local conscription = C.LevyConscriptionDefault or 1.0
-    return baseMP * (C.LevyManpowerPerBaseMP or 250) * devFactor * cultureMod * autonomyMod * conscription
+    local pop = province.population or 0
+    local frac = C.ManpowerPopFraction or 0.15
+    local floorMP = C.ManpowerProvinceFloor or 5000
+    return math.max(math.floor(pop * frac), floorMP)
 end
 
--- Recompute every country's levyCap from owned+controlled provinces (occupied or
--- foreign-controlled provinces contribute 0). Lazy-inits levyManpower (starts full)
--- and clamps it down when the cap shrinks (lost land -> lost levy reserve).
-local function recomputeLevyCaps()
+-- Recompute every country's manpowerCap from owned+controlled provinces (occupied or
+-- foreign-controlled provinces contribute 0). Clamps current manpower down when the cap
+-- shrinks (lost land -> lost reserve).
+local function recomputeManpowerCaps()
     local caps = {}
     for _, province in ctx.WorldState.allProvinces() do
         local owner = province.ownerTag
         if owner and province.controllerTag == owner then
-            local country = ctx.WorldState.getCountry(owner)
-            if country then
-                caps[owner] = (caps[owner] or 0) + provinceLevyContribution(province, country)
-            end
+            caps[owner] = (caps[owner] or 0) + provinceManpowerContribution(province)
         end
     end
     for _, country in ctx.WorldState.allCountries() do
         local cap = math.floor(caps[country.tag] or 0)
         local changed = false
-        if country.levyCap ~= cap then country.levyCap = cap; changed = true end
-        if country.levyManpower == nil or country.levyManpower > cap then
-            country.levyManpower = cap; changed = true
-        end
+        if country.manpowerCap ~= cap then country.manpowerCap = cap; changed = true end
+        if (country.manpower or 0) > cap then country.manpower = cap; changed = true end
         if changed then ctx.WorldState.setCountry(country.tag, country) end
     end
 end
 
--- Monthly regen: levies regen LevyRegenPerMonthPct of cap; professionals only if a
--- professionalCap + ProfessionalRegenPerMonthPct are set (HOOK, off by default).
-local function regenManpower()
+-- Convert a system tick's sim-second delta into in-game days (mirrors TickScheduler's
+-- dayAccumulator: 1 unit of effectiveDelta/SecondsPerSimTick == daysPerTick days).
+local function inGameDaysFromDelta(deltaSeconds, year)
     local C = ctx.WorldConstants
-    recomputeLevyCaps()
-    local levyPct = C.LevyRegenPerMonthPct or 0.05
-    local proPct = C.ProfessionalRegenPerMonthPct or 0
+    local secs = C.SecondsPerSimTick or 1.5
+    if secs <= 0 or not deltaSeconds or deltaSeconds <= 0 then return 0 end
+    local daysPerTick = (year <= (C.EarlyEraCutoffYear or 0))
+        and (C.DaysPerEarlyTick or 1) or (C.DaysPerLateTick or 1)
+    return (deltaSeconds / secs) * daysPerTick
+end
+
+-- Continuous (RoN-style) regen of the unified pool toward the cap, paced by in-game days so it
+-- respects pause/speed. Also clamps current down if the cap shrank.
+local function regenManpower(systemCtx)
+    local C = ctx.WorldConstants
+    local perDay = C.ManpowerRegenPerDay or 0.003
+    local year = (systemCtx and systemCtx.gameDate and systemCtx.gameDate.year) or 0
+    local frac = perDay * inGameDaysFromDelta(systemCtx and systemCtx.deltaSeconds, year)
     for _, country in ctx.WorldState.allCountries() do
-        local changed = false
-        local cap = country.levyCap or 0
-        local cur = country.levyManpower or 0
-        if cur < cap then
-            country.levyManpower = math.min(cap, cur + cap * levyPct)
-            changed = true
+        local cap = country.manpowerCap or 0
+        local cur = country.manpower or 0
+        local newCur = cur
+        if cur > cap then
+            newCur = cap
+        elseif cur < cap and frac > 0 then
+            newCur = math.min(cap, cur + cap * frac)
         end
-        if proPct > 0 and country.professionalCap and (country.manpower or 0) < country.professionalCap then
-            country.manpower = math.min(country.professionalCap, (country.manpower or 0) + country.professionalCap * proPct)
-            changed = true
+        if newCur ~= cur then
+            country.manpower = newCur
+            ctx.WorldState.setCountry(country.tag, country)
         end
-        if changed then ctx.WorldState.setCountry(country.tag, country) end
     end
 end
 
--- Fires every ManpowerRegenTickInterval but only ACTS on an in-game month change
--- (mirrors ArmySystem's year*12+month month-index pattern). First run inits caps.
+-- Recompute caps on first run + each in-game month (land changes are rare); regen continuously every
+-- tick. On first run, start every country at full manpower (discards the static data-editor seed).
 local lastManpowerMonthIndex = nil
+local manpowerInited = false
 local function manpowerTick(systemCtx)
     local gd = systemCtx and systemCtx.gameDate
     local idx = gd and (gd.year * 12 + (gd.month - 1)) or nil
-    if idx == nil then
-        if lastManpowerMonthIndex == nil then lastManpowerMonthIndex = -1; recomputeLevyCaps() end
+    if not manpowerInited or (idx and idx ~= lastManpowerMonthIndex) then
+        recomputeManpowerCaps()
+        lastManpowerMonthIndex = idx
+    end
+    if not manpowerInited then
+        manpowerInited = true
+        for _, country in ctx.WorldState.allCountries() do
+            country.manpower = country.manpowerCap or 0
+            ctx.WorldState.setCountry(country.tag, country)
+        end
         return
     end
-    if lastManpowerMonthIndex == nil then
-        lastManpowerMonthIndex = idx
-        recomputeLevyCaps()
-        return
-    end
-    if idx > lastManpowerMonthIndex then
-        lastManpowerMonthIndex = idx
-        regenManpower()
-    end
+    regenManpower(systemCtx)
 end
 
 local function provinceSupportsRecruit(province, tag)
@@ -325,7 +315,7 @@ function RecruitSystem.register(context)
 		queueLengthAt = queueLengthAt,
 		cancelQueueForCountry = cancelQueueForCountry,
 		cancelTicket = cancelTicket,
-		recomputeLevyCaps = recomputeLevyCaps,
+		recomputeManpowerCaps = recomputeManpowerCaps,
 	}
 	for k, v in pairs(context.RecruitSystem) do RecruitSystem[k] = v end
 	context.TickScheduler.register({

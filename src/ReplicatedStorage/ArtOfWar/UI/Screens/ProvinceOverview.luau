@@ -132,6 +132,35 @@ local function squareButton(parent, variant, glyph, width, sizeKey, onClick, gly
 		lbl.TextXAlignment = Enum.TextXAlignment.Center
 		lbl.TextYAlignment = Enum.TextYAlignment.Center
 	end
+	-- Diamond styling: rotate the background square 45° into a diamond (the glyph label is a sibling of
+	-- Bg, not a child, so it stays upright), sized so the diamond's diagonal fits the button bounds, with
+	-- a faint inset inner border for the engraved "window" look. The TextButton isn't rotated, so the
+	-- click area is unchanged. Hover/disabled tweens still target Bg, so they keep working.
+	local bg = btn:FindFirstChild("Bg")
+	if bg then
+		bg.AnchorPoint = Vector2.new(0.5, 0.5)
+		bg.Position = UDim2.fromScale(0.5, 0.5)
+		bg.Size = UDim2.fromScale(0.7, 0.7)
+		bg.Rotation = 45
+		local corner = bg:FindFirstChildOfClass("UICorner")
+		if corner then corner.CornerRadius = UDim.new(0, 3) end
+		local inner = Instance.new("Frame")
+		inner.Name = "InnerBorder"
+		inner.AnchorPoint = Vector2.new(0.5, 0.5)
+		inner.Position = UDim2.fromScale(0.5, 0.5)
+		inner.Size = UDim2.new(1, -6, 1, -6)
+		inner.BackgroundTransparency = 1
+		inner.ZIndex = bg.ZIndex + 1
+		local ic = Instance.new("UICorner")
+		ic.CornerRadius = UDim.new(0, 2)
+		ic.Parent = inner
+		local istroke = Instance.new("UIStroke")
+		istroke.Color = Colors.BorderActive
+		istroke.Thickness = 1
+		istroke.Transparency = 0.55
+		istroke.Parent = inner
+		inner.Parent = bg
+	end
 	return btn
 end
 
@@ -196,17 +225,12 @@ local function actionRow(parent, cfg)
 		track.BackgroundColor3 = Colors.SurfaceSunken
 		track.BorderSizePixel = 0
 		track.Parent = row
-		local tc = Instance.new("UICorner")
-		tc.CornerRadius = UDim.new(0, 3)
-		tc.Parent = track
+		-- Sharp corners (no UICorner) per design.
 		local fill = Instance.new("Frame")
 		fill.Size = UDim2.fromScale(pct, 1)
 		fill.BackgroundColor3 = Colors.Warning
 		fill.BorderSizePixel = 0
 		fill.Parent = track
-		local fc = Instance.new("UICorner")
-		fc.CornerRadius = UDim.new(0, 3)
-		fc.Parent = fill
 	end
 
 	if cfg.tooltip then
@@ -434,39 +458,77 @@ function ProvinceOverview.create(ctx)
 			valueColor = "positive",
 			layoutOrder = 15,
 		})
-		ScreenKit.stat(body, { icon = "Manpower", label = "Manpower", value = val(prov.manpower), layoutOrder = 16 })
+		-- National manpower as current / max with a bar (replaces the old static per-province baseManpower
+		-- value), mirroring the dev/infra "value/max" presentation.
+		local mpCountry = country()
+		local function fmtMP(n)
+			n = math.floor(tonumber(n) or 0)
+			return (n >= 1000) and string.format("%.1fK", n / 1000) or tostring(n)
+		end
+		ScreenKit.stat(body, {
+			icon = "Manpower",
+			label = "Manpower",
+			value = mpCountry and string.format("%s / %s", fmtMP(mpCountry.manpower), fmtMP(mpCountry.manpowerCap))
+				or "\u{2014}",
+			progress = mpCountry and {
+				value = mpCountry.manpower or 0,
+				max = math.max(1, mpCountry.manpowerCap or 1),
+				color = "amber",
+			} or nil,
+			mono = true,
+			layoutOrder = 16,
+		})
 	end
 
 	function renderers.recruitment(body)
 		ScreenKit.section(body, "Recruitment Queue", 1)
 		local c = country()
 		local queue = (c and c.recruitQueue) or {}
-		local shown, order = 0, 2
+		-- Group this province's tickets by unit type into ONE row each (×N), so spamming the same unit
+		-- reads "Irregular Forces ×3" instead of three rows. Progress = the ACTIVE (soonest-completing)
+		-- ticket; the cancel ✕ drops the most-recently-queued ticket of the group (one at a time).
+		local groups, groupOrder = {}, {}
 		for _, item in ipairs(queue) do
 			if item.provinceId == prov.id then
-				shown += 1
-				local def = unitTypes()[item.unitTypeId]
-				local name = (def and def.displayName) or titleCase(item.unitTypeId)
-				if (item.count or 1) > 1 then
-					name = name .. "  \u{00D7}" .. item.count
+				local g = groups[item.unitTypeId]
+				if not g then
+					g = { unitTypeId = item.unitTypeId, count = 0, active = item, lastId = item.id, lastQueuedAt = -math.huge }
+					groups[item.unitTypeId] = g
+					groupOrder[#groupOrder + 1] = g
 				end
-				actionRow(body, {
-					order = order,
-					icon = "Army",
-					label = name,
-					progress = { value = progressOf(item.queuedAt, item.completesAt) * 100, max = 100 },
-					button = {
-						text = "\u{00D7}",
-						variant = "danger",
-						onClick = function()
-							ctx.fire("CancelRecruit", item.id)
-						end,
-					},
-				})
-				order += 1
+				g.count += (item.count or 1)
+				if (item.completesAt or math.huge) < (g.active.completesAt or math.huge) then
+					g.active = item
+				end
+				if (item.queuedAt or 0) >= g.lastQueuedAt then
+					g.lastQueuedAt = item.queuedAt or 0
+					g.lastId = item.id
+				end
 			end
 		end
-		if shown == 0 then
+		local order = 2
+		for _, g in ipairs(groupOrder) do
+			local def = unitTypes()[g.unitTypeId]
+			local name = (def and def.displayName) or titleCase(g.unitTypeId)
+			if g.count > 1 then
+				name = name .. "  \u{00D7}" .. g.count
+			end
+			actionRow(body, {
+				order = order,
+				icon = "Army",
+				label = name,
+				progress = { value = progressOf(g.active.queuedAt, g.active.completesAt) * 100, max = 100 },
+				button = {
+					text = "\u{00D7}",
+					variant = "danger",
+					onClick = function()
+						ctx.fire("CancelRecruit", g.lastId)
+					end,
+				},
+			})
+			order += 1
+		end
+		if #groupOrder == 0 then
 			ScreenKit.note(body, "No regiments recruiting here.", 2)
 		end
 

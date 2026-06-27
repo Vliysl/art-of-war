@@ -281,16 +281,6 @@ local FACE_TAG_MONO = Font.new("rbxasset://fonts/families/RobotoMono.json", Enum
 local OVH_BORDER = Color3.fromRGB(58, 47, 31) -- province-panel CountryBadge subtle border
 local OVH_TAGWHITE = Color3.fromRGB(245, 241, 232) -- province-panel CountryBadge tag colour
 local BANNER_SCALE = 0.85 -- constant on-screen label size (keeps aspect ratio); the size knob
--- Ornamental corner brackets for the count box: the game's button-corner assets (UIAssets.Btn.Bracket
--- TL/TR/BL/BR), rendered at NATIVE colour like UIBuilder's secondaryButton (tinting them killed them on
--- the dark plate). { assetId, anchor }.
-local CORNER_INSET = 2
-local CORNER_BRACKETS = {
-	{ "rbxassetid://101772359800958", Vector2.new(0, 0) },
-	{ "rbxassetid://91624005154949", Vector2.new(1, 0) },
-	{ "rbxassetid://81066501291130", Vector2.new(0, 1) },
-	{ "rbxassetid://139060617878581", Vector2.new(1, 1) },
-}
 -- A Roblox BillboardGui with an Offset Size GROWS on-screen as the camera gets farther (the "too big
 -- when zoomed out" quirk). To hold a CONSTANT on-screen size we counter it every frame: scale the label
 -- by LABEL_REF_DISTANCE / (camera->army distance). Labels also hide past LABEL_HIDE_ZOOM for a clean
@@ -395,39 +385,25 @@ local function buildBannerGui(adornee, studsOffset, _factionColor)
 	boxStroke.Thickness = 1
 	boxStroke.Transparency = 0.3
 	boxStroke.Parent = box
-	local boxSheen = Instance.new("Frame")
-	boxSheen.Name = "Sheen"
-	boxSheen.Size = UDim2.fromScale(1, 1)
-	boxSheen.BackgroundColor3 = Color3.fromRGB(255, 240, 210)
-	boxSheen.BorderSizePixel = 0
-	boxSheen.ZIndex = 1
-	boxSheen.Parent = box
-	local boxSheenCorner = Instance.new("UICorner")
-	boxSheenCorner.CornerRadius = UDim.new(0, 4)
-	boxSheenCorner.Parent = boxSheen
-	local boxGrad = Instance.new("UIGradient")
-	boxGrad.Rotation = 90
-	boxGrad.Transparency = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0.86),
-		NumberSequenceKeypoint.new(1, 1),
-	})
-	boxGrad.Parent = boxSheen
+	-- (Decluttered: the gradient sheen + ornamental corner brackets were removed so a screen full of
+	-- banners reads cleanly during big battles. The box is now a plain dark plate.)
 
-	-- Ornamental corner brackets on the count box (native gold; the game's button-corner ornaments).
-	for _, c in ipairs(CORNER_BRACKETS) do
-		local a = c[2]
-		local brk = Instance.new("ImageLabel")
-		brk.Name = "Corner"
-		brk.BackgroundTransparency = 1
-		brk.Image = c[1]
-		brk.ScaleType = Enum.ScaleType.Fit
-		brk.Size = UDim2.fromOffset(12, 12)
-		brk.AnchorPoint = a
-		brk.Position =
-			UDim2.new(a.X, a.X == 0 and CORNER_INSET or -CORNER_INSET, a.Y, a.Y == 0 and CORNER_INSET or -CORNER_INSET)
-		brk.ZIndex = box.ZIndex + 4
-		brk.Parent = box
-	end
+	-- Occupied/siege marker: a small flag glyph at the box's top-right, shown ALWAYS (even when the
+	-- detail bars are hidden) while this army is occupying/sieging its tile. reconcileOne toggles it.
+	local occGlyph = Instance.new("TextLabel")
+	occGlyph.Name = "OccupyGlyph"
+	occGlyph.AnchorPoint = Vector2.new(1, 0)
+	occGlyph.Position = UDim2.fromOffset(167, 5)
+	occGlyph.Size = UDim2.fromOffset(13, 13)
+	occGlyph.BackgroundTransparency = 1
+	occGlyph.Text = "\u{2691}"
+	occGlyph.TextColor3 = Color3.fromRGB(235, 196, 90)
+	occGlyph.TextScaled = true
+	occGlyph.TextStrokeTransparency = 0.4
+	occGlyph.TextStrokeColor3 = OVH_PLATE
+	occGlyph.Visible = false
+	occGlyph.ZIndex = box.ZIndex + 5
+	occGlyph.Parent = bg
 
 	-- Morale (green) + Organization (yellow) thin bars below the count box (reconcileOne fills them).
 	-- Direct children of bg so bg:FindFirstChild resolves MoraleFill/OrgFill.
@@ -439,6 +415,7 @@ local function buildBannerGui(adornee, studsOffset, _factionColor)
 		track.BackgroundColor3 = Color3.fromRGB(40, 30, 18)
 		track.BackgroundTransparency = 0.1
 		track.BorderSizePixel = 0
+		track.Visible = false -- detail bar: revealed only when the unit is selected or in combat
 		track.ZIndex = 2
 		track.Parent = bg
 		local tc = Instance.new("UICorner")
@@ -1086,42 +1063,50 @@ local function reconcileOne(armyId)
 			or (model:FindFirstChild("Head") and model.Head:FindFirstChild("Label"))
 		local vbg = vlabel and vlabel:FindFirstChild("Bg")
 		if vbg then
-			-- Entrenchment: shovel + level, hidden at 0.
+			-- Declutter: the morale/org/entrenchment/capture detail bars are hidden by default and reveal
+			-- ONLY when this unit is selected or in active combat -- so a screen full of banners stays
+			-- readable during big battles. The crest + count box (and the occupy glyph) are always shown.
+			local inCombat = (army.battleId ~= nil) or state == "attacking" or state == "defending"
+			local showDetails = inCombat or (selectedArmyIds[armyId] == true)
+
+			-- Entrenchment: shovel + level (detail; also needs entrenchment > 0).
 			local entIcon = vbg:FindFirstChild("EntShovel")
 			local entVal = vbg:FindFirstChild("EntValue")
 			local entLevel = math.floor(army.entrenchment or 0)
-			if entIcon then entIcon.Visible = entLevel > 0 end
+			if entIcon then entIcon.Visible = showDetails and entLevel > 0 end
 			if entVal then
-				entVal.Visible = entLevel > 0
+				entVal.Visible = showDetails and entLevel > 0
 				entVal.Text = tostring(entLevel)
 			end
 
-			-- Morale (green) + Organization (yellow) bars below the box.
+			-- Morale (green) + Organization (yellow) bars (detail).
 			local moraleTrack = vbg:FindFirstChild("MoraleTrack")
 			local moraleFill = moraleTrack and moraleTrack:FindFirstChild("MoraleFill")
+			if moraleTrack then moraleTrack.Visible = showDetails end
 			if moraleFill then
 				moraleFill.Size = UDim2.fromScale(math.clamp((army.morale or 0) / 100, 0, 1), 1)
 			end
 			local orgTrack = vbg:FindFirstChild("OrgTrack")
 			local orgFill = orgTrack and orgTrack:FindFirstChild("OrgFill")
+			if orgTrack then orgTrack.Visible = showDetails end
 			if orgFill then
 				local baseOrg = army.baseOrganization or 10
 				orgFill.Size = UDim2.fromScale(math.clamp((army.organization or baseOrg) / baseOrg, 0, 1), 1)
 			end
 
-			-- Capture progress: shown while this army is the occupier of its current province.
+			-- Occupation: a persistent flag glyph whenever this army is the occupier (always visible, so
+			-- the signal survives when the detail bars are hidden) + the capture progress bar (detail only).
+			local prov = ClientStateCache.getProvince(army.provinceId)
+			local occ = prov and prov.occupation
+			local occupying = occ ~= nil and occ.byTag == army.ownerTag and (occ.required or 0) > 0
+			local occGlyph = vbg:FindFirstChild("OccupyGlyph")
+			if occGlyph then occGlyph.Visible = occupying end
 			local capTrack = vbg:FindFirstChild("CaptureTrack")
 			local capFill = capTrack and capTrack:FindFirstChild("CaptureFill")
 			if capTrack then
-				local prov = ClientStateCache.getProvince(army.provinceId)
-				local occ = prov and prov.occupation
-				if occ and occ.byTag == army.ownerTag and (occ.required or 0) > 0 then
-					capTrack.Visible = true
-					if capFill then
-						capFill.Size = UDim2.fromScale(math.clamp((occ.progress or 0) / occ.required, 0, 1), 1)
-					end
-				else
-					capTrack.Visible = false
+				capTrack.Visible = occupying and showDetails
+				if capFill and occupying then
+					capFill.Size = UDim2.fromScale(math.clamp((occ.progress or 0) / occ.required, 0, 1), 1)
 				end
 			end
 		end
@@ -1264,11 +1249,13 @@ function ArmyView.focusArmy(armyId, additive)
 				local hl = prev:FindFirstChild("Selection")
 				if hl then hl.Enabled = false end
 			end
+			dirtyArmies[prevId] = true -- re-run reconcile so its banner details hide
 		end
 		selectedArmyIds = {}
 	end
 	selectedArmyIds[armyId] = true
 	selectedArmyId = armyId  -- track most recent
+	dirtyArmies[armyId] = true -- re-run reconcile so its banner details reveal
 
 	local model = armyParts[armyId]
 	if model then
@@ -1289,6 +1276,7 @@ function ArmyView.deselect()
 			local hl = model:FindFirstChild("Selection")
 			if hl then hl.Enabled = false end
 		end
+		dirtyArmies[armyId] = true -- re-run reconcile so its banner details hide
 	end
 	selectedArmyIds = {}
 	selectedArmyId = nil

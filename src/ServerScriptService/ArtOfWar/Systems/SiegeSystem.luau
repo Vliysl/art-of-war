@@ -11,13 +11,6 @@ local function isUnowned(tag)
 	return tag == nil or tag == "" or tag == "NONE"
 end
 
-local function getBattleAt(provinceId)
-	for _, b in ctx.WorldState.allBattles() do
-		if b.provinceId == provinceId then return b end
-	end
-	return nil
-end
-
 local function fortTierFor(prov)
 	return prov and (prov.effectiveFortTier or prov.fortTier or 0) or 0
 end
@@ -26,13 +19,19 @@ local activeSieges = {}
 
 local function tickSiege()
 	local C = ctx.WorldConstants
+	-- Provinces with an active battle (one pass) so the per-army siege check below is O(1) instead of
+	-- O(battles) per army -- the old getBattleAt-per-army call made this O(armies x battles).
+	local battleProvince = {}
+	for _, b in ctx.WorldState.allBattles() do
+		if b.provinceId then battleProvince[b.provinceId] = true end
+	end
 	-- Resolve a single uncontested besieger per province.
 	local occupierOf, contested, besiegers = {}, {}, {}
 	for _, army in ctx.WorldState.allArmies() do
 		local pid = army.provinceId
 		local prov = pid and ctx.WorldState.getProvince(pid)
 		if prov and army.ownerTag and prov.controllerTag ~= army.ownerTag
-			and not army.battleId and not getBattleAt(pid) then
+			and not army.battleId and not battleProvince[pid] then
 			local controller = prov.controllerTag
 			local mayOccupy = isUnowned(controller)
 			if not mayOccupy and ctx.DiplomacySystem and ctx.DiplomacySystem.areAtWar then

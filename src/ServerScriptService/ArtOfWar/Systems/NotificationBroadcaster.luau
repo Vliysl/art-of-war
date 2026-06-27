@@ -55,18 +55,8 @@ local function makePayload(kind, title, body, audience, tag, eventType, extra)
 	return payload
 end
 
-local function onArmyCreated(data)
-	broadcast(makePayload("info", "Army Raised",
-		string.format("Regiments assembled in %s.", tostring(data.provinceId or "?")),
-		"self", data.tag, "army.created"))
-end
-
-local function onArmyMoveCompleted(data)
-	-- quiet success; only notify owner
-	broadcast(makePayload("info", "Army Arrived",
-		string.format("Your force has reached province %s.", tostring(data.provinceId or "?")),
-		"self", data.tag, "army.move.completed"))
-end
+-- "Army Raised" / "Army Arrived" toasts intentionally removed (too noisy during normal play).
+-- The ArmyCreated / ArmyMoveCompleted events still fire for other systems; we just don't toast them.
 
 local function onProvinceOccupied(data)
 	broadcast(makePayload("good", "Province Occupied",
@@ -263,8 +253,6 @@ local SUBSCRIPTIONS = {
 	PeaceConcluded          = onPeaceConcluded,
 	PeaceProposalRejected   = onPeaceProposalRejected,
 	PeaceProposalExpired    = onPeaceProposalExpired,
-	ArmyCreated             = onArmyCreated,
-	ArmyMoveCompleted       = onArmyMoveCompleted,
 	ProvinceOccupied        = onProvinceOccupied,
 	BattleStarted           = onBattleStarted,
 	BattleResolved          = onBattleResolved,

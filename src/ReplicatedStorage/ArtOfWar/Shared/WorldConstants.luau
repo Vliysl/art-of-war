@@ -177,7 +177,7 @@ WorldConstants.CombatTerrainDefaultWidth = 60
 WorldConstants.CombatTerrainMinWidth = 30
 WorldConstants.CombatEntrenchmentMax = 5
 WorldConstants.CombatEntrenchmentDailyGain = 0.25
-WorldConstants.CombatEntrenchmentDefensePerLevel = 0.02
+WorldConstants.CombatEntrenchmentDefensePerLevel = 0.03 -- +3%/level (max 5 => +15% def); rewards digging in
 WorldConstants.CombatEntrenchmentResetStrengthLossPct = 0.10
 
 -- =====================================================================
@@ -193,13 +193,13 @@ WorldConstants.CombatRoundTicks = 1
 WorldConstants.CombatDamageScale = 10 -- net damage -> strength casualties
 WorldConstants.CombatDefenderCounterHi = 0.6
 WorldConstants.CombatDefenderCounterLo = 0.3
-WorldConstants.CombatRoundCasualtyCap = 0.20 -- max fraction of a side lost per round
+WorldConstants.CombatRoundCasualtyCap = 0.15 -- max fraction of a side lost per round (lowered: more attritional, time to react)
 -- Resolution by ROUT (morale/org), not strength attrition:
 WorldConstants.CombatMoraleRoutFloor = 30 -- a formation routs at/below this morale
 WorldConstants.CombatRoutFraction = 0.5 -- side breaks when >= this strength-frac routed
 WorldConstants.CombatOrgBreakRatio = 0.15 -- or aggregate org ratio below this
 WorldConstants.CombatMoraleRoundBase = 1 -- morale lost per round under fire
-WorldConstants.CombatMoraleCasualtyScale = 140 -- extra morale lost scaled by casualty ratio
+WorldConstants.CombatMoraleCasualtyScale = 120 -- extra morale lost scaled by casualty ratio (softened so org/strength decide more)
 WorldConstants.CombatOrgRoundBase = 0 -- org lost per round (0 = casualty-driven only)
 WorldConstants.CombatOrgCasualtyScale = 12 -- org lost scaled by casualty ratio
 -- Discipline per unit class (folds into offense/defense); data wired Phase 2/4.
@@ -240,7 +240,14 @@ WorldConstants.LevyAutonomyMaxReduction = 1.0 -- levy x (1 - autonomy*this) (aut
 WorldConstants.LevyConscriptionDefault = 1.0 -- HOOK: conscription-law multiplier (Politics out of scope)
 WorldConstants.LevyRegenPerMonthPct = 0.05 -- levy pool regens 5%/mo of cap (peacetime)
 WorldConstants.ProfessionalRegenPerMonthPct = 0 -- HOOK: pro regen (laws/barracks out of scope; 0 = legacy static)
-WorldConstants.ManpowerRegenTickInterval = 6 -- scheduler cadence (effective s); actual regen is month-gated
+WorldConstants.ManpowerRegenTickInterval = 6 -- scheduler cadence (effective s); regen is continuous per in-game day
+
+-- Unified population-based manpower (replaces the levy/professional split above, now dormant).
+-- Each owned+controlled province contributes max(floor(population * ManpowerPopFraction),
+-- ManpowerProvinceFloor) to country.manpowerCap; country.manpower regens continuously toward it.
+WorldConstants.ManpowerPopFraction = 0.15 -- manpower cap contribution = 15% of province population
+WorldConstants.ManpowerProvinceFloor = 5000 -- ...but at least 5K per owned+controlled province
+WorldConstants.ManpowerRegenPerDay = 0.003 -- fraction of cap regenerated per in-game day (~11 months to full)
 WorldConstants.AttritionTickInterval = 6
 
 -- Diplomacy

@@ -1,10 +1,14 @@
--- PathPreview: the move-route PREVIEW shown while hovering a destination with an army selected.
+-- PathPreview: the move-route PREVIEW(s) shown while hovering a destination with armies selected.
 --
 -- Server-authoritative: the client no longer maintains its own adjacency graph or pathfinder (which
--- could diverge from the server's actual movement). It asks the server for the exact route the army
+-- could diverge from the server's actual movement). It asks the server for the exact route each army
 -- would take (RequestPreviewPath -> MovementSystem.computePreviewPath, the same findPath +
 -- traversability beginMovePath uses) and just renders it. Province world positions are resolved by
 -- the stable part NAME via ProvincePositions (never the runtime province_id attribute).
+--
+-- Multi-select: one preview "lane" per distinct ORIGIN province (so a multi-selection shows one route
+-- per origin, matching how each committed move gets its own MoveArrowView arrow). Each lane has its own
+-- single-flight guard + coalescing + watchdog, so a slow/hung reply for one lane can't wedge the others.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MoveArrowRender = require(script.Parent:WaitForChild("MoveArrowRender"))
@@ -18,22 +22,13 @@ local ARROW_THICK = 0.4
 local PATH_COLOR_FRIENDLY = Color3.fromRGB(120, 220, 255)
 local PATH_COLOR_HOSTILE = Color3.fromRGB(220, 80, 80)
 local PATH_COLOR_BLOCKED = Color3.fromRGB(180, 90, 90)
+local INVOKE_TIMEOUT = 5 -- seconds before a lane's in-flight guard is force-released
+local MAX_LANES = 12 -- bound the number of simultaneous hover requests during a big multi-select
 
 local mapFolder = nil
 local previewFolder = nil
-local activeLines = {}
-local requestSeq = 0 -- bumped on every dispatch/clear(); only the latest hover's response is drawn
 local remoteFn = nil
-
--- Request throttling. Sweeping the cursor fires show() on every hovered-province change (~30/s);
--- each used to spawn its own blocking InvokeServer with no guard, so a slow/hung reply could stack
--- requests and wedge the preview until the unit was reselected. Now at most ONE invoke is in flight;
--- newer targets coalesce into pending and fire when it returns, and a watchdog releases the guard if
--- the server never replies.
-local inFlight = false        -- true while an InvokeServer is outstanding
-local pendingFrom, pendingTo  -- latest target requested while a call was in flight (coalesced)
-local lastFrom, lastTo        -- target currently shown / requested (dedupe identical re-requests)
-local INVOKE_TIMEOUT = 5      -- seconds before the in-flight guard is force-released
+local lanes = {} -- [key] = { key, folder, lines, lastFrom, lastTo, inFlight, seq, pendingFrom, pendingTo }
 
 local function ensurePreviewFolder()
 	mapFolder = workspace:FindFirstChild("ArtOfWarMap")
@@ -55,21 +50,32 @@ local function ensureRemote()
 	return remoteFn
 end
 
-local function clearLines()
-	for _, line in ipairs(activeLines) do
-		if line.Parent then line:Destroy() end
+local function laneFolder(lane)
+	if not previewFolder or not previewFolder.Parent then
+		if not ensurePreviewFolder() then return nil end
 	end
-	activeLines = {}
+	if lane.folder and lane.folder.Parent then return lane.folder end
+	local f = Instance.new("Folder")
+	f.Name = "lane_" .. tostring(lane.key)
+	f.Parent = previewFolder
+	lane.folder = f
+	return f
 end
 
--- Render a route (list of province ids) as the chunky ground arrow. Positions come from
--- ProvincePositions (part-name keyed), so they are correct from the first frame.
-local function renderPath(nodes, color)
-	clearLines()
-	if not nodes or #nodes < 2 then return end
-	if not previewFolder or not previewFolder.Parent then
-		if not ensurePreviewFolder() then return end
+local function clearLaneLines(lane)
+	for _, part in ipairs(lane.lines) do
+		if part.Parent then part:Destroy() end
 	end
+	lane.lines = {}
+end
+
+-- Render a route (list of province ids) as the chunky ground arrow into this lane's folder. Positions
+-- come from ProvincePositions (part-name keyed), so they are correct from the first frame.
+local function renderLane(lane, nodes, color)
+	clearLaneLines(lane)
+	if not nodes or #nodes < 2 then return end
+	local folder = laneFolder(lane)
+	if not folder then return end
 	local pts = {}
 	for _, pid in ipairs(nodes) do
 		local pos = ProvincePositions.centerOf(pid, LINE_LIFT)
@@ -84,103 +90,131 @@ local function renderPath(nodes, color)
 	})
 	for _, part in ipairs(parts) do
 		part.Name = "PathArrow"
-		part.Parent = previewFolder
-		activeLines[#activeLines + 1] = part
+		part.Parent = folder
+		lane.lines[#lane.lines + 1] = part
 	end
 end
 
-function PathPreview.init()
-	ensurePreviewFolder()
+local function getLane(key)
+	local lane = lanes[key]
+	if not lane then
+		lane = { key = key, folder = nil, lines = {}, lastFrom = nil, lastTo = nil, inFlight = false, seq = 0 }
+		lanes[key] = lane
+	end
+	return lane
 end
 
-local dispatch -- forward declaration (flushPending calls dispatch, dispatch calls flushPending)
-
--- If a target was requested while a call was in flight, fire it now that the guard is free.
-local function flushPending()
-	if inFlight then return end
-	local f, t = pendingFrom, pendingTo
-	pendingFrom, pendingTo = nil, nil
-	if f and t then dispatch(f, t) end
+local function destroyLane(key)
+	local lane = lanes[key]
+	if not lane then return end
+	lane.seq += 1 -- invalidate any in-flight reply for this lane
+	clearLaneLines(lane)
+	if lane.folder and lane.folder.Parent then lane.folder:Destroy() end
+	lanes[key] = nil
 end
 
--- Run exactly one server request. inFlight is held until this call settles (reply OR watchdog),
--- so it can never permanently wedge. Only the latest (requestSeq) response is allowed to draw.
-function dispatch(fromProvinceId, toProvinceId)
+-- Run exactly one server request for a lane. lane.inFlight is held until this settles (reply OR
+-- watchdog), so a hung reply can never permanently wedge the lane. Only the lane's latest seq draws.
+local function dispatchLane(lane, fromId, toId)
 	local remote = ensureRemote()
 	if not remote then
-		clearLines()
+		clearLaneLines(lane)
 		return
 	end
-	inFlight = true
-	requestSeq += 1
-	local seq = requestSeq
+	lane.inFlight = true
+	lane.seq += 1
+	local seq = lane.seq
 	local settled = false
 	local function settle()
-		if settled then return end -- the reply and the watchdog race; first one wins
+		if settled then return end -- reply and watchdog race; first wins
 		settled = true
-		inFlight = false
-		flushPending()
+		lane.inFlight = false
+		if lane.pendingTo then -- a newer target arrived while this was in flight
+			local f, t = lane.pendingFrom, lane.pendingTo
+			lane.pendingFrom, lane.pendingTo = nil, nil
+			dispatchLane(lane, f, t)
+		end
 	end
-	-- Watchdog: if the invoke never returns, release the guard (and let a re-hover retry) so the
-	-- preview can't get stuck. A late reply is dropped by the seq check below.
 	task.delay(INVOKE_TIMEOUT, function()
 		if not settled then
-			if seq == requestSeq then lastFrom, lastTo = nil, nil end
+			if seq == lane.seq then lane.lastFrom, lane.lastTo = nil, nil end
 			settle()
 		end
 	end)
 	task.spawn(function()
 		local ok, res = pcall(function()
-			return remote:InvokeServer(fromProvinceId, toProvinceId)
+			return remote:InvokeServer(fromId, toId)
 		end)
-		if seq == requestSeq then -- not superseded by a newer hover / clear
+		if seq == lane.seq then -- not superseded by a newer hover / clear for this lane
 			if ok and type(res) == "table" and res.ok == true and res.nodes and #res.nodes >= 2 then
 				local color = res.blocked and PATH_COLOR_BLOCKED
 					or (res.hostile and PATH_COLOR_HOSTILE or PATH_COLOR_FRIENDLY)
-				renderPath(res.nodes, color)
+				renderLane(lane, res.nodes, color)
 			else
-				clearLines()
-				lastFrom, lastTo = nil, nil -- let the next hover retry a failed target
+				clearLaneLines(lane)
+				lane.lastFrom, lane.lastTo = nil, nil -- let the next hover retry a failed target
 			end
 		end
 		settle()
 	end)
 end
 
--- Ask the SERVER for the route from the selected army's province to the hovered province, and draw
--- it. Identical consecutive targets are deduped; while a request is in flight, newer targets coalesce
--- into a single pending one (no request pile-up). Only the most recent response is rendered.
--- ClientStateCache/ownerTag params are accepted for call-site compatibility but unused -- the server
--- resolves the owner and traversability authoritatively.
-function PathPreview.show(fromProvinceId, toProvinceId, _ClientStateCache, _ownerTag)
-	if not fromProvinceId or not toProvinceId or fromProvinceId == toProvinceId then
-		PathPreview.clear()
+local function showLane(key, fromId, toId)
+	local lane = getLane(key)
+	if not fromId or not toId or fromId == toId then
+		lane.seq += 1
+		lane.lastFrom, lane.lastTo, lane.pendingFrom, lane.pendingTo = nil, nil, nil, nil
+		clearLaneLines(lane)
 		return
 	end
-	if fromProvinceId == lastFrom and toProvinceId == lastTo then
+	if fromId == lane.lastFrom and toId == lane.lastTo then
 		return -- already showing / requesting this exact route
 	end
-	lastFrom, lastTo = fromProvinceId, toProvinceId
-	if inFlight then
-		pendingFrom, pendingTo = fromProvinceId, toProvinceId
+	lane.lastFrom, lane.lastTo = fromId, toId
+	if lane.inFlight then
+		lane.pendingFrom, lane.pendingTo = fromId, toId
 		return
 	end
-	dispatch(fromProvinceId, toProvinceId)
+	dispatchLane(lane, fromId, toId)
+end
+
+function PathPreview.init()
+	ensurePreviewFolder()
+end
+
+-- Show one preview per request to the hovered destination. requests = { {id=key, from=provinceId}, ... }
+-- (callers pass one entry per distinct origin province). Lanes not present in `requests` are dropped.
+function PathPreview.showMany(requests, toProvinceId)
+	requests = requests or {}
+	local active = {}
+	local n = 0
+	for _, r in ipairs(requests) do
+		if n >= MAX_LANES then break end
+		if r.id ~= nil and r.from ~= nil then
+			n += 1
+			active[r.id] = true
+			showLane(r.id, r.from, toProvinceId)
+		end
+	end
+	for key in pairs(lanes) do
+		if not active[key] then destroyLane(key) end
+	end
+end
+
+-- Back-compat single-route API (used by the legacy UIController). ClientStateCache/ownerTag are
+-- accepted for call-site compatibility but unused -- the server resolves owner/traversability.
+function PathPreview.show(fromProvinceId, toProvinceId, _ClientStateCache, _ownerTag)
+	PathPreview.showMany({ { id = "_single", from = fromProvinceId } }, toProvinceId)
 end
 
 function PathPreview.clear()
-	requestSeq += 1 -- invalidate any in-flight request so its late response doesn't draw
-	lastFrom, lastTo = nil, nil
-	pendingFrom, pendingTo = nil, nil
-	clearLines()
+	for key in pairs(lanes) do
+		destroyLane(key)
+	end
 end
 
 function PathPreview.destroy()
-	requestSeq += 1
-	inFlight = false
-	lastFrom, lastTo = nil, nil
-	pendingFrom, pendingTo = nil, nil
-	clearLines()
+	PathPreview.clear()
 	if previewFolder and previewFolder.Parent then previewFolder:Destroy() end
 	previewFolder = nil
 	remoteFn = nil

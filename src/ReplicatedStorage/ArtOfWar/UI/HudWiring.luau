@@ -590,15 +590,25 @@ function HudWiring.start(modules)
 	end
 
 	local function updatePathPreview(part)
-		if not (PathPreview and PathPreview.show) then
+		if not (PathPreview and PathPreview.showMany) then
 			return
 		end
 		local sel = selectedArmies()
 		local toId = part and part:GetAttribute("province_id")
 		if sel and #sel > 0 and toId then
-			local army = ClientStateCache.getArmy(sel[1])
-			if army and army.provinceId then
-				pcall(PathPreview.show, army.provinceId, toId, ClientStateCache, claimedTag)
+			-- One preview per distinct ORIGIN province (armies stacked on the same tile share a route),
+			-- so multi-select shows every selected unit's path, not just the first.
+			local seen, requests = {}, {}
+			for _, armyId in ipairs(sel) do
+				local army = ClientStateCache.getArmy(armyId)
+				local fromId = army and army.provinceId
+				if fromId and not seen[fromId] then
+					seen[fromId] = true
+					requests[#requests + 1] = { id = fromId, from = fromId }
+				end
+			end
+			if #requests > 0 then
+				pcall(PathPreview.showMany, requests, toId)
 				return
 			end
 		end
