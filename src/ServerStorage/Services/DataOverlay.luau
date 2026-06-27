@@ -6,82 +6,90 @@ local RelayConfig = require(ServerStorage:WaitForChild("Dev"):WaitForChild("Rela
 
 local DataOverlay = {}
 
-local KIND_COUNTRIES   = "country"
-local KIND_PROVINCES   = "province"
-local KIND_EU4MAP      = "eu4map"
-local KIND_TILES       = "tile"
-local KIND_CULTURES    = "culture"
-local KIND_RELIGIONS   = "religion"
-local KIND_IDEOLOGIES  = "ideology"
+local KIND_COUNTRIES = "country"
+local KIND_PROVINCES = "province"
+local KIND_EU4MAP = "eu4map"
+local KIND_TILES = "tile"
+local KIND_CULTURES = "culture"
+local KIND_RELIGIONS = "religion"
+local KIND_IDEOLOGIES = "ideology"
 local KIND_GOVERNMENTS = "government_type"
 
 local AGGREGATE_KEYS = {
-	[KIND_COUNTRIES]   = "aggregate:countries",
-	[KIND_PROVINCES]   = "aggregate:provinces",
-	[KIND_EU4MAP]      = "aggregate:eu4map",
-	[KIND_TILES]       = "aggregate:tiles",
-	[KIND_CULTURES]    = "aggregate:cultures",
-	[KIND_RELIGIONS]   = "aggregate:religions",
-	[KIND_IDEOLOGIES]  = "aggregate:ideologies",
+	[KIND_COUNTRIES] = "aggregate:countries",
+	[KIND_PROVINCES] = "aggregate:provinces",
+	[KIND_EU4MAP] = "aggregate:eu4map",
+	[KIND_TILES] = "aggregate:tiles",
+	[KIND_CULTURES] = "aggregate:cultures",
+	[KIND_RELIGIONS] = "aggregate:religions",
+	[KIND_IDEOLOGIES] = "aggregate:ideologies",
 	[KIND_GOVERNMENTS] = "aggregate:government_types",
 }
 
-local ALL_KINDS = { KIND_COUNTRIES, KIND_PROVINCES, KIND_EU4MAP, KIND_TILES, KIND_CULTURES, KIND_RELIGIONS, KIND_IDEOLOGIES, KIND_GOVERNMENTS }
+local ALL_KINDS = {
+	KIND_COUNTRIES,
+	KIND_PROVINCES,
+	KIND_EU4MAP,
+	KIND_TILES,
+	KIND_CULTURES,
+	KIND_RELIGIONS,
+	KIND_IDEOLOGIES,
+	KIND_GOVERNMENTS,
+}
 
-local SCHEMA_KEY     = "meta:schema_version"
+local SCHEMA_KEY = "meta:schema_version"
 local SCHEMA_VERSION = "v2"
 
 -- Identity-collapse (Phase C) schema. When the stored schema == COLLAPSED_VERSION the world is
 -- keyed by the map PART id (prov_<N>): provinces/countries are read from parallel "@v3" keys while
 -- the original serial-keyed v2 keys are left completely intact, so a rollback is a single schema
 -- flag flip. eu4Map is no longer consulted (the part number IS the id).
-local COLLAPSED_VERSION  = "v3"
+local COLLAPSED_VERSION = "v3"
 local COLLAPSED_KEYS = {
 	[KIND_PROVINCES] = "aggregate:provinces@v3",
 	[KIND_COUNTRIES] = "aggregate:countries@v3",
 }
-local PROVMAP_KEY        = "aggregate:provmap@v3"      -- partId -> serialId (inverse lineage)
+local PROVMAP_KEY = "aggregate:provmap@v3" -- partId -> serialId (inverse lineage)
 local MIGRATION_META_KEY = "meta:migration@v3"
-local RELAY_VERIFIED_KEY = "meta:relay_verified@v3"
 
 local TOMBSTONE_MARKER = { __deleted = true }
 DataOverlay.TOMBSTONE = TOMBSTONE_MARKER
 
-local MAX_RETRIES      = 5
-local BASE_BACKOFF     = 0.5
-local SCAN_PACE        = 0.12
-local FLUSH_COOLDOWN   = 30
+local MAX_RETRIES = 5
+local BASE_BACKOFF = 0.5
+local SCAN_PACE = 0.12
+local FLUSH_COOLDOWN = 30
 local MIGRATE_COOLDOWN = 30
-local SCAN_PAGE_LIMIT  = 10
+local SCAN_PAGE_LIMIT = 10
 
 local cache = {
 	loaded = false,
 	data = {
-		[KIND_COUNTRIES]   = {},
-		[KIND_PROVINCES]   = {},
-		[KIND_EU4MAP]      = {},
-		[KIND_TILES]       = {},
-		[KIND_CULTURES]    = {},
-		[KIND_RELIGIONS]   = {},
-		[KIND_IDEOLOGIES]  = {},
+		[KIND_COUNTRIES] = {},
+		[KIND_PROVINCES] = {},
+		[KIND_EU4MAP] = {},
+		[KIND_TILES] = {},
+		[KIND_CULTURES] = {},
+		[KIND_RELIGIONS] = {},
+		[KIND_IDEOLOGIES] = {},
 		[KIND_GOVERNMENTS] = {},
 	},
 	loadStatus = {
-		[KIND_COUNTRIES]   = nil,
-		[KIND_PROVINCES]   = nil,
-		[KIND_EU4MAP]      = nil,
-		[KIND_TILES]       = nil,
-		[KIND_CULTURES]    = nil,
-		[KIND_RELIGIONS]   = nil,
-		[KIND_IDEOLOGIES]  = nil,
+		[KIND_COUNTRIES] = nil,
+		[KIND_PROVINCES] = nil,
+		[KIND_EU4MAP] = nil,
+		[KIND_TILES] = nil,
+		[KIND_CULTURES] = nil,
+		[KIND_RELIGIONS] = nil,
+		[KIND_IDEOLOGIES] = nil,
 		[KIND_GOVERNMENTS] = nil,
 	},
-	lastRetryAt  = {},
-	dirty        = {},
+	lastRetryAt = {},
+	dirty = {},
 	coolingUntil = {},
-	migrated     = false,
-	migrating    = false,
-	collapsed    = false, -- true when schema == COLLAPSED_VERSION (part-id keyed world)
+	migrated = false,
+	migrating = false,
+	collapsed = false, -- true when schema == COLLAPSED_VERSION (part-id keyed world)
 }
 
 -- Resolve the live DataStore key for a kind, honoring collapse mode. cache.collapsed is set by
@@ -102,10 +110,14 @@ local function store()
 end
 
 local function decodeValue(raw)
-	if raw == nil then return nil end
+	if raw == nil then
+		return nil
+	end
 	if type(raw) == "string" then
 		local ok, decoded = pcall(HttpService.JSONDecode, HttpService, raw)
-		if ok then return decoded end
+		if ok then
+			return decoded
+		end
 		return nil
 	end
 	return raw
@@ -143,11 +155,19 @@ local function withRetry(op, label, attempts)
 	local lastErr
 	for attempt = 1, attempts do
 		local ok, result = pcall(op)
-		if ok then return true, result end
+		if ok then
+			return true, result
+		end
 		lastErr = result
 		if isThrottleError(result) then
-			warn(string.format("[DataOverlay] %s throttled — abandoning at attempt %d/%d to let the queue drain",
-				label, attempt, attempts))
+			warn(
+				string.format(
+					"[DataOverlay] %s throttled — abandoning at attempt %d/%d to let the queue drain",
+					label,
+					attempt,
+					attempts
+				)
+			)
 			return false, lastErr
 		end
 		if attempt < attempts then
@@ -161,12 +181,19 @@ end
 local function readAggregate(kind)
 	local ds = store()
 	local k = keyFor(kind)
-	local ok, raw = withRetry(function() return ds:GetAsync(k) end,
-		"GetAsync " .. k)
-	if not ok then return {}, "read_failed" end
-	if raw == nil then return {}, "empty" end
+	local ok, raw = withRetry(function()
+		return ds:GetAsync(k)
+	end, "GetAsync " .. k)
+	if not ok then
+		return {}, "read_failed"
+	end
+	if raw == nil then
+		return {}, "empty"
+	end
 	local decoded = decodeValue(raw)
-	if type(decoded) ~= "table" then return {}, "empty" end
+	if type(decoded) ~= "table" then
+		return {}, "empty"
+	end
 	local out = {}
 	for k, v in pairs(decoded) do
 		out[coerceKey(kind, k)] = v
@@ -186,18 +213,27 @@ local function writeAggregate(kind, map)
 		return false, "encode_failed"
 	end
 	local k = keyFor(kind)
-	return withRetry(function() ds:SetAsync(k, payload) end,
-		"SetAsync " .. k)
+	return withRetry(function()
+		ds:SetAsync(k, payload)
+	end, "SetAsync " .. k)
 end
 
 local function readSchemaVersion()
 	local ds = store()
-	local ok, raw = withRetry(function() return ds:GetAsync(SCHEMA_KEY) end, "GetAsync " .. SCHEMA_KEY, 3)
-	if not ok then return nil end
+	local ok, raw = withRetry(function()
+		return ds:GetAsync(SCHEMA_KEY)
+	end, "GetAsync " .. SCHEMA_KEY, 3)
+	if not ok then
+		return nil
+	end
 	if type(raw) == "string" then
 		local decoded = decodeValue(raw)
-		if type(decoded) == "string" then return decoded end
-		if type(decoded) == "table" and decoded.version then return tostring(decoded.version) end
+		if type(decoded) == "string" then
+			return decoded
+		end
+		if type(decoded) == "table" and decoded.version then
+			return tostring(decoded.version)
+		end
 		return raw
 	end
 	return nil
@@ -206,14 +242,20 @@ end
 local function writeSchemaVersion(version)
 	local ds = store()
 	local payload = HttpService:JSONEncode({ version = version, stampedAt = os.time() })
-	return withRetry(function() ds:SetAsync(SCHEMA_KEY, payload) end, "SetAsync " .. SCHEMA_KEY, 3)
+	return withRetry(function()
+		ds:SetAsync(SCHEMA_KEY, payload)
+	end, "SetAsync " .. SCHEMA_KEY, 3)
 end
 
-local retryFailedKinds  -- forward declaration, assigned below
+local retryFailedKinds -- forward declaration, assigned below
 
 local function ensureLoaded()
-	if not cache.loaded then DataOverlay.load() end
-	if retryFailedKinds then retryFailedKinds() end
+	if not cache.loaded then
+		DataOverlay.load()
+	end
+	if retryFailedKinds then
+		retryFailedKinds()
+	end
 end
 
 function DataOverlay.kindLoaded(kind)
@@ -234,7 +276,9 @@ local function scanLegacyKeys(kind, onEntry)
 	local listOk, page = withRetry(function()
 		return ds:ListKeysAsync(kind .. ":", 100)
 	end, "ListKeysAsync " .. kind, 2)
-	if not listOk or not page then return out end
+	if not listOk or not page then
+		return out
+	end
 
 	local pages = 0
 	while page and pages < SCAN_PAGE_LIMIT do
@@ -244,25 +288,31 @@ local function scanLegacyKeys(kind, onEntry)
 			local name = info.KeyName
 			local kindPart, rest = name:match("^([^:]+):(.+)$")
 			if kindPart == kind and rest then
-				local readOk, raw = withRetry(function() return ds:GetAsync(name) end,
-					"legacy GetAsync " .. name, 1)
+				local readOk, raw = withRetry(function()
+					return ds:GetAsync(name)
+				end, "legacy GetAsync " .. name, 1)
 				if readOk and raw ~= nil then
 					local decoded = decodeValue(raw)
 					if decoded ~= nil and not isTombstone(decoded) then
 						local key = coerceKey(kind, rest)
 						out[key] = decoded
-						if onEntry then onEntry(key, decoded) end
+						if onEntry then
+							onEntry(key, decoded)
+						end
 					end
 				end
 				task.wait(SCAN_PACE)
 			end
 		end
-		if page.IsFinished then break end
-		local advOk, advErr = pcall(function() page:AdvanceToNextPageAsync() end)
+		if page.IsFinished then
+			break
+		end
+		local advOk, advErr = pcall(function()
+			page:AdvanceToNextPageAsync()
+		end)
 		if not advOk then
 			if advErr then
-				warn(string.format("[DataOverlay] AdvanceToNextPageAsync %s failed: %s",
-					kind, tostring(advErr)))
+				warn(string.format("[DataOverlay] AdvanceToNextPageAsync %s failed: %s", kind, tostring(advErr)))
 			end
 			break
 		end
@@ -273,7 +323,9 @@ end
 local LOAD_RETRY_INTERVAL = 30
 
 function DataOverlay.load()
-	if cache.loaded then return cache end
+	if cache.loaded then
+		return cache
+	end
 	-- Read the schema flag FIRST: cache.collapsed selects which key family every aggregate read
 	-- below uses (v2 serial keys vs the @v3 part-id keys). Committing to ONE family per boot.
 	local schema = readSchemaVersion()
@@ -287,28 +339,51 @@ function DataOverlay.load()
 		cache.lastRetryAt[kind] = os.clock()
 	end
 	cache.loaded = true
-	local function tally(t) local n = 0 for _ in pairs(t or {}) do n += 1 end return n end
+	local function tally(t)
+		local n = 0
+		for _ in pairs(t or {}) do
+			n += 1
+		end
+		return n
+	end
 	local anyFailed = false
 	for _, kind in ipairs(kinds) do
-		if cache.loadStatus[kind] == "read_failed" then anyFailed = true; break end
+		if cache.loadStatus[kind] == "read_failed" then
+			anyFailed = true
+			break
+		end
 	end
 	local function tallyOrMark(kind)
 		return cache.loadStatus[kind] == "read_failed" and "?" or tostring(tally(cache.data[kind]))
 	end
 	if anyFailed then
-		warn(string.format(
-			"[DataOverlay] universe=%s gameId=%d — partial load (some aggregates throttled): %sC %sP %sM %sT %sCu %sRe — DataStore is preserved; will retry on next access. Saves are guarded — failed kinds will not be flushed until reload succeeds.",
-			tostring(RelayConfig.universeLabel()), game.GameId,
-			tallyOrMark(KIND_COUNTRIES), tallyOrMark(KIND_PROVINCES),
-			tallyOrMark(KIND_EU4MAP),    tallyOrMark(KIND_TILES),
-			tallyOrMark(KIND_CULTURES),  tallyOrMark(KIND_RELIGIONS)))
+		warn(
+			string.format(
+				"[DataOverlay] universe=%s gameId=%d — partial load (some aggregates throttled): %sC %sP %sM %sT %sCu %sRe — DataStore is preserved; will retry on next access. Saves are guarded — failed kinds will not be flushed until reload succeeds.",
+				tostring(RelayConfig.universeLabel()),
+				game.GameId,
+				tallyOrMark(KIND_COUNTRIES),
+				tallyOrMark(KIND_PROVINCES),
+				tallyOrMark(KIND_EU4MAP),
+				tallyOrMark(KIND_TILES),
+				tallyOrMark(KIND_CULTURES),
+				tallyOrMark(KIND_RELIGIONS)
+			)
+		)
 	else
-		print(string.format(
-			"[DataOverlay] universe=%s gameId=%d — DataStore loaded: %dC %dP %dM %dT %dCu %dRe (preserved across publish; place files do not touch DataStore)",
-			tostring(RelayConfig.universeLabel()), game.GameId,
-			tally(cache.data[KIND_COUNTRIES]), tally(cache.data[KIND_PROVINCES]),
-			tally(cache.data[KIND_EU4MAP]),    tally(cache.data[KIND_TILES]),
-			tally(cache.data[KIND_CULTURES]),  tally(cache.data[KIND_RELIGIONS])))
+		print(
+			string.format(
+				"[DataOverlay] universe=%s gameId=%d — DataStore loaded: %dC %dP %dM %dT %dCu %dRe (preserved across publish; place files do not touch DataStore)",
+				tostring(RelayConfig.universeLabel()),
+				game.GameId,
+				tally(cache.data[KIND_COUNTRIES]),
+				tally(cache.data[KIND_PROVINCES]),
+				tally(cache.data[KIND_EU4MAP]),
+				tally(cache.data[KIND_TILES]),
+				tally(cache.data[KIND_CULTURES]),
+				tally(cache.data[KIND_RELIGIONS])
+			)
+		)
 	end
 	return cache
 end
@@ -324,8 +399,13 @@ retryFailedKinds = function()
 				if status == "loaded" or status == "empty" then
 					cache.data[kind] = data
 					cache.loadStatus[kind] = status
-					print(string.format("[DataOverlay] %s recovered after throttle (now %s)",
-						kind, status == "loaded" and "loaded" or "confirmed empty"))
+					print(
+						string.format(
+							"[DataOverlay] %s recovered after throttle (now %s)",
+							kind,
+							status == "loaded" and "loaded" or "confirmed empty"
+						)
+					)
 				end
 			end
 		end
@@ -349,7 +429,9 @@ function DataOverlay.retryNow()
 end
 
 function DataOverlay.onMigrated(callback)
-	if type(callback) ~= "function" then return function() end end
+	if type(callback) ~= "function" then
+		return function() end
+	end
 	table.insert(migrationListeners, callback)
 	return function()
 		for i, cb in ipairs(migrationListeners) do
@@ -382,13 +464,22 @@ local function mergeLegacy()
 				merged += 1
 			end
 		end
-		if kind == KIND_COUNTRIES then report.countries = merged
-		elseif kind == KIND_PROVINCES then report.provinces = merged
-		elseif kind == KIND_EU4MAP then report.eu4map = merged
-		elseif kind == KIND_TILES then report.tiles = merged
-		elseif kind == KIND_CULTURES then report.cultures = merged
-		elseif kind == KIND_RELIGIONS then report.religions = merged end
-		if merged > 0 then cache.dirty[kind] = true end
+		if kind == KIND_COUNTRIES then
+			report.countries = merged
+		elseif kind == KIND_PROVINCES then
+			report.provinces = merged
+		elseif kind == KIND_EU4MAP then
+			report.eu4map = merged
+		elseif kind == KIND_TILES then
+			report.tiles = merged
+		elseif kind == KIND_CULTURES then
+			report.cultures = merged
+		elseif kind == KIND_RELIGIONS then
+			report.religions = merged
+		end
+		if merged > 0 then
+			cache.dirty[kind] = true
+		end
 	end
 	return report
 end
@@ -430,17 +521,25 @@ end
 
 local function aggregatesPopulated()
 	for _, kind in ipairs(ALL_KINDS) do
-		if next(cache.data[kind]) ~= nil then return true end
+		if next(cache.data[kind]) ~= nil then
+			return true
+		end
 	end
 	return false
 end
 
 function DataOverlay.autoMigrate()
 	ensureLoaded()
-	if cache.migrating then return end
-	if cache.migrated and aggregatesPopulated() then return end
+	if cache.migrating then
+		return
+	end
+	if cache.migrated and aggregatesPopulated() then
+		return
+	end
 	local now = os.clock()
-	if now - lastMigrateAt < MIGRATE_COOLDOWN then return end
+	if now - lastMigrateAt < MIGRATE_COOLDOWN then
+		return
+	end
 	cache.migrating = true
 	lastMigrateAt = now
 	task.spawn(function()
@@ -461,14 +560,24 @@ function DataOverlay.autoMigrate()
 		end
 		cache.migrating = false
 		local elapsed = math.floor((os.clock() - startedAt) * 10) / 10
-		print(string.format(
-			"[DataOverlay] auto-migration complete in %ss: +%dC +%dP +%dM +%dT +%dCu +%dRe (flush %d/%d, skipped %d)",
-			tostring(elapsed), report.countries, report.provinces, report.eu4map, report.tiles,
-			report.cultures or 0, report.religions or 0,
-			flush.writes or 0, flush.attempted or 0, flush.skipped or 0))
+		print(
+			string.format(
+				"[DataOverlay] auto-migration complete in %ss: +%dC +%dP +%dM +%dT +%dCu +%dRe (flush %d/%d, skipped %d)",
+				tostring(elapsed),
+				report.countries,
+				report.provinces,
+				report.eu4map,
+				report.tiles,
+				report.cultures or 0,
+				report.religions or 0,
+				flush.writes or 0,
+				flush.attempted or 0,
+				flush.skipped or 0
+			)
+		)
 		fireMigrated({
-			report  = report,
-			flush   = flush,
+			report = report,
+			flush = flush,
 			elapsed = elapsed,
 		})
 	end)
@@ -485,22 +594,54 @@ local function set(kind, key, value)
 	return true
 end
 
-function DataOverlay.setCountry(tag, value) return set(KIND_COUNTRIES, tag, value) end
-function DataOverlay.setCulture(id, value)  return set(KIND_CULTURES, id, value) end
-function DataOverlay.setReligion(id, value) return set(KIND_RELIGIONS, id, value) end
-function DataOverlay.setProvince(id, value) return set(KIND_PROVINCES, tonumber(id) or id, value) end
-function DataOverlay.setEU4Map(id, value)   return set(KIND_EU4MAP, tonumber(id) or id, value) end
-function DataOverlay.setTile(name, value)   return set(KIND_TILES, name, value) end
-function DataOverlay.setIdeology(id, value)       return set(KIND_IDEOLOGIES, id, value) end
-function DataOverlay.setGovernmentType(id, value) return set(KIND_GOVERNMENTS, id, value) end
-function DataOverlay.deleteCountry(tag)     return set(KIND_COUNTRIES, tag, nil) end
-function DataOverlay.deleteCulture(id)      return set(KIND_CULTURES, id, nil) end
-function DataOverlay.deleteReligion(id)     return set(KIND_RELIGIONS, id, nil) end
-function DataOverlay.deleteProvince(id)     return set(KIND_PROVINCES, tonumber(id) or id, nil) end
-function DataOverlay.deleteEU4Map(id)       return set(KIND_EU4MAP, tonumber(id) or id, nil) end
-function DataOverlay.deleteTile(name)       return set(KIND_TILES, name, nil) end
-function DataOverlay.deleteIdeology(id)        return set(KIND_IDEOLOGIES, id, nil) end
-function DataOverlay.deleteGovernmentType(id)  return set(KIND_GOVERNMENTS, id, nil) end
+function DataOverlay.setCountry(tag, value)
+	return set(KIND_COUNTRIES, tag, value)
+end
+function DataOverlay.setCulture(id, value)
+	return set(KIND_CULTURES, id, value)
+end
+function DataOverlay.setReligion(id, value)
+	return set(KIND_RELIGIONS, id, value)
+end
+function DataOverlay.setProvince(id, value)
+	return set(KIND_PROVINCES, tonumber(id) or id, value)
+end
+function DataOverlay.setEU4Map(id, value)
+	return set(KIND_EU4MAP, tonumber(id) or id, value)
+end
+function DataOverlay.setTile(name, value)
+	return set(KIND_TILES, name, value)
+end
+function DataOverlay.setIdeology(id, value)
+	return set(KIND_IDEOLOGIES, id, value)
+end
+function DataOverlay.setGovernmentType(id, value)
+	return set(KIND_GOVERNMENTS, id, value)
+end
+function DataOverlay.deleteCountry(tag)
+	return set(KIND_COUNTRIES, tag, nil)
+end
+function DataOverlay.deleteCulture(id)
+	return set(KIND_CULTURES, id, nil)
+end
+function DataOverlay.deleteReligion(id)
+	return set(KIND_RELIGIONS, id, nil)
+end
+function DataOverlay.deleteProvince(id)
+	return set(KIND_PROVINCES, tonumber(id) or id, nil)
+end
+function DataOverlay.deleteEU4Map(id)
+	return set(KIND_EU4MAP, tonumber(id) or id, nil)
+end
+function DataOverlay.deleteTile(name)
+	return set(KIND_TILES, name, nil)
+end
+function DataOverlay.deleteIdeology(id)
+	return set(KIND_IDEOLOGIES, id, nil)
+end
+function DataOverlay.deleteGovernmentType(id)
+	return set(KIND_GOVERNMENTS, id, nil)
+end
 
 function DataOverlay.flush()
 	ensureLoaded()
@@ -514,7 +655,7 @@ function DataOverlay.flush()
 			result.blocked += 1
 			result.failures += 1
 			table.insert(result.errors, {
-				kind  = kind,
+				kind = kind,
 				error = "refusing to flush: the existing aggregate could not be read AND local cache is empty — flushing now would overwrite real DataStore data with nothing. Wait for the retry to succeed (logged when it does), then save again.",
 			})
 		else
@@ -523,7 +664,7 @@ function DataOverlay.flush()
 				result.skipped += 1
 				result.failures += 1
 				table.insert(result.errors, {
-					kind  = kind,
+					kind = kind,
 					error = string.format("cooling for %ds after recent throttle", math.ceil(cooldownEnd - now)),
 				})
 			else
@@ -550,31 +691,31 @@ function DataOverlay.flush()
 end
 
 local PROVINCE_REF_FIELDS = {
-	areaId         = "areas",
-	regionId       = "regions",
-	superRegionId  = "superRegions",
-	terrain        = "terrains",
-	climate        = "climates",
-	culture        = "cultures",
-	religion       = "religions",
-	tradeGood      = "tradeGoods",
-	ownerTag       = "countries",
-	controllerTag  = "countries",
+	areaId = "areas",
+	regionId = "regions",
+	superRegionId = "superRegions",
+	terrain = "terrains",
+	climate = "climates",
+	culture = "cultures",
+	religion = "religions",
+	tradeGood = "tradeGoods",
+	ownerTag = "countries",
+	controllerTag = "countries",
 }
 
 local COUNTRY_REF_FIELDS = {
-	economyPolicy     = "economyPolicies",
-	governmentForm    = "governmentTypes",
+	economyPolicy = "economyPolicies",
+	governmentForm = "governmentTypes",
 	capitalProvinceId = "provinces",
-	primaryCulture    = "cultures",
-	stateReligion     = "religions",
-	ideology          = "ideologies",
+	primaryCulture = "cultures",
+	stateReligion = "religions",
+	ideology = "ideologies",
 }
 
 local PROVINCE_REF_ARRAY_FIELDS = { cores = "countries" }
 local COUNTRY_REF_ARRAY_FIELDS = {
-	acceptedCultures  = "cultures",
-	historicalRivals  = "countries",
+	acceptedCultures = "cultures",
+	historicalRivals = "countries",
 	historicalFriends = "countries",
 }
 
@@ -583,24 +724,36 @@ local REF_SENTINELS = {
 }
 
 local function isValidRef(refTable, value, refKind)
-	if value == nil or refTable == nil then return true end
+	if value == nil or refTable == nil then
+		return true
+	end
 	local sentinels = refKind and REF_SENTINELS[refKind]
-	if sentinels and sentinels[value] then return true end
+	if sentinels and sentinels[value] then
+		return true
+	end
 	return refTable[value] ~= nil
 end
 
 local function rawMerge(source, overlay)
-	if type(overlay) ~= "table" then return overlay end
+	if type(overlay) ~= "table" then
+		return overlay
+	end
 	local merged = {}
 	if type(source) == "table" then
-		for k, v in pairs(source) do merged[k] = v end
+		for k, v in pairs(source) do
+			merged[k] = v
+		end
 	end
-	for k, v in pairs(overlay) do merged[k] = v end
+	for k, v in pairs(overlay) do
+		merged[k] = v
+	end
 	return merged
 end
 
 local function validateRefs(record, source, scalarFields, arrayFields, bundle, label, healings)
-	if type(record) ~= "table" then return record end
+	if type(record) ~= "table" then
+		return record
+	end
 	for k, v in pairs(record) do
 		local refKind = scalarFields[k]
 		if refKind then
@@ -609,8 +762,16 @@ local function validateRefs(record, source, scalarFields, arrayFields, bundle, l
 				local sourceVal = source and source[k]
 				if isValidRef(refTable, sourceVal, refKind) then
 					record[k] = sourceVal
-					table.insert(healings, string.format("%s.%s: '%s' invalid → fell back to '%s'",
-						label, k, tostring(v), tostring(sourceVal)))
+					table.insert(
+						healings,
+						string.format(
+							"%s.%s: '%s' invalid → fell back to '%s'",
+							label,
+							k,
+							tostring(v),
+							tostring(sourceVal)
+						)
+					)
 				end
 			end
 		elseif arrayFields[k] and type(v) == "table" then
@@ -627,8 +788,10 @@ local function validateRefs(record, source, scalarFields, arrayFields, bundle, l
 				end
 				record[k] = kept
 				if #dropped > 0 then
-					table.insert(healings, string.format("%s.%s: dropped invalid entries [%s]",
-						label, k, table.concat(dropped, ", ")))
+					table.insert(
+						healings,
+						string.format("%s.%s: dropped invalid entries [%s]", label, k, table.concat(dropped, ", "))
+					)
 				end
 			end
 		end
@@ -656,7 +819,9 @@ local function deletesAreSafe(kind, bundle)
 	local field = BUNDLE_FIELD[kind]
 	local src = field and bundle[field]
 	if type(src) == "table" then
-		for k in pairs(src) do present[tostring(k)] = true end
+		for k in pairs(src) do
+			present[tostring(k)] = true
+		end
 	end
 	local tombstones = 0
 	for k, rec in pairs(cache.data[kind]) do
@@ -671,7 +836,9 @@ local function deletesAreSafe(kind, bundle)
 		end
 	end
 	local survivors = 0
-	for _ in pairs(present) do survivors += 1 end
+	for _ in pairs(present) do
+		survivors += 1
+	end
 	local total = survivors + tombstones
 	local allowed
 	if total <= DELETE_BREAKER_SMALL_KIND then
@@ -679,10 +846,18 @@ local function deletesAreSafe(kind, bundle)
 	else
 		allowed = math.min(DELETE_BREAKER_CAP, math.max(DELETE_BREAKER_FLOOR, DELETE_BREAKER_FRACTION * total))
 	end
-	if tombstones <= allowed then return true end
-	warn(string.format(
-		"[DataOverlay] mass-deletion breaker TRIPPED for '%s': overlay would delete %d of %d records (limit %d). Keeping source data and skipping these deletions — investigate possible tampering.",
-		kind, tombstones, total, math.floor(allowed)))
+	if tombstones <= allowed then
+		return true
+	end
+	warn(
+		string.format(
+			"[DataOverlay] mass-deletion breaker TRIPPED for '%s': overlay would delete %d of %d records (limit %d). Keeping source data and skipping these deletions — investigate possible tampering.",
+			kind,
+			tombstones,
+			total,
+			math.floor(allowed)
+		)
+	)
 	return false
 end
 
@@ -698,35 +873,43 @@ function DataOverlay.applyTo(bundle)
 	end
 	local healings = {}
 	local allowDelete = {
-		[KIND_PROVINCES]   = deletesAreSafe(KIND_PROVINCES, bundle),
-		[KIND_EU4MAP]      = deletesAreSafe(KIND_EU4MAP, bundle),
-		[KIND_COUNTRIES]   = deletesAreSafe(KIND_COUNTRIES, bundle),
-		[KIND_CULTURES]    = deletesAreSafe(KIND_CULTURES, bundle),
-		[KIND_RELIGIONS]   = deletesAreSafe(KIND_RELIGIONS, bundle),
-		[KIND_IDEOLOGIES]  = deletesAreSafe(KIND_IDEOLOGIES, bundle),
+		[KIND_PROVINCES] = deletesAreSafe(KIND_PROVINCES, bundle),
+		[KIND_EU4MAP] = deletesAreSafe(KIND_EU4MAP, bundle),
+		[KIND_COUNTRIES] = deletesAreSafe(KIND_COUNTRIES, bundle),
+		[KIND_CULTURES] = deletesAreSafe(KIND_CULTURES, bundle),
+		[KIND_RELIGIONS] = deletesAreSafe(KIND_RELIGIONS, bundle),
+		[KIND_IDEOLOGIES] = deletesAreSafe(KIND_IDEOLOGIES, bundle),
 		[KIND_GOVERNMENTS] = deletesAreSafe(KIND_GOVERNMENTS, bundle),
 	}
 
 	local sourceProvinces, sourceCountries = {}, {}
 	if type(bundle.provinces) == "table" then
-		for k, v in pairs(bundle.provinces) do sourceProvinces[k] = v end
+		for k, v in pairs(bundle.provinces) do
+			sourceProvinces[k] = v
+		end
 	end
 	if type(bundle.countries) == "table" then
-		for k, v in pairs(bundle.countries) do sourceCountries[k] = v end
+		for k, v in pairs(bundle.countries) do
+			sourceCountries[k] = v
+		end
 	end
 
 	if bundle.provinces then
 		for id, rec in pairs(cache.data[KIND_PROVINCES]) do
 			local nid = tonumber(id) or id
 			if isTombstone(rec) then
-				if allowDelete[KIND_PROVINCES] then bundle.provinces[nid] = nil end
+				if allowDelete[KIND_PROVINCES] then
+					bundle.provinces[nid] = nil
+				end
 			else
 				local incoming = rec
 				if type(rec) == "table" then
 					local owner = rec.ownerTag
 					if rec.controllerTag == nil or rec.cores == nil then
 						incoming = table.clone(rec)
-						if incoming.controllerTag == nil then incoming.controllerTag = owner end
+						if incoming.controllerTag == nil then
+							incoming.controllerTag = owner
+						end
 						if incoming.cores == nil then
 							incoming.cores = (owner and owner ~= "NONE") and { owner } or {}
 						end
@@ -740,7 +923,9 @@ function DataOverlay.applyTo(bundle)
 		for id, part in pairs(cache.data[KIND_EU4MAP]) do
 			local nid = tonumber(id) or id
 			if isTombstone(part) then
-				if allowDelete[KIND_EU4MAP] then bundle.eu4Map[nid] = nil end
+				if allowDelete[KIND_EU4MAP] then
+					bundle.eu4Map[nid] = nil
+				end
 			else
 				bundle.eu4Map[nid] = part
 			end
@@ -749,7 +934,9 @@ function DataOverlay.applyTo(bundle)
 	if bundle.countries then
 		for tag, rec in pairs(cache.data[KIND_COUNTRIES]) do
 			if isTombstone(rec) then
-				if allowDelete[KIND_COUNTRIES] then bundle.countries[tag] = nil end
+				if allowDelete[KIND_COUNTRIES] then
+					bundle.countries[tag] = nil
+				end
 			else
 				bundle.countries[tag] = rawMerge(sourceCountries[tag], rec)
 			end
@@ -758,7 +945,9 @@ function DataOverlay.applyTo(bundle)
 	if bundle.cultures then
 		for id, rec in pairs(cache.data[KIND_CULTURES]) do
 			if isTombstone(rec) then
-				if allowDelete[KIND_CULTURES] then bundle.cultures[id] = nil end
+				if allowDelete[KIND_CULTURES] then
+					bundle.cultures[id] = nil
+				end
 			else
 				bundle.cultures[id] = rawMerge(bundle.cultures[id], rec)
 			end
@@ -767,7 +956,9 @@ function DataOverlay.applyTo(bundle)
 	if bundle.religions then
 		for id, rec in pairs(cache.data[KIND_RELIGIONS]) do
 			if isTombstone(rec) then
-				if allowDelete[KIND_RELIGIONS] then bundle.religions[id] = nil end
+				if allowDelete[KIND_RELIGIONS] then
+					bundle.religions[id] = nil
+				end
 			else
 				bundle.religions[id] = rawMerge(bundle.religions[id], rec)
 			end
@@ -776,7 +967,9 @@ function DataOverlay.applyTo(bundle)
 	if bundle.ideologies then
 		for id, rec in pairs(cache.data[KIND_IDEOLOGIES]) do
 			if isTombstone(rec) then
-				if allowDelete[KIND_IDEOLOGIES] then bundle.ideologies[id] = nil end
+				if allowDelete[KIND_IDEOLOGIES] then
+					bundle.ideologies[id] = nil
+				end
 			else
 				bundle.ideologies[id] = rawMerge(bundle.ideologies[id], rec)
 			end
@@ -785,7 +978,9 @@ function DataOverlay.applyTo(bundle)
 	if bundle.governmentTypes then
 		for id, rec in pairs(cache.data[KIND_GOVERNMENTS]) do
 			if isTombstone(rec) then
-				if allowDelete[KIND_GOVERNMENTS] then bundle.governmentTypes[id] = nil end
+				if allowDelete[KIND_GOVERNMENTS] then
+					bundle.governmentTypes[id] = nil
+				end
 			else
 				bundle.governmentTypes[id] = rawMerge(bundle.governmentTypes[id], rec)
 			end
@@ -797,9 +992,13 @@ function DataOverlay.applyTo(bundle)
 			if not isTombstone(rec) then
 				local nid = tonumber(id) or id
 				validateRefs(
-					bundle.provinces[nid], sourceProvinces[nid],
-					PROVINCE_REF_FIELDS, PROVINCE_REF_ARRAY_FIELDS,
-					bundle, "Province " .. tostring(nid), healings
+					bundle.provinces[nid],
+					sourceProvinces[nid],
+					PROVINCE_REF_FIELDS,
+					PROVINCE_REF_ARRAY_FIELDS,
+					bundle,
+					"Province " .. tostring(nid),
+					healings
 				)
 			end
 		end
@@ -808,18 +1007,28 @@ function DataOverlay.applyTo(bundle)
 		for tag, rec in pairs(cache.data[KIND_COUNTRIES]) do
 			if not isTombstone(rec) then
 				validateRefs(
-					bundle.countries[tag], sourceCountries[tag],
-					COUNTRY_REF_FIELDS, COUNTRY_REF_ARRAY_FIELDS,
-					bundle, "Country " .. tostring(tag), healings
+					bundle.countries[tag],
+					sourceCountries[tag],
+					COUNTRY_REF_FIELDS,
+					COUNTRY_REF_ARRAY_FIELDS,
+					bundle,
+					"Country " .. tostring(tag),
+					healings
 				)
 			end
 		end
 	end
 
 	if #healings > 0 then
-		warn(string.format("[DataOverlay] self-healed %d invalid overlay reference(s); falling back to source values:",
-			#healings))
-		for _, msg in ipairs(healings) do warn("  · " .. msg) end
+		warn(
+			string.format(
+				"[DataOverlay] self-healed %d invalid overlay reference(s); falling back to source values:",
+				#healings
+			)
+		)
+		for _, msg in ipairs(healings) do
+			warn("  · " .. msg)
+		end
 	end
 	return bundle
 end
@@ -828,7 +1037,9 @@ function DataOverlay.getEU4MapOverrides()
 	ensureLoaded()
 	local out = {}
 	for k, v in pairs(cache.data[KIND_EU4MAP]) do
-		if not isTombstone(v) then out[k] = v end
+		if not isTombstone(v) then
+			out[k] = v
+		end
 	end
 	return out
 end
@@ -837,39 +1048,50 @@ function DataOverlay.getTileOverrides()
 	ensureLoaded()
 	local out = {}
 	for k, v in pairs(cache.data[KIND_TILES]) do
-		if not isTombstone(v) then out[k] = v end
+		if not isTombstone(v) then
+			out[k] = v
+		end
 	end
 	return out
 end
 
 local KIND_FOR_EDIT = {
-	countries       = KIND_COUNTRIES,
-	provinces       = KIND_PROVINCES,
-	eu4map          = KIND_EU4MAP,
-	tiles           = KIND_TILES,
-	cultures        = KIND_CULTURES,
-	religions       = KIND_RELIGIONS,
-	ideologies      = KIND_IDEOLOGIES,
+	countries = KIND_COUNTRIES,
+	provinces = KIND_PROVINCES,
+	eu4map = KIND_EU4MAP,
+	tiles = KIND_TILES,
+	cultures = KIND_CULTURES,
+	religions = KIND_RELIGIONS,
+	ideologies = KIND_IDEOLOGIES,
 	governmentTypes = KIND_GOVERNMENTS,
 }
 
 local function canonicalJson(value)
-	if value == nil then return nil end
+	if value == nil then
+		return nil
+	end
 	local ok, encoded = pcall(HttpService.JSONEncode, HttpService, value)
-	if not ok then return nil end
+	if not ok then
+		return nil
+	end
 	return encoded
 end
 
 function DataOverlay.verifyWrites(edits)
 	local summary = { total = 0, verified = 0, mismatch = 0, missing = 0, errors = 0 }
-	if type(edits) ~= "table" then return summary end
+	if type(edits) ~= "table" then
+		return summary
+	end
 	local ds = store()
 	local liveByKind = {}
 	local function loadLive(kind)
-		if liveByKind[kind] ~= nil then return liveByKind[kind] end
+		if liveByKind[kind] ~= nil then
+			return liveByKind[kind]
+		end
 		local vk = keyFor(kind)
-		local ok, raw = withRetry(function() return ds:GetAsync(vk) end,
-			"verify " .. vk, 3)
+		local ok, raw = withRetry(function()
+			return ds:GetAsync(vk)
+		end, "verify " .. vk, 3)
 		if not ok then
 			liveByKind[kind] = false
 		else
@@ -915,63 +1137,20 @@ function DataOverlay.verifyWrites(edits)
 	return summary
 end
 
-local localRevision = 0
-
-function DataOverlay.pushToRelay(edits)
-	if not RelayConfig.RELAY_ENABLED or not RelayConfig.isConfigured() then return false, "relay_not_configured" end
-	-- Do not mirror edits to the paired universe while this universe is freshly collapsed (v3) but
-	-- not yet relay-verified — the paired universe may still be on v2 and part-id edits would corrupt
-	-- it. Cleared via DataOverlay.setRelayVerified() once both universes are migrated + verified.
-	if DataOverlay.relaySuppressed() then return false, "relay_suppressed_pending_v3_verification" end
-	localRevision += 1
-	local body = {
-		universe = RelayConfig.universeLabel(),
-		gameId   = game.GameId,
-		placeId  = game.PlaceId,
-		timestamp = os.time(),
-		revision = localRevision,
-		edits = edits,
-	}
-	local json
-	local ok, err = pcall(function() json = HttpService:JSONEncode(body) end)
-	if not ok then return false, "encode_failed:" .. tostring(err) end
-	local req = {
-		Url = RelayConfig.RELAY_URL,
-		Method = "POST",
-		Headers = {
-			["Content-Type"] = "application/json",
-			["Authorization"] = "Bearer " .. RelayConfig.RELAY_SECRET,
-		},
-		Body = json,
-	}
-	local reqOk, response = pcall(function() return HttpService:RequestAsync(req) end)
-	if not reqOk then return false, "request_failed:" .. tostring(response) end
-	if response.StatusCode < 200 or response.StatusCode >= 300 then
-		local respBody = tostring(response.Body or "")
-		respBody = respBody:gsub("<[^>]->", " "):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
-		if #respBody > 80 then respBody = respBody:sub(1, 77) .. "…" end
-		return false, string.format("http_%d (%s)", response.StatusCode, respBody ~= "" and respBody or "no body")
-	end
-	local rawBody = response.Body
-	local parsed = nil
-	local decodeOk, decoded = pcall(HttpService.JSONDecode, HttpService, rawBody)
-	if decodeOk and type(decoded) == "table" then
-		parsed = decoded
-	end
-	return true, { body = rawBody, parsed = parsed, revision = localRevision }
-end
+-- Cross-universe relay REMOVED 2026-06-25: dev + prod are now a single shared experience, so there
+-- is nothing to mirror. Saving/loading is pure Roblox DataStore. (Was: pushToRelay → Cloudflare worker.)
 
 function DataOverlay.snapshot(forceRefresh)
 	if forceRefresh then
 		cache.loaded = false
 		cache.data = {
-			[KIND_COUNTRIES]   = {},
-			[KIND_PROVINCES]   = {},
-			[KIND_EU4MAP]      = {},
-			[KIND_TILES]       = {},
-			[KIND_CULTURES]    = {},
-			[KIND_RELIGIONS]   = {},
-			[KIND_IDEOLOGIES]  = {},
+			[KIND_COUNTRIES] = {},
+			[KIND_PROVINCES] = {},
+			[KIND_EU4MAP] = {},
+			[KIND_TILES] = {},
+			[KIND_CULTURES] = {},
+			[KIND_RELIGIONS] = {},
+			[KIND_IDEOLOGIES] = {},
 			[KIND_GOVERNMENTS] = {},
 		}
 		cache.dirty = {}
@@ -980,45 +1159,55 @@ function DataOverlay.snapshot(forceRefresh)
 	local function liveCopy(tbl)
 		local out = {}
 		for k, v in pairs(tbl or {}) do
-			if not isTombstone(v) then out[k] = v end
+			if not isTombstone(v) then
+				out[k] = v
+			end
 		end
 		return out
 	end
 	local function tombKeys(tbl)
 		local out = {}
 		for k, v in pairs(tbl or {}) do
-			if isTombstone(v) then out[k] = true end
+			if isTombstone(v) then
+				out[k] = true
+			end
 		end
 		return out
 	end
 	return {
-		universe        = RelayConfig.universeLabel(),
-		gameId          = game.GameId,
-		placeId         = game.PlaceId,
-		scope           = RelayConfig.DATASTORE_SCOPE,
-		name            = RelayConfig.DATASTORE_NAME,
-		countries       = liveCopy(cache.data[KIND_COUNTRIES]),
-		cultures        = liveCopy(cache.data[KIND_CULTURES]),
-		religions       = liveCopy(cache.data[KIND_RELIGIONS]),
-		provinces       = liveCopy(cache.data[KIND_PROVINCES]),
-		eu4Map          = liveCopy(cache.data[KIND_EU4MAP]),
-		tiles           = liveCopy(cache.data[KIND_TILES]),
-		ideologies      = liveCopy(cache.data[KIND_IDEOLOGIES]),
+		universe = RelayConfig.universeLabel(),
+		gameId = game.GameId,
+		placeId = game.PlaceId,
+		scope = RelayConfig.DATASTORE_SCOPE,
+		name = RelayConfig.DATASTORE_NAME,
+		countries = liveCopy(cache.data[KIND_COUNTRIES]),
+		cultures = liveCopy(cache.data[KIND_CULTURES]),
+		religions = liveCopy(cache.data[KIND_RELIGIONS]),
+		provinces = liveCopy(cache.data[KIND_PROVINCES]),
+		eu4Map = liveCopy(cache.data[KIND_EU4MAP]),
+		tiles = liveCopy(cache.data[KIND_TILES]),
+		ideologies = liveCopy(cache.data[KIND_IDEOLOGIES]),
 		governmentTypes = liveCopy(cache.data[KIND_GOVERNMENTS]),
 		tombstones = {
-			countries       = tombKeys(cache.data[KIND_COUNTRIES]),
-			cultures        = tombKeys(cache.data[KIND_CULTURES]),
-			religions       = tombKeys(cache.data[KIND_RELIGIONS]),
-			provinces       = tombKeys(cache.data[KIND_PROVINCES]),
-			eu4Map          = tombKeys(cache.data[KIND_EU4MAP]),
-			tiles           = tombKeys(cache.data[KIND_TILES]),
-			ideologies      = tombKeys(cache.data[KIND_IDEOLOGIES]),
+			countries = tombKeys(cache.data[KIND_COUNTRIES]),
+			cultures = tombKeys(cache.data[KIND_CULTURES]),
+			religions = tombKeys(cache.data[KIND_RELIGIONS]),
+			provinces = tombKeys(cache.data[KIND_PROVINCES]),
+			eu4Map = tombKeys(cache.data[KIND_EU4MAP]),
+			tiles = tombKeys(cache.data[KIND_TILES]),
+			ideologies = tombKeys(cache.data[KIND_IDEOLOGIES]),
 			governmentTypes = tombKeys(cache.data[KIND_GOVERNMENTS]),
 		},
 		fetchedAt = os.time(),
-		migrated  = cache.migrated == true,
+		migrated = cache.migrated == true,
 		migrating = cache.migrating == true,
-		dirty     = (function() local out = {} for k in pairs(cache.dirty) do out[k] = true end return out end)(),
+		dirty = (function()
+			local out = {}
+			for k in pairs(cache.dirty) do
+				out[k] = true
+			end
+			return out
+		end)(),
 	}
 end
 
@@ -1035,25 +1224,39 @@ end
 
 local function countOf(t)
 	local n = 0
-	for _ in pairs(t or {}) do n += 1 end
+	for _ in pairs(t or {}) do
+		n += 1
+	end
 	return n
 end
 
 local function rawWriteKey(key, map)
 	local ds = store()
 	local serializable = {}
-	for k, v in pairs(map) do serializable[tostring(k)] = v end
+	for k, v in pairs(map) do
+		serializable[tostring(k)] = v
+	end
 	local encodeOk, payload = pcall(HttpService.JSONEncode, HttpService, serializable)
-	if not encodeOk then return false, "encode_failed" end
-	return withRetry(function() ds:SetAsync(key, payload) end, "SetAsync " .. key, 3)
+	if not encodeOk then
+		return false, "encode_failed"
+	end
+	return withRetry(function()
+		ds:SetAsync(key, payload)
+	end, "SetAsync " .. key, 3)
 end
 
 local function rawReadKey(key)
 	local ds = store()
-	local ok, raw = withRetry(function() return ds:GetAsync(key) end, "GetAsync " .. key, 3)
-	if not ok then return nil, "read_failed" end
+	local ok, raw = withRetry(function()
+		return ds:GetAsync(key)
+	end, "GetAsync " .. key, 3)
+	if not ok then
+		return nil, "read_failed"
+	end
 	local decoded = decodeValue(raw)
-	if type(decoded) ~= "table" then return {}, "empty" end
+	if type(decoded) ~= "table" then
+		return {}, "empty"
+	end
 	return decoded, "loaded"
 end
 
@@ -1068,19 +1271,19 @@ function DataOverlay.writeCollapsedV3(provincesV3, countriesV3, provmapV3, meta)
 	local okC, errC = rawWriteKey(COLLAPSED_KEYS[KIND_COUNTRIES], countriesV3)
 	local okM, errM = rawWriteKey(PROVMAP_KEY, provmapV3)
 	local stamp = {
-		startedAt    = meta and meta.startedAt or os.time(),
-		completedAt  = os.time(),
-		sourceCount  = meta and meta.sourceCount or nil,
+		startedAt = meta and meta.startedAt or os.time(),
+		completedAt = os.time(),
+		sourceCount = meta and meta.sourceCount or nil,
 		writtenCount = countOf(provincesV3),
-		countries    = countOf(countriesV3),
+		countries = countOf(countriesV3),
 	}
 	rawWriteKey(MIGRATION_META_KEY, stamp)
 	return {
-		ok        = okP and okC and okM,
+		ok = okP and okC and okM,
 		provinces = { ok = okP, count = countOf(provincesV3), err = errP },
 		countries = { ok = okC, count = countOf(countriesV3), err = errC },
-		provmap   = { ok = okM, count = countOf(provmapV3), err = errM },
-		meta      = stamp,
+		provmap = { ok = okM, count = countOf(provmapV3), err = errM },
+		meta = stamp,
 	}
 end
 
@@ -1091,14 +1294,17 @@ function DataOverlay.verifyCollapsedV3(expectedProvinces, expectedCountries)
 	local function presenceMatch(expected, live)
 		local missing = 0
 		for k in pairs(expected or {}) do
-			if live[tostring(k)] == nil then missing += 1 end
+			if live[tostring(k)] == nil then
+				missing += 1
+			end
 		end
 		return missing
 	end
 	local pMissing = presenceMatch(expectedProvinces, liveP)
 	local cMissing = presenceMatch(expectedCountries, liveC)
 	return {
-		ok = pMissing == 0 and cMissing == 0
+		ok = pMissing == 0
+			and cMissing == 0
 			and countOf(liveP) == countOf(expectedProvinces)
 			and countOf(liveC) == countOf(expectedCountries),
 		provinces = { expected = countOf(expectedProvinces), actual = countOf(liveP), missing = pMissing },
@@ -1129,24 +1335,6 @@ function DataOverlay.rollbackCollapse()
 		cache.collapsed = false
 		cache.loaded = false
 	end
-	return ok, err
-end
-
--- Relay safety: while collapsed but not yet relay-verified, suppress relay pushes so a freshly
--- migrated universe cannot mirror part-id edits into a paired universe that is still on v2.
-function DataOverlay.relaySuppressed()
-	ensureLoaded()
-	if not cache.collapsed then return false end
-	if cache.relayVerified == nil then
-		local meta = rawReadKey(RELAY_VERIFIED_KEY)
-		cache.relayVerified = type(meta) == "table" and meta.verified == true
-	end
-	return not cache.relayVerified
-end
-
-function DataOverlay.setRelayVerified()
-	local ok, err = rawWriteKey(RELAY_VERIFIED_KEY, { verified = true, stampedAt = os.time() })
-	if ok then cache.relayVerified = true end
 	return ok, err
 end
 

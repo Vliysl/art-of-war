@@ -11,14 +11,20 @@ local function loadClone(modScript)
 	copy.Parent = game:GetService("ServerStorage")
 	local ok, result = pcall(require, copy)
 	copy:Destroy()
-	if not ok then return {} end
+	if not ok then
+		return {}
+	end
 	return result or {}
 end
 
 local function deepClone(t)
-	if type(t) ~= "table" then return t end
+	if type(t) ~= "table" then
+		return t
+	end
 	local out = {}
-	for k, v in pairs(t) do out[k] = deepClone(v) end
+	for k, v in pairs(t) do
+		out[k] = deepClone(v)
+	end
 	return out
 end
 
@@ -67,8 +73,12 @@ local function restoreSnapshot(snap)
 end
 
 local function pushHistory(label)
-	if not loaded then return end
-	if batchActive then return end
+	if not loaded then
+		return
+	end
+	if batchActive then
+		return
+	end
 	table.insert(history, {
 		label = label or "edit",
 		at = os.time(),
@@ -91,7 +101,9 @@ function DataEditor.beginBatch(label)
 end
 
 function DataEditor.endBatch()
-	if not batchActive then return end
+	if not batchActive then
+		return
+	end
 	batchActive = false
 	if pendingBatchSnapshot and loaded then
 		table.insert(history, {
@@ -109,16 +121,38 @@ function DataEditor.endBatch()
 end
 
 local LUA_KEYWORDS = {
-	["and"]=true, ["break"]=true, ["do"]=true, ["else"]=true, ["elseif"]=true,
-	["end"]=true, ["false"]=true, ["for"]=true, ["function"]=true, ["goto"]=true,
-	["if"]=true, ["in"]=true, ["local"]=true, ["nil"]=true, ["not"]=true,
-	["or"]=true, ["repeat"]=true, ["return"]=true, ["then"]=true, ["true"]=true,
-	["until"]=true, ["while"]=true, ["continue"]=true,
+	["and"] = true,
+	["break"] = true,
+	["do"] = true,
+	["else"] = true,
+	["elseif"] = true,
+	["end"] = true,
+	["false"] = true,
+	["for"] = true,
+	["function"] = true,
+	["goto"] = true,
+	["if"] = true,
+	["in"] = true,
+	["local"] = true,
+	["nil"] = true,
+	["not"] = true,
+	["or"] = true,
+	["repeat"] = true,
+	["return"] = true,
+	["then"] = true,
+	["true"] = true,
+	["until"] = true,
+	["while"] = true,
+	["continue"] = true,
 }
 
 local function isIdent(s)
-	if type(s) ~= "string" then return false end
-	if LUA_KEYWORDS[s] then return false end
+	if type(s) ~= "string" then
+		return false
+	end
+	if LUA_KEYWORDS[s] then
+		return false
+	end
 	return s:match("^[A-Za-z_][A-Za-z0-9_]*$") ~= nil
 end
 
@@ -127,24 +161,36 @@ local function escapeString(s)
 end
 
 local function normalizeFlag(value)
-	if value == nil then return nil end
+	if value == nil then
+		return nil
+	end
 	local s = tostring(value):match("^%s*(.-)%s*$")
-	if s == "" then return nil end
+	if s == "" then
+		return nil
+	end
 	if s:match("^rbxassetid://%d+$") or s:match("^rbxthumb://") or s:match("^http") then
 		return s
 	end
 	local digits = s:match("^(%d+)$")
-	if digits then return "rbxassetid://" .. digits end
+	if digits then
+		return "rbxassetid://" .. digits
+	end
 	local embedded = s:match("(%d+)")
-	if embedded then return "rbxassetid://" .. embedded end
+	if embedded then
+		return "rbxassetid://" .. embedded
+	end
 	return nil
 end
 
 local function sortedKeys(tbl, numeric)
 	local keys = {}
-	for k in pairs(tbl) do table.insert(keys, k) end
+	for k in pairs(tbl) do
+		table.insert(keys, k)
+	end
 	table.sort(keys, function(a, b)
-		if numeric then return (tonumber(a) or 0) < (tonumber(b) or 0) end
+		if numeric then
+			return (tonumber(a) or 0) < (tonumber(b) or 0)
+		end
 		return tostring(a) < tostring(b)
 	end)
 	return keys
@@ -153,12 +199,18 @@ end
 local function loadTileOverlay()
 	local services = game:GetService("ServerStorage"):FindFirstChild("Services")
 	local overlayMod = services and services:FindFirstChild("DataOverlay")
-	if not overlayMod then return {} end
+	if not overlayMod then
+		return {}
+	end
 	local ok, overlay = pcall(require, overlayMod)
-	if not ok or not overlay or not overlay.getTileOverrides then return {} end
+	if not ok or not overlay or not overlay.getTileOverrides then
+		return {}
+	end
 	local got = overlay.getTileOverrides()
 	local out = {}
-	for name, value in pairs(got or {}) do out[name] = value end
+	for name, value in pairs(got or {}) do
+		out[name] = value
+	end
 	return out
 end
 
@@ -168,7 +220,9 @@ end
 local function isCollapsedMode()
 	local services = game:GetService("ServerStorage"):FindFirstChild("Services")
 	local overlayMod = services and services:FindFirstChild("DataOverlay")
-	if not overlayMod then return false end
+	if not overlayMod then
+		return false
+	end
 	local ok, overlay = pcall(require, overlayMod)
 	return ok and overlay and overlay.isCollapsed and overlay.isCollapsed() == true
 end
@@ -203,7 +257,9 @@ function DataEditor.load()
 			if snapOk and type(snap) == "table" then
 				if type(snap.countries) == "table" then
 					for tag, rec in pairs(snap.countries) do
-						if type(rec) == "table" then countries[tag] = deepClone(rec) end
+						if type(rec) == "table" then
+							countries[tag] = deepClone(rec)
+						end
 					end
 				end
 				if type(snap.provinces) == "table" then
@@ -222,37 +278,55 @@ function DataEditor.load()
 				end
 				if type(snap.cultures) == "table" then
 					for id, rec in pairs(snap.cultures) do
-						if type(rec) == "table" then cultures[id] = deepClone(rec) end
+						if type(rec) == "table" then
+							cultures[id] = deepClone(rec)
+						end
 					end
 				end
 				if type(snap.religions) == "table" then
 					for id, rec in pairs(snap.religions) do
-						if type(rec) == "table" then religions[id] = deepClone(rec) end
+						if type(rec) == "table" then
+							religions[id] = deepClone(rec)
+						end
 					end
 				end
 				if type(snap.ideologies) == "table" then
 					for id, rec in pairs(snap.ideologies) do
-						if type(rec) == "table" then ideologies[id] = deepClone(rec) end
+						if type(rec) == "table" then
+							ideologies[id] = deepClone(rec)
+						end
 					end
 				end
 				if type(snap.governmentTypes) == "table" then
 					for id, rec in pairs(snap.governmentTypes) do
-						if type(rec) == "table" then governments[id] = deepClone(rec) end
+						if type(rec) == "table" then
+							governments[id] = deepClone(rec)
+						end
 					end
 				end
 				if type(snap.tombstones) == "table" then
 					local tombs = snap.tombstones
-					for tag in pairs(tombs.countries or {}) do countries[tag] = nil end
+					for tag in pairs(tombs.countries or {}) do
+						countries[tag] = nil
+					end
 					for id in pairs(tombs.provinces or {}) do
 						provinces[tonumber(id) or id] = nil
 					end
 					for id in pairs(tombs.eu4Map or {}) do
 						eu4Map[tonumber(id) or id] = nil
 					end
-					for id in pairs(tombs.cultures or {}) do cultures[id] = nil end
-					for id in pairs(tombs.religions or {}) do religions[id] = nil end
-					for id in pairs(tombs.ideologies or {}) do ideologies[id] = nil end
-					for id in pairs(tombs.governmentTypes or {}) do governments[id] = nil end
+					for id in pairs(tombs.cultures or {}) do
+						cultures[id] = nil
+					end
+					for id in pairs(tombs.religions or {}) do
+						religions[id] = nil
+					end
+					for id in pairs(tombs.ideologies or {}) do
+						ideologies[id] = nil
+					end
+					for id in pairs(tombs.governmentTypes or {}) do
+						governments[id] = nil
+					end
 				end
 			end
 		end
@@ -262,13 +336,24 @@ function DataEditor.load()
 	baseline = captureSnapshot()
 	table.clear(history)
 	table.clear(redoStack)
-	return { countries = countries, provinces = provinces, eu4Map = eu4Map, tileOwners = tileOwners, cultures = cultures, religions = religions, ideologies = ideologies, governments = governments }
+	return {
+		countries = countries,
+		provinces = provinces,
+		eu4Map = eu4Map,
+		tileOwners = tileOwners,
+		cultures = cultures,
+		religions = religions,
+		ideologies = ideologies,
+		governments = governments,
+	}
 end
 
 function DataEditor.undo()
 	ensureLoaded()
 	local entry = table.remove(history)
-	if not entry then return false, "nothing to undo" end
+	if not entry then
+		return false, "nothing to undo"
+	end
 	table.insert(redoStack, {
 		label = entry.label,
 		at = os.time(),
@@ -284,7 +369,9 @@ end
 function DataEditor.redo()
 	ensureLoaded()
 	local entry = table.remove(redoStack)
-	if not entry then return false, "nothing to redo" end
+	if not entry then
+		return false, "nothing to redo"
+	end
 	table.insert(history, {
 		label = entry.label,
 		at = os.time(),
@@ -314,14 +401,24 @@ function DataEditor.redoDepth()
 end
 
 local function recordsEqual(a, b)
-	if a == b then return true end
-	if type(a) ~= type(b) then return false end
-	if type(a) ~= "table" then return false end
+	if a == b then
+		return true
+	end
+	if type(a) ~= type(b) then
+		return false
+	end
+	if type(a) ~= "table" then
+		return false
+	end
 	for k, v in pairs(a) do
-		if not recordsEqual(v, b[k]) then return false end
+		if not recordsEqual(v, b[k]) then
+			return false
+		end
 	end
 	for k in pairs(b) do
-		if a[k] == nil then return false end
+		if a[k] == nil then
+			return false
+		end
 	end
 	return true
 end
@@ -337,22 +434,26 @@ local function diffMap(currentMap, baselineMap)
 		end
 	end
 	for k in pairs(baselineMap) do
-		if currentMap[k] == nil then removed += 1 end
+		if currentMap[k] == nil then
+			removed += 1
+		end
 	end
 	return { added = added, modified = modified, removed = removed }
 end
 
 function DataEditor.diffAgainstBaseline()
 	ensureLoaded()
-	if not baseline then return nil end
+	if not baseline then
+		return nil
+	end
 	local d = {
-		countries   = diffMap(countries,   baseline.countries   or {}),
-		provinces   = diffMap(provinces,   baseline.provinces   or {}),
-		eu4Map      = diffMap(eu4Map,      baseline.eu4Map      or {}),
-		tileOwners  = diffMap(tileOwners,  baseline.tileOwners  or {}),
-		cultures    = diffMap(cultures,    baseline.cultures    or {}),
-		religions   = diffMap(religions,   baseline.religions   or {}),
-		ideologies  = diffMap(ideologies,  baseline.ideologies  or {}),
+		countries = diffMap(countries, baseline.countries or {}),
+		provinces = diffMap(provinces, baseline.provinces or {}),
+		eu4Map = diffMap(eu4Map, baseline.eu4Map or {}),
+		tileOwners = diffMap(tileOwners, baseline.tileOwners or {}),
+		cultures = diffMap(cultures, baseline.cultures or {}),
+		religions = diffMap(religions, baseline.religions or {}),
+		ideologies = diffMap(ideologies, baseline.ideologies or {}),
 		governments = diffMap(governments, baseline.governments or {}),
 	}
 	local total = 0
@@ -364,7 +465,9 @@ function DataEditor.diffAgainstBaseline()
 end
 
 ensureLoaded = function()
-	if not loaded then DataEditor.load() end
+	if not loaded then
+		DataEditor.load()
+	end
 end
 
 local function requireKey(tbl, key, label)
@@ -393,10 +496,16 @@ function DataEditor.addCountry(tag, opts)
 	ensureLoaded()
 	assert(type(tag) == "string" and #tag >= 2, "tag must be a string of 2+ chars")
 	assert(type(opts) == "table", "opts must be a table")
-	if countries[tag] then error(("Country %q already exists"):format(tag)) end
+	if countries[tag] then
+		error(("Country %q already exists"):format(tag))
+	end
 	local capId = tonumber(opts.capitalProvinceId)
-	if not capId then error(("Country %q requires a numeric capitalProvinceId"):format(tag)) end
-	if not provinces[capId] then error(("Country %q capitalProvinceId %d does not exist"):format(tag, capId)) end
+	if not capId then
+		error(("Country %q requires a numeric capitalProvinceId"):format(tag))
+	end
+	if not provinces[capId] then
+		error(("Country %q capitalProvinceId %d does not exist"):format(tag, capId))
+	end
 	if type(opts.primaryCulture) ~= "string" or opts.primaryCulture == "" then
 		error(("Country %q requires primaryCulture"):format(tag))
 	end
@@ -480,24 +589,34 @@ function DataEditor.removeCountry(tag)
 	pushHistory("removeCountry " .. tag)
 	countries[tag] = nil
 	for _, p in pairs(provinces) do
-		if p.ownerTag == tag then p.ownerTag = "NONE" end
-		if p.controllerTag == tag then p.controllerTag = "NONE" end
+		if p.ownerTag == tag then
+			p.ownerTag = "NONE"
+		end
+		if p.controllerTag == tag then
+			p.controllerTag = "NONE"
+		end
 		if type(p.cores) == "table" then
 			local kept = {}
 			for _, core in ipairs(p.cores) do
-				if core ~= tag then table.insert(kept, core) end
+				if core ~= tag then
+					table.insert(kept, core)
+				end
 			end
 			p.cores = kept
 		end
 	end
 	for name, owner in pairs(tileOwners) do
-		if owner == tag then tileOwners[name] = nil end
+		if owner == tag then
+			tileOwners[name] = nil
+		end
 	end
 	return true
 end
 
 local function primaryGood(goods)
-	if type(goods) ~= "table" then return nil end
+	if type(goods) ~= "table" then
+		return nil
+	end
 	local bestId, bestQty = nil, -math.huge
 	for gid, qty in pairs(goods) do
 		local n = tonumber(qty) or 0
@@ -528,8 +647,11 @@ end
 
 function DataEditor.addProvince(id, opts)
 	ensureLoaded()
-	id = tonumber(id); assert(id, "id must be a number")
-	if provinces[id] then error(("Province %d already exists"):format(id)) end
+	id = tonumber(id)
+	assert(id, "id must be a number")
+	if provinces[id] then
+		error(("Province %d already exists"):format(id))
+	end
 	pushHistory(string.format("addProvince %d", id))
 	local goods = normalizeGoods(opts, opts.tradeGood, opts.baseProduction)
 	local primary = primaryGood(goods) or opts.tradeGood or "grain"
@@ -570,7 +692,9 @@ function DataEditor.updateProvince(id, opts)
 	id = tonumber(id)
 	requireKey(provinces, id, "Province")
 	pushHistory(string.format("updateProvince %d", id))
-	for k, v in pairs(opts) do provinces[id][k] = v end
+	for k, v in pairs(opts) do
+		provinces[id][k] = v
+	end
 	if opts.goods ~= nil then
 		local goods = normalizeGoods(opts, provinces[id].tradeGood, provinces[id].baseProduction)
 		provinces[id].goods = goods
@@ -627,7 +751,9 @@ function DataEditor.promoteTile(opts)
 		local maxId = 0
 		for id in pairs(provinces) do
 			local n = tonumber(id) or 0
-			if n > maxId then maxId = n end
+			if n > maxId then
+				maxId = n
+			end
 		end
 		local services = game:GetService("ServerStorage"):FindFirstChild("Services")
 		local overlayMod = services and services:FindFirstChild("DataOverlay")
@@ -638,7 +764,9 @@ function DataEditor.promoteTile(opts)
 				if okSn and type(snap) == "table" and type(snap.provinces) == "table" then
 					for id in pairs(snap.provinces) do
 						local n = tonumber(id) or 0
-						if n > maxId then maxId = n end
+						if n > maxId then
+							maxId = n
+						end
 					end
 				end
 			end
@@ -655,7 +783,9 @@ function DataEditor.promoteTile(opts)
 		for _, part in pairs(provs:GetChildren()) do
 			if part:IsA("BasePart") then
 				local pid = tonumber(part.Name:match("prov_(%d+)"))
-				if pid then partsByEU4[pid] = part end
+				if pid then
+					partsByEU4[pid] = part
+				end
 			end
 		end
 		local closestSeedId, closestDist = nil, math.huge
@@ -697,9 +827,13 @@ function DataEditor.promoteTile(opts)
 		local data = dataFolder()
 		local function loadMod(name)
 			local mod = data:FindFirstChild(name)
-			if not mod then return nil end
+			if not mod then
+				return nil
+			end
 			local ok, t = pcall(loadClone, mod)
-			if not ok or type(t) ~= "table" then return nil end
+			if not ok or type(t) ~= "table" then
+				return nil
+			end
 			return t
 		end
 		local areasMod = loadMod("Areas") or {}
@@ -707,7 +841,9 @@ function DataEditor.promoteTile(opts)
 		local superRegionsMod = loadMod("SuperRegions") or {}
 		if not areaId or areaId == "" or not areasMod[areaId] then
 			local keys = {}
-			for k in pairs(areasMod) do table.insert(keys, k) end
+			for k in pairs(areasMod) do
+				table.insert(keys, k)
+			end
 			table.sort(keys)
 			areaId = keys[1] or ""
 		end
@@ -716,7 +852,9 @@ function DataEditor.promoteTile(opts)
 			regionId = areaRec.regionId
 		elseif not regionId or regionId == "" or not regionsMod[regionId] then
 			local keys = {}
-			for k in pairs(regionsMod) do table.insert(keys, k) end
+			for k in pairs(regionsMod) do
+				table.insert(keys, k)
+			end
 			table.sort(keys)
 			regionId = keys[1] or ""
 		end
@@ -725,7 +863,9 @@ function DataEditor.promoteTile(opts)
 			superRegionId = regionRec.superRegionId
 		elseif not superRegionId or superRegionId == "" or not superRegionsMod[superRegionId] then
 			local keys = {}
-			for k in pairs(superRegionsMod) do table.insert(keys, k) end
+			for k in pairs(superRegionsMod) do
+				table.insert(keys, k)
+			end
 			table.sort(keys)
 			superRegionId = keys[1] or ""
 		end
@@ -762,7 +902,9 @@ function DataEditor.promoteTile(opts)
 		hasShipyard = false,
 	}
 	-- v2 only: record the serial->part bridge. In v3 the id already IS the part number.
-	if eu4Pid and not collapsed then eu4Map[newId] = eu4Pid end
+	if eu4Pid and not collapsed then
+		eu4Map[newId] = eu4Pid
+	end
 
 	return {
 		id = newId,
@@ -777,7 +919,9 @@ function DataEditor.assignProvince(id, ownerTag)
 	ensureLoaded()
 	id = tonumber(id)
 	requireKey(provinces, id, "Province")
-	if ownerTag ~= "NONE" then requireKey(countries, ownerTag, "Country") end
+	if ownerTag ~= "NONE" then
+		requireKey(countries, ownerTag, "Country")
+	end
 	pushHistory(string.format("assignProvince %d -> %s", id, tostring(ownerTag)))
 	local province = provinces[id]
 	province.ownerTag = ownerTag
@@ -787,12 +931,18 @@ function DataEditor.assignProvince(id, ownerTag)
 		if country then
 			-- Only SEED culture/religion when the province has none yet — never clobber a
 			-- province's existing (possibly custom) culture/religion on an owner reassignment.
-			if (province.culture == nil or province.culture == "")
-				and type(country.primaryCulture) == "string" and country.primaryCulture ~= "" then
+			if
+				(province.culture == nil or province.culture == "")
+				and type(country.primaryCulture) == "string"
+				and country.primaryCulture ~= ""
+			then
 				province.culture = country.primaryCulture
 			end
-			if (province.religion == nil or province.religion == "")
-				and type(country.stateReligion) == "string" and country.stateReligion ~= "" then
+			if
+				(province.religion == nil or province.religion == "")
+				and type(country.stateReligion) == "string"
+				and country.stateReligion ~= ""
+			then
 				province.religion = country.stateReligion
 			end
 		end
@@ -825,13 +975,20 @@ end
 
 function DataEditor.mapProvinceToPart(seedId, btPartId)
 	ensureLoaded()
-	seedId = tonumber(seedId); btPartId = tonumber(btPartId)
+	seedId = tonumber(seedId)
+	btPartId = tonumber(btPartId)
 	assert(seedId and btPartId, "both ids must be numbers")
 	if isCollapsedMode() then
 		-- v3: a province's id already IS its part number — there is no separate mapping. An identity
 		-- mapping is a harmless no-op; pointing it at a DIFFERENT part would be a re-id (not supported).
 		if seedId ~= btPartId then
-			error(string.format("collapsed schema: province %d is bound to its part by identity; cannot remap to part %d", seedId, btPartId))
+			error(
+				string.format(
+					"collapsed schema: province %d is bound to its part by identity; cannot remap to part %d",
+					seedId,
+					btPartId
+				)
+			)
 		end
 		return true
 	end
@@ -845,8 +1002,12 @@ function DataEditor.setTileOwner(partName, ownerTag)
 	assert(type(partName) == "string" and partName ~= "", "partName must be a non-empty string")
 	local clearing = (ownerTag == nil or ownerTag == "" or ownerTag == "NONE")
 	local current = tileOwners[partName]
-	if clearing and current == nil then return true end
-	if not clearing and current == ownerTag then return true end
+	if clearing and current == nil then
+		return true
+	end
+	if not clearing and current == ownerTag then
+		return true
+	end
 	if not clearing and not countries[ownerTag] then
 		error(string.format("Country %q does not exist", ownerTag))
 	end
@@ -879,7 +1040,9 @@ function DataEditor.auditMapping()
 
 	local function countOf(t)
 		local n = 0
-		for _ in pairs(t) do n += 1 end
+		for _ in pairs(t) do
+			n += 1
+		end
 		return n
 	end
 
@@ -887,7 +1050,10 @@ function DataEditor.auditMapping()
 	local partToSerials = {}
 	for sid, pid in pairs(eu4Map) do
 		local bucket = partToSerials[pid]
-		if not bucket then bucket = {}; partToSerials[pid] = bucket end
+		if not bucket then
+			bucket = {}
+			partToSerials[pid] = bucket
+		end
 		table.insert(bucket, sid)
 	end
 	local duplicateTargets = {}
@@ -897,19 +1063,25 @@ function DataEditor.auditMapping()
 			table.insert(duplicateTargets, { partId = pid, serials = serials })
 		end
 	end
-	table.sort(duplicateTargets, function(a, b) return (a.partId or 0) < (b.partId or 0) end)
+	table.sort(duplicateTargets, function(a, b)
+		return (a.partId or 0) < (b.partId or 0)
+	end)
 
 	-- 2. Totality: every live province record has an eu4Map entry.
 	local provincesWithoutMapping = {}
 	for id in pairs(provinces) do
-		if eu4Map[id] == nil then table.insert(provincesWithoutMapping, id) end
+		if eu4Map[id] == nil then
+			table.insert(provincesWithoutMapping, id)
+		end
 	end
 	table.sort(provincesWithoutMapping)
 
 	-- 3a. Orphans: a mapping whose serial has no province record.
 	local mappingsWithoutRecord = {}
 	for sid in pairs(eu4Map) do
-		if provinces[sid] == nil then table.insert(mappingsWithoutRecord, sid) end
+		if provinces[sid] == nil then
+			table.insert(mappingsWithoutRecord, sid)
+		end
 	end
 	table.sort(mappingsWithoutRecord)
 
@@ -938,7 +1110,9 @@ function DataEditor.auditMapping()
 				table.insert(mappingsToMissingPart, { serial = sid, partId = pid })
 			end
 		end
-		table.sort(mappingsToMissingPart, function(a, b) return (a.serial or 0) < (b.serial or 0) end)
+		table.sort(mappingsToMissingPart, function(a, b)
+			return (a.serial or 0) < (b.serial or 0)
+		end)
 	end
 
 	-- 4. Registered-but-unstamped: a province whose mapped part carries no province_id attribute.
@@ -981,32 +1155,67 @@ end
 function DataEditor.printMappingAudit()
 	local r = DataEditor.auditMapping()
 	local c = r.counts
-	print(string.format("[MappingAudit] %d provinces, %d mappings | collapseReady=%s (injective=%s total=%s)%s",
-		c.provinces, c.mappings, tostring(r.collapseReady), tostring(r.injective), tostring(r.total),
-		r.mapChecked and "" or " [edit mode: part/stamp checks skipped]"))
+	print(
+		string.format(
+			"[MappingAudit] %d provinces, %d mappings | collapseReady=%s (injective=%s total=%s)%s",
+			c.provinces,
+			c.mappings,
+			tostring(r.collapseReady),
+			tostring(r.injective),
+			tostring(r.total),
+			r.mapChecked and "" or " [edit mode: part/stamp checks skipped]"
+		)
+	)
 	if #r.duplicateTargets > 0 then
-		print(string.format("  DUPLICATE TARGETS (%d) — two provinces share one part (BLOCKS collapse):", #r.duplicateTargets))
+		print(
+			string.format(
+				"  DUPLICATE TARGETS (%d) — two provinces share one part (BLOCKS collapse):",
+				#r.duplicateTargets
+			)
+		)
 		for _, d in ipairs(r.duplicateTargets) do
 			print(string.format("    part %s  <-  serials { %s }", tostring(d.partId), table.concat(d.serials, ", ")))
 		end
 	end
 	if #r.provincesWithoutMapping > 0 then
-		print(string.format("  PROVINCES WITHOUT MAPPING (%d) — no part assigned (BLOCKS collapse): %s",
-			#r.provincesWithoutMapping, table.concat(r.provincesWithoutMapping, ", ")))
+		print(
+			string.format(
+				"  PROVINCES WITHOUT MAPPING (%d) — no part assigned (BLOCKS collapse): %s",
+				#r.provincesWithoutMapping,
+				table.concat(r.provincesWithoutMapping, ", ")
+			)
+		)
 	end
 	if #r.mappingsWithoutRecord > 0 then
-		print(string.format("  ORPHAN MAPPINGS (%d) — mapping with no province record (warn): %s",
-			#r.mappingsWithoutRecord, table.concat(r.mappingsWithoutRecord, ", ")))
+		print(
+			string.format(
+				"  ORPHAN MAPPINGS (%d) — mapping with no province record (warn): %s",
+				#r.mappingsWithoutRecord,
+				table.concat(r.mappingsWithoutRecord, ", ")
+			)
+		)
 	end
 	if #r.mappingsToMissingPart > 0 then
 		local bits = {}
-		for _, m in ipairs(r.mappingsToMissingPart) do table.insert(bits, string.format("%s->part %s", m.serial, m.partId)) end
-		print(string.format("  MAPPINGS TO MISSING PART (%d) — target part absent from map (warn): %s",
-			#r.mappingsToMissingPart, table.concat(bits, ", ")))
+		for _, m in ipairs(r.mappingsToMissingPart) do
+			table.insert(bits, string.format("%s->part %s", m.serial, m.partId))
+		end
+		print(
+			string.format(
+				"  MAPPINGS TO MISSING PART (%d) — target part absent from map (warn): %s",
+				#r.mappingsToMissingPart,
+				table.concat(bits, ", ")
+			)
+		)
 	end
 	if #r.registeredButUnstamped > 0 then
-		print(string.format("  REGISTERED BUT UNSTAMPED (%d) — mapped part has no province_id stamp (warn): %s",
-			#r.registeredButUnstamped, table.concat(r.registeredButUnstamped, ", ")))
+		print(
+			string.format(
+				"  REGISTERED BUT UNSTAMPED (%d) — mapped part has no province_id stamp (warn): %s",
+				#r.registeredButUnstamped,
+				table.concat(r.registeredButUnstamped, ", ")
+			)
+		)
 	end
 	if r.collapseReady and #r.mappingsWithoutRecord == 0 and #r.registeredButUnstamped == 0 then
 		print("  OK — mapping is a clean bijection; safe to collapse.")
@@ -1024,22 +1233,47 @@ local function buildCountriesSource()
 		table.insert(lines, string.format("		tag = %q,", c.tag or tag))
 		table.insert(lines, string.format("		displayName = %q,", c.displayName or tag))
 		table.insert(lines, string.format("		capitalProvinceId = %d,", c.capitalProvinceId or 1))
-		if c.primaryCulture then table.insert(lines, string.format("		primaryCulture = %q,", c.primaryCulture)) end
+		if c.primaryCulture then
+			table.insert(lines, string.format("		primaryCulture = %q,", c.primaryCulture))
+		end
 		local ac = {}
-		for _, v in ipairs(c.acceptedCultures or {}) do table.insert(ac, escapeString(v)) end
+		for _, v in ipairs(c.acceptedCultures or {}) do
+			table.insert(ac, escapeString(v))
+		end
 		table.insert(lines, "		acceptedCultures = { " .. table.concat(ac, ", ") .. " },")
-		if c.stateReligion then table.insert(lines, string.format("		stateReligion = %q,", c.stateReligion)) end
-		if c.governmentForm then table.insert(lines, string.format("		governmentForm = %q,", c.governmentForm)) end
-		if c.ideology then table.insert(lines, string.format("		ideology = %q,", c.ideology)) end
-		table.insert(lines, string.format("		stability = %d, legitimacy = %d, treasury = %d, manpower = %d, politicalPower = %d,",
-			c.stability or 0, c.legitimacy or 70, c.treasury or 100, c.manpower or 10000, c.politicalPower or 80))
-		if c.technologyGroup then table.insert(lines, string.format("		technologyGroup = %q,", c.technologyGroup)) end
+		if c.stateReligion then
+			table.insert(lines, string.format("		stateReligion = %q,", c.stateReligion))
+		end
+		if c.governmentForm then
+			table.insert(lines, string.format("		governmentForm = %q,", c.governmentForm))
+		end
+		if c.ideology then
+			table.insert(lines, string.format("		ideology = %q,", c.ideology))
+		end
+		table.insert(
+			lines,
+			string.format(
+				"		stability = %d, legitimacy = %d, treasury = %d, manpower = %d, politicalPower = %d,",
+				c.stability or 0,
+				c.legitimacy or 70,
+				c.treasury or 100,
+				c.manpower or 10000,
+				c.politicalPower or 80
+			)
+		)
+		if c.technologyGroup then
+			table.insert(lines, string.format("		technologyGroup = %q,", c.technologyGroup))
+		end
 		local rivals, friends = {}, {}
-		for _, v in ipairs(c.historicalRivals or {}) do table.insert(rivals, escapeString(v)) end
-		for _, v in ipairs(c.historicalFriends or {}) do table.insert(friends, escapeString(v)) end
+		for _, v in ipairs(c.historicalRivals or {}) do
+			table.insert(rivals, escapeString(v))
+		end
+		for _, v in ipairs(c.historicalFriends or {}) do
+			table.insert(friends, escapeString(v))
+		end
 		table.insert(lines, "		historicalRivals = { " .. table.concat(rivals, ", ") .. " },")
 		table.insert(lines, "		historicalFriends = { " .. table.concat(friends, ", ") .. " },")
-		local col = c.color or {128, 128, 128}
+		local col = c.color or { 128, 128, 128 }
 		table.insert(lines, string.format("		color = { %d, %d, %d },", col[1] or 128, col[2] or 128, col[3] or 128))
 		if c.flagAssetId and c.flagAssetId ~= "" then
 			table.insert(lines, string.format("		flagAssetId = %q,", tostring(c.flagAssetId)))
@@ -1063,35 +1297,66 @@ local function buildProvincesSource()
 	for _, id in ipairs(sortedKeys(provinces, true)) do
 		local p = provinces[id]
 		local parts = {}
-		table.insert(parts, string.format('name = %q', p.name or ""))
-		table.insert(parts, string.format('displayCityName = %q', p.displayCityName or p.name or ""))
-		table.insert(parts, string.format('areaId = %q', p.areaId or ""))
-		table.insert(parts, string.format('regionId = %q', p.regionId or ""))
-		table.insert(parts, string.format('superRegionId = %q', p.superRegionId or ""))
-		table.insert(parts, string.format('terrain = %q', p.terrain or "plains"))
-		table.insert(parts, string.format('climate = %q', p.climate or "temperate"))
-		table.insert(parts, string.format("baseTax = %d, baseProduction = %d, baseManpower = %d",
-			p.baseTax or 1, p.baseProduction or 1, p.baseManpower or 1))
-		table.insert(parts, string.format('culture = %q, religion = %q, tradeGood = %q',
-			p.culture or "", p.religion or "", p.tradeGood or "grain"))
+		table.insert(parts, string.format("name = %q", p.name or ""))
+		table.insert(parts, string.format("displayCityName = %q", p.displayCityName or p.name or ""))
+		table.insert(parts, string.format("areaId = %q", p.areaId or ""))
+		table.insert(parts, string.format("regionId = %q", p.regionId or ""))
+		table.insert(parts, string.format("superRegionId = %q", p.superRegionId or ""))
+		table.insert(parts, string.format("terrain = %q", p.terrain or "plains"))
+		table.insert(parts, string.format("climate = %q", p.climate or "temperate"))
+		table.insert(
+			parts,
+			string.format(
+				"baseTax = %d, baseProduction = %d, baseManpower = %d",
+				p.baseTax or 1,
+				p.baseProduction or 1,
+				p.baseManpower or 1
+			)
+		)
+		table.insert(
+			parts,
+			string.format(
+				"culture = %q, religion = %q, tradeGood = %q",
+				p.culture or "",
+				p.religion or "",
+				p.tradeGood or "grain"
+			)
+		)
 		if type(p.goods) == "table" and next(p.goods) ~= nil then
 			local goodKeys = {}
-			for k in pairs(p.goods) do table.insert(goodKeys, k) end
+			for k in pairs(p.goods) do
+				table.insert(goodKeys, k)
+			end
 			table.sort(goodKeys)
 			local goodParts = {}
 			for _, k in ipairs(goodKeys) do
-				table.insert(goodParts, string.format('[%q] = %d', k, tonumber(p.goods[k]) or 0))
+				table.insert(goodParts, string.format("[%q] = %d", k, tonumber(p.goods[k]) or 0))
 			end
 			table.insert(parts, "goods = { " .. table.concat(goodParts, ", ") .. " }")
 		end
-		table.insert(parts, string.format('ownerTag = %q', p.ownerTag or "NONE"))
-		if p.isCity ~= false then table.insert(parts, "isCity = true") end
-		if p.centerOfTrade then table.insert(parts, "centerOfTrade = " .. tostring(p.centerOfTrade)) end
-		table.insert(parts, string.format("devTier = %d, infraTier = %d, fortTier = %d",
-			p.devTier or 1, p.infraTier or 1, p.fortTier or 1))
+		table.insert(parts, string.format("ownerTag = %q", p.ownerTag or "NONE"))
+		if p.isCity ~= false then
+			table.insert(parts, "isCity = true")
+		end
+		if p.centerOfTrade then
+			table.insert(parts, "centerOfTrade = " .. tostring(p.centerOfTrade))
+		end
+		table.insert(
+			parts,
+			string.format(
+				"devTier = %d, infraTier = %d, fortTier = %d",
+				p.devTier or 1,
+				p.infraTier or 1,
+				p.fortTier or 1
+			)
+		)
 		table.insert(parts, "population = " .. tostring(p.population or 10000))
-		if p.coastal == true then table.insert(parts, "coastal = true") end
-		if p.hasShipyard == true then table.insert(parts, "hasShipyard = true") end
+		if p.coastal == true then
+			table.insert(parts, "coastal = true")
+		end
+		if p.hasShipyard == true then
+			table.insert(parts, "hasShipyard = true")
+		end
 		table.insert(lines, string.format("	[%d] = province(%d, { %s }),", id, id, table.concat(parts, ", ")))
 	end
 	table.insert(lines, "}")
@@ -1124,15 +1389,28 @@ local function buildIdentityRecordsSource(records, groupField)
 		local keyStr = isIdent(id) and id or ("[" .. escapeString(id) .. "]")
 		local groupVal = r and r[groupField]
 		local groupStr = (type(groupVal) == "string" and groupVal ~= "") and groupVal or ""
-		table.insert(lines, string.format("	%s = { id = %q, displayName = %q, %s = %q },",
-			keyStr, r.id or id, r.displayName or id, groupField, groupStr))
+		table.insert(
+			lines,
+			string.format(
+				"	%s = { id = %q, displayName = %q, %s = %q },",
+				keyStr,
+				r.id or id,
+				r.displayName or id,
+				groupField,
+				groupStr
+			)
+		)
 	end
 	table.insert(lines, "}")
 	return table.concat(lines, nl) .. nl
 end
 
-local function buildCulturesSource()  return buildIdentityRecordsSource(cultures, "groupId") end
-local function buildReligionsSource() return buildIdentityRecordsSource(religions, "group") end
+local function buildCulturesSource()
+	return buildIdentityRecordsSource(cultures, "groupId")
+end
+local function buildReligionsSource()
+	return buildIdentityRecordsSource(religions, "group")
+end
 
 -- General Lua value serializer for nested record tables (ideologies/governments carry nested
 -- `modifiers`/`transitions`/`color`). Handles strings, numbers, booleans, and tables with
@@ -1140,15 +1418,25 @@ local function buildReligionsSource() return buildIdentityRecordsSource(religion
 local function serializeLua(value, indent)
 	indent = indent or "\t"
 	local t = type(value)
-	if t == "string" then return escapeString(value) end
-	if t == "number" or t == "boolean" then return tostring(value) end
-	if t ~= "table" then return "nil" end
+	if t == "string" then
+		return escapeString(value)
+	end
+	if t == "number" or t == "boolean" then
+		return tostring(value)
+	end
+	if t ~= "table" then
+		return "nil"
+	end
 	local n, isArray = 0, true
 	for k in pairs(value) do
 		n += 1
-		if type(k) ~= "number" then isArray = false end
+		if type(k) ~= "number" then
+			isArray = false
+		end
 	end
-	if n == 0 then return "{}" end
+	if n == 0 then
+		return "{}"
+	end
 	local inner = indent .. "\t"
 	local parts = {}
 	if isArray and #value == n then
@@ -1182,8 +1470,12 @@ local function buildRecordsModuleSource(records)
 	return table.concat(lines, nl) .. nl
 end
 
-local function buildIdeologiesSource()      return buildRecordsModuleSource(ideologies) end
-local function buildGovernmentTypesSource() return buildRecordsModuleSource(governments) end
+local function buildIdeologiesSource()
+	return buildRecordsModuleSource(ideologies)
+end
+local function buildGovernmentTypesSource()
+	return buildRecordsModuleSource(governments)
+end
 
 local function buildTileOwnersSource()
 	local nl = string.char(10)
@@ -1204,11 +1496,17 @@ end
 
 local function overlayModule()
 	local services = game:GetService("ServerStorage"):FindFirstChild("Services")
-	if not services then return nil end
+	if not services then
+		return nil
+	end
 	local mod = services:FindFirstChild("DataOverlay")
-	if not mod then return nil end
+	if not mod then
+		return nil
+	end
 	local ok, overlay = pcall(require, mod)
-	if not ok then return nil end
+	if not ok then
+		return nil
+	end
 	return overlay
 end
 
@@ -1224,7 +1522,9 @@ local function promotePaintedTiles()
 	-- Build the set of already-seeded part ids ONCE (was an O(tiles x mappings) nested scan).
 	local seededParts = {}
 	if not collapsed then
-		for _, mappedEu4 in pairs(eu4Map) do seededParts[mappedEu4] = true end
+		for _, mappedEu4 in pairs(eu4Map) do
+			seededParts[mappedEu4] = true
+		end
 	end
 	for partName, ownerTag in pairs(tileOwners) do
 		if type(ownerTag) == "string" and ownerTag ~= "" and ownerTag ~= "NONE" then
@@ -1262,7 +1562,7 @@ function DataEditor.save()
 	local overlay = overlayModule()
 	if not overlay then
 		return {
-			mode  = "error",
+			mode = "error",
 			error = "DataOverlay module not available — cannot save without it",
 		}
 	end
@@ -1387,36 +1687,23 @@ function DataEditor.save()
 		end
 	end
 
-	local flush = overlay.flush and overlay.flush() or { attempted = 0, writes = 0, failures = 0, blocked = 0, skipped = 0, errors = {} }
+	local flush = overlay.flush and overlay.flush()
+		or { attempted = 0, writes = 0, failures = 0, blocked = 0, skipped = 0, errors = {} }
 	local writes = {
-		countries = counts.countries, provinces = counts.provinces, eu4map = counts.eu4map,
-		tiles = counts.tiles, cultures = counts.cultures, religions = counts.religions, tombstones = counts.tombstones,
+		countries = counts.countries,
+		provinces = counts.provinces,
+		eu4map = counts.eu4map,
+		tiles = counts.tiles,
+		cultures = counts.cultures,
+		religions = counts.religions,
+		tombstones = counts.tombstones,
 		failures = flush.failures or 0,
 		flushAttempted = flush.attempted or 0,
-		flushWrites    = flush.writes or 0,
-		flushBlocked   = flush.blocked or 0,
-		flushSkipped   = flush.skipped or 0,
-		flushErrors    = flush.errors,
+		flushWrites = flush.writes or 0,
+		flushBlocked = flush.blocked or 0,
+		flushSkipped = flush.skipped or 0,
+		flushErrors = flush.errors,
 	}
-
-	local relayOk, relayInfo = overlay.pushToRelay(edits)
-	local relayStatus
-	if relayOk and type(relayInfo) == "table" and type(relayInfo.parsed) == "table" then
-		local p = relayInfo.parsed
-		if p.verified ~= nil and p.total ~= nil then
-			relayStatus = string.format("sent (mirror %d/%d, rev %d)",
-				p.verified, p.total, relayInfo.revision or 0)
-		elseif p.wrote ~= nil then
-			relayStatus = string.format("sent (wrote=%s, rev %d)",
-				tostring(p.wrote), relayInfo.revision or 0)
-		else
-			relayStatus = string.format("sent (rev %d)", relayInfo.revision or 0)
-		end
-	elseif relayOk then
-		relayStatus = "sent"
-	else
-		relayStatus = "skipped: " .. tostring(relayInfo)
-	end
 
 	local verify = nil
 	if overlay.verifyWrites and writes.failures == 0 then
@@ -1428,8 +1715,14 @@ function DataEditor.save()
 		if verify.verified == verify.total then
 			verifyText = string.format("verified %d/%d", verify.verified, verify.total)
 		else
-			verifyText = string.format("verified %d/%d (mismatch %d, missing %d, err %d)",
-				verify.verified, verify.total, verify.mismatch, verify.missing, verify.errors)
+			verifyText = string.format(
+				"verified %d/%d (mismatch %d, missing %d, err %d)",
+				verify.verified,
+				verify.total,
+				verify.mismatch,
+				verify.missing,
+				verify.errors
+			)
 		end
 	else
 		verifyText = "verify skipped"
@@ -1459,11 +1752,15 @@ function DataEditor.save()
 		mode = "datastore",
 		writes = writes,
 		verify = verify,
-		relay  = relayStatus,
 		message = string.format(
-			"Saved: %dC %dP %dM %dT %dtomb%s · %s · relay %s",
-			writes.countries, writes.provinces, writes.eu4map, writes.tiles, writes.tombstones,
-			failSuffix, verifyText, relayStatus
+			"Saved: %dC %dP %dM %dT %dtomb%s · %s",
+			writes.countries,
+			writes.provinces,
+			writes.eu4map,
+			writes.tiles,
+			writes.tombstones,
+			failSuffix,
+			verifyText
 		),
 	}
 end
@@ -1476,11 +1773,15 @@ local function stageOutputs(entries, clearAll)
 		folder.Parent = game:GetService("ServerStorage")
 	end
 	if clearAll then
-		for _, child in folder:GetChildren() do child:Destroy() end
+		for _, child in folder:GetChildren() do
+			child:Destroy()
+		end
 	end
 	for _, entry in ipairs(entries) do
 		local existing = folder:FindFirstChild(entry.name .. ".lua")
-		if existing then existing:Destroy() end
+		if existing then
+			existing:Destroy()
+		end
 		local sv = Instance.new("StringValue")
 		sv.Name = entry.name .. ".lua"
 		sv.Value = entry.src
@@ -1494,12 +1795,12 @@ function DataEditor.exportToLua()
 	local data = dataFolder()
 	-- Module-backed sources (written directly to their ModuleScript in edit mode).
 	local sources = {
-		{ name = "Countries",       src = buildCountriesSource() },
-		{ name = "Provinces",       src = buildProvincesSource() },
-		{ name = "EU4IDMap",        src = buildEU4MapSource() },
-		{ name = "Cultures",        src = buildCulturesSource() },
-		{ name = "Religions",       src = buildReligionsSource() },
-		{ name = "Ideologies",      src = buildIdeologiesSource() },
+		{ name = "Countries", src = buildCountriesSource() },
+		{ name = "Provinces", src = buildProvincesSource() },
+		{ name = "EU4IDMap", src = buildEU4MapSource() },
+		{ name = "Cultures", src = buildCulturesSource() },
+		{ name = "Religions", src = buildReligionsSource() },
+		{ name = "Ideologies", src = buildIdeologiesSource() },
 		{ name = "GovernmentTypes", src = buildGovernmentTypesSource() },
 	}
 	-- Tile ownership has no source ModuleScript (it lives only in the DataOverlay), so it can't be
@@ -1528,34 +1829,49 @@ function DataEditor.exportToLua()
 	if allOk then
 		stageOutputs(stageOnly, false)
 		return {
-			mode    = "source",
+			mode = "source",
 			message = "Exported Countries/Provinces/EU4IDMap/Cultures/Religions/Ideologies/GovernmentTypes to ModuleScript source. TileOwners staged in ServerStorage.DataEditorOutput (no source module). Save the place (Ctrl+S) to persist across sessions.",
 		}
 	end
 
 	-- Failure path (e.g. running on a live server): stage everything for recovery.
 	local all = {}
-	for _, e in ipairs(sources) do table.insert(all, e) end
-	for _, e in ipairs(stageOnly) do table.insert(all, e) end
+	for _, e in ipairs(sources) do
+		table.insert(all, e)
+	end
+	for _, e in ipairs(stageOnly) do
+		table.insert(all, e)
+	end
 	stageOutputs(all, true)
 
 	return {
-		mode    = "export",
+		mode = "export",
 		message = "Source ModuleScripts cannot be written from a running server. Stop the playtest (F8 or shift+F5), then run Export again from edit mode — the editor will write directly to the ModuleScript sources. The current playtest's edits (including Ideologies/GovernmentTypes/TileOwners) have been staged in ServerStorage.DataEditorOutput as a fallback if you need to recover them.",
-		errors  = errors,
+		errors = errors,
 	}
 end
 
 function DataEditor.getState()
 	ensureLoaded()
-	return { countries = countries, provinces = provinces, eu4Map = eu4Map, tileOwners = tileOwners, cultures = cultures, religions = religions, ideologies = ideologies, governments = governments }
+	return {
+		countries = countries,
+		provinces = provinces,
+		eu4Map = eu4Map,
+		tileOwners = tileOwners,
+		cultures = cultures,
+		religions = religions,
+		ideologies = ideologies,
+		governments = governments,
+	}
 end
 
 function DataEditor.addCulture(id, opts)
 	ensureLoaded()
 	assert(type(id) == "string" and id ~= "", "culture id required")
 	assert(type(opts) == "table", "opts must be a table")
-	if cultures[id] then error(("Culture %q already exists"):format(id)) end
+	if cultures[id] then
+		error(("Culture %q already exists"):format(id))
+	end
 	pushHistory("addCulture " .. id)
 	cultures[id] = {
 		id = id,
@@ -1569,7 +1885,9 @@ function DataEditor.updateCulture(id, opts)
 	ensureLoaded()
 	requireKey(cultures, id, "Culture")
 	pushHistory("updateCulture " .. id)
-	for k, v in pairs(opts) do cultures[id][k] = v end
+	for k, v in pairs(opts) do
+		cultures[id][k] = v
+	end
 	cultures[id].id = id
 	return cultures[id]
 end
@@ -1579,13 +1897,19 @@ function DataEditor.removeCulture(id)
 	requireKey(cultures, id, "Culture")
 	local refs = 0
 	for _, p in pairs(provinces) do
-		if p.culture == id then refs += 1 end
+		if p.culture == id then
+			refs += 1
+		end
 	end
 	for _, c in pairs(countries) do
-		if c.primaryCulture == id then refs += 1 end
+		if c.primaryCulture == id then
+			refs += 1
+		end
 		if type(c.acceptedCultures) == "table" then
 			for _, ac in ipairs(c.acceptedCultures) do
-				if ac == id then refs += 1 end
+				if ac == id then
+					refs += 1
+				end
 			end
 		end
 	end
@@ -1601,7 +1925,9 @@ function DataEditor.addReligion(id, opts)
 	ensureLoaded()
 	assert(type(id) == "string" and id ~= "", "religion id required")
 	assert(type(opts) == "table", "opts must be a table")
-	if religions[id] then error(("Religion %q already exists"):format(id)) end
+	if religions[id] then
+		error(("Religion %q already exists"):format(id))
+	end
 	pushHistory("addReligion " .. id)
 	religions[id] = {
 		id = id,
@@ -1615,7 +1941,9 @@ function DataEditor.updateReligion(id, opts)
 	ensureLoaded()
 	requireKey(religions, id, "Religion")
 	pushHistory("updateReligion " .. id)
-	for k, v in pairs(opts) do religions[id][k] = v end
+	for k, v in pairs(opts) do
+		religions[id][k] = v
+	end
 	religions[id].id = id
 	return religions[id]
 end
@@ -1625,10 +1953,14 @@ function DataEditor.removeReligion(id)
 	requireKey(religions, id, "Religion")
 	local refs = 0
 	for _, p in pairs(provinces) do
-		if p.religion == id then refs += 1 end
+		if p.religion == id then
+			refs += 1
+		end
 	end
 	for _, c in pairs(countries) do
-		if c.stateReligion == id then refs += 1 end
+		if c.stateReligion == id then
+			refs += 1
+		end
 	end
 	if refs > 0 then
 		error(string.format("Religion %q is still referenced by %d record(s) — reassign them first", id, refs))
@@ -1642,7 +1974,9 @@ function DataEditor.addIdeology(id, opts)
 	ensureLoaded()
 	assert(type(id) == "string" and id ~= "", "ideology id required")
 	assert(type(opts) == "table", "opts must be a table")
-	if ideologies[id] then error(("Ideology %q already exists"):format(id)) end
+	if ideologies[id] then
+		error(("Ideology %q already exists"):format(id))
+	end
 	pushHistory("addIdeology " .. id)
 	ideologies[id] = {
 		id = id,
@@ -1673,12 +2007,17 @@ function DataEditor.removeIdeology(id)
 	requireKey(ideologies, id, "Ideology")
 	local refs = 0
 	for _, c in pairs(countries) do
-		if c.ideology == id then refs += 1 end
+		if c.ideology == id then
+			refs += 1
+		end
 	end
 	for _, gov in pairs(governments) do
 		if type(gov.allowedIdeologies) == "table" then
 			for _, allowed in ipairs(gov.allowedIdeologies) do
-				if allowed == id then refs += 1; break end
+				if allowed == id then
+					refs += 1
+					break
+				end
 			end
 		end
 	end
@@ -1694,7 +2033,9 @@ function DataEditor.addGovernmentType(id, opts)
 	ensureLoaded()
 	assert(type(id) == "string" and id ~= "", "government id required")
 	assert(type(opts) == "table", "opts must be a table")
-	if governments[id] then error(("Government %q already exists"):format(id)) end
+	if governments[id] then
+		error(("Government %q already exists"):format(id))
+	end
 	pushHistory("addGovernmentType " .. id)
 	governments[id] = {
 		id = id,
@@ -1730,7 +2071,9 @@ function DataEditor.removeGovernmentType(id)
 	requireKey(governments, id, "Government")
 	local refs = 0
 	for _, c in pairs(countries) do
-		if c.governmentForm == id then refs += 1 end
+		if c.governmentForm == id then
+			refs += 1
+		end
 	end
 	for _, gov in pairs(governments) do
 		if type(gov.transitions) == "table" and gov.transitions[id] ~= nil then
@@ -1738,7 +2081,13 @@ function DataEditor.removeGovernmentType(id)
 		end
 	end
 	if refs > 0 then
-		error(string.format("Government %q is still referenced by %d record(s) — reassign or remove the transitions first", id, refs))
+		error(
+			string.format(
+				"Government %q is still referenced by %d record(s) — reassign or remove the transitions first",
+				id,
+				refs
+			)
+		)
 	end
 	pushHistory("removeGovernmentType " .. id)
 	governments[id] = nil
@@ -1772,8 +2121,10 @@ function DataEditor.migrateLegacy()
 			mode = "migrate",
 			merged = report,
 			flush = { attempted = 0, writes = 0, failures = 0 },
-			message = string.format("Migration on cooldown after recent throttle — try again in %ds",
-				report.cooldown),
+			message = string.format(
+				"Migration on cooldown after recent throttle — try again in %ds",
+				report.cooldown
+			),
 		}
 	end
 	if report.error then
@@ -1784,20 +2135,33 @@ function DataEditor.migrateLegacy()
 	if (flush.skipped or 0) > 0 then
 		message = string.format(
 			"Legacy merged: +%dC +%dP +%dM +%dT +%dCu +%dRe · flush %d/%d (skipped %d cooling)",
-			report.countries or 0, report.provinces or 0, report.eu4map or 0, report.tiles or 0,
-			report.cultures or 0, report.religions or 0,
-			flush.writes or 0, flush.attempted or 0, flush.skipped or 0)
+			report.countries or 0,
+			report.provinces or 0,
+			report.eu4map or 0,
+			report.tiles or 0,
+			report.cultures or 0,
+			report.religions or 0,
+			flush.writes or 0,
+			flush.attempted or 0,
+			flush.skipped or 0
+		)
 	else
 		message = string.format(
 			"Legacy merged: +%dC +%dP +%dM +%dT +%dCu +%dRe · flush %d/%d",
-			report.countries or 0, report.provinces or 0, report.eu4map or 0, report.tiles or 0,
-			report.cultures or 0, report.religions or 0,
-			flush.writes or 0, flush.attempted or (flush.writes or 0))
+			report.countries or 0,
+			report.provinces or 0,
+			report.eu4map or 0,
+			report.tiles or 0,
+			report.cultures or 0,
+			report.religions or 0,
+			flush.writes or 0,
+			flush.attempted or (flush.writes or 0)
+		)
 	end
 	return {
-		mode    = "migrate",
-		merged  = report,
-		flush   = flush,
+		mode = "migrate",
+		merged = report,
+		flush = flush,
 		message = message,
 	}
 end
@@ -1812,35 +2176,37 @@ end
 
 function DataEditor.captureFullState()
 	return {
-		countries  = deepClone(countries),
-		provinces  = deepClone(provinces),
-		eu4Map     = deepClone(eu4Map),
+		countries = deepClone(countries),
+		provinces = deepClone(provinces),
+		eu4Map = deepClone(eu4Map),
 		tileOwners = deepClone(tileOwners),
-		cultures   = deepClone(cultures),
-		religions  = deepClone(religions),
+		cultures = deepClone(cultures),
+		religions = deepClone(religions),
 		ideologies = deepClone(ideologies),
 		governments = deepClone(governments),
-		history    = cloneStack(history),
-		redoStack  = cloneStack(redoStack),
-		baseline   = baseline and deepClone(baseline) or nil,
-		loaded     = loaded,
+		history = cloneStack(history),
+		redoStack = cloneStack(redoStack),
+		baseline = baseline and deepClone(baseline) or nil,
+		loaded = loaded,
 	}
 end
 
 function DataEditor.restoreFullState(state)
-	if type(state) ~= "table" then return false end
-	countries   = deepClone(state.countries or {})
-	provinces   = deepClone(state.provinces or {})
-	eu4Map      = deepClone(state.eu4Map or {})
-	tileOwners  = deepClone(state.tileOwners or {})
-	cultures    = deepClone(state.cultures or {})
-	religions   = deepClone(state.religions or {})
-	ideologies  = deepClone(state.ideologies or {})
+	if type(state) ~= "table" then
+		return false
+	end
+	countries = deepClone(state.countries or {})
+	provinces = deepClone(state.provinces or {})
+	eu4Map = deepClone(state.eu4Map or {})
+	tileOwners = deepClone(state.tileOwners or {})
+	cultures = deepClone(state.cultures or {})
+	religions = deepClone(state.religions or {})
+	ideologies = deepClone(state.ideologies or {})
 	governments = deepClone(state.governments or {})
-	history     = cloneStack(state.history or {})
-	redoStack   = cloneStack(state.redoStack or {})
-	baseline    = state.baseline and deepClone(state.baseline) or nil
-	loaded      = state.loaded == true
+	history = cloneStack(state.history or {})
+	redoStack = cloneStack(state.redoStack or {})
+	baseline = state.baseline and deepClone(state.baseline) or nil
+	loaded = state.loaded == true
 	return true
 end
 
@@ -1848,8 +2214,12 @@ local activeUser = nil
 local userStates = {}
 
 function DataEditor.setActiveUser(userId)
-	if userId == nil then return end
-	if activeUser == userId then return end
+	if userId == nil then
+		return
+	end
+	if activeUser == userId then
+		return
+	end
 	if activeUser ~= nil then
 		userStates[activeUser] = DataEditor.captureFullState()
 	end
@@ -1888,41 +2258,51 @@ end
 
 local function draftOverlayModule()
 	local services = game:GetService("ServerStorage"):FindFirstChild("Services")
-	if not services then return nil end
+	if not services then
+		return nil
+	end
 	local mod = services:FindFirstChild("DraftOverlay")
-	if not mod then return nil end
+	if not mod then
+		return nil
+	end
 	local ok, draft = pcall(require, mod)
-	if not ok then return nil end
+	if not ok then
+		return nil
+	end
 	return draft
 end
 
 local function currentBundleForDraft()
 	return {
-		countries   = deepClone(countries),
-		provinces   = deepClone(provinces),
-		eu4Map      = deepClone(eu4Map),
-		tileOwners  = deepClone(tileOwners),
-		cultures    = deepClone(cultures),
-		religions   = deepClone(religions),
-		ideologies  = deepClone(ideologies),
+		countries = deepClone(countries),
+		provinces = deepClone(provinces),
+		eu4Map = deepClone(eu4Map),
+		tileOwners = deepClone(tileOwners),
+		cultures = deepClone(cultures),
+		religions = deepClone(religions),
+		ideologies = deepClone(ideologies),
 		governments = deepClone(governments),
 	}
 end
 
 local function sharedSnapshotBundle()
 	local overlay = overlayModule()
-	if not overlay or not overlay.snapshot then return nil end
+	if not overlay or not overlay.snapshot then
+		return nil
+	end
 	local ok, snap = pcall(overlay.snapshot, false)
-	if not ok or type(snap) ~= "table" then return nil end
+	if not ok or type(snap) ~= "table" then
+		return nil
+	end
 	local data = dataFolder()
 	local bundle = {
-		countries   = deepClone(loadClone(data:WaitForChild("Countries"))),
-		provinces   = deepClone(loadClone(data:WaitForChild("Provinces"))),
-		eu4Map      = deepClone(loadClone(data:WaitForChild("EU4IDMap"))),
-		tileOwners  = {},
-		cultures    = deepClone(loadClone(data:WaitForChild("Cultures"))),
-		religions   = deepClone(loadClone(data:WaitForChild("Religions"))),
-		ideologies  = deepClone(loadClone(data:WaitForChild("Ideologies"))),
+		countries = deepClone(loadClone(data:WaitForChild("Countries"))),
+		provinces = deepClone(loadClone(data:WaitForChild("Provinces"))),
+		eu4Map = deepClone(loadClone(data:WaitForChild("EU4IDMap"))),
+		tileOwners = {},
+		cultures = deepClone(loadClone(data:WaitForChild("Cultures"))),
+		religions = deepClone(loadClone(data:WaitForChild("Religions"))),
+		ideologies = deepClone(loadClone(data:WaitForChild("Ideologies"))),
 		governments = deepClone(loadClone(data:WaitForChild("GovernmentTypes"))),
 	}
 	if overlay.getTileOverrides then
@@ -1932,7 +2312,9 @@ local function sharedSnapshotBundle()
 	end
 	if type(snap.countries) == "table" then
 		for tag, rec in pairs(snap.countries) do
-			if type(rec) == "table" then bundle.countries[tag] = deepClone(rec) end
+			if type(rec) == "table" then
+				bundle.countries[tag] = deepClone(rec)
+			end
 		end
 	end
 	if type(snap.provinces) == "table" then
@@ -1949,41 +2331,67 @@ local function sharedSnapshotBundle()
 	end
 	if type(snap.cultures) == "table" then
 		for id, rec in pairs(snap.cultures) do
-			if type(rec) == "table" then bundle.cultures[id] = deepClone(rec) end
+			if type(rec) == "table" then
+				bundle.cultures[id] = deepClone(rec)
+			end
 		end
 	end
 	if type(snap.religions) == "table" then
 		for id, rec in pairs(snap.religions) do
-			if type(rec) == "table" then bundle.religions[id] = deepClone(rec) end
+			if type(rec) == "table" then
+				bundle.religions[id] = deepClone(rec)
+			end
 		end
 	end
 	if type(snap.ideologies) == "table" then
 		for id, rec in pairs(snap.ideologies) do
-			if type(rec) == "table" then bundle.ideologies[id] = deepClone(rec) end
+			if type(rec) == "table" then
+				bundle.ideologies[id] = deepClone(rec)
+			end
 		end
 	end
 	if type(snap.governmentTypes) == "table" then
 		for id, rec in pairs(snap.governmentTypes) do
-			if type(rec) == "table" then bundle.governments[id] = deepClone(rec) end
+			if type(rec) == "table" then
+				bundle.governments[id] = deepClone(rec)
+			end
 		end
 	end
 	if type(snap.tombstones) == "table" then
 		local tombs = snap.tombstones
-		for tag in pairs(tombs.countries or {}) do bundle.countries[tag] = nil end
-		for id in pairs(tombs.provinces or {}) do bundle.provinces[tonumber(id) or id] = nil end
-		for id in pairs(tombs.eu4Map or {}) do bundle.eu4Map[tonumber(id) or id] = nil end
-		for id in pairs(tombs.cultures or {}) do bundle.cultures[id] = nil end
-		for id in pairs(tombs.religions or {}) do bundle.religions[id] = nil end
-		for id in pairs(tombs.ideologies or {}) do bundle.ideologies[id] = nil end
-		for id in pairs(tombs.governmentTypes or {}) do bundle.governments[id] = nil end
+		for tag in pairs(tombs.countries or {}) do
+			bundle.countries[tag] = nil
+		end
+		for id in pairs(tombs.provinces or {}) do
+			bundle.provinces[tonumber(id) or id] = nil
+		end
+		for id in pairs(tombs.eu4Map or {}) do
+			bundle.eu4Map[tonumber(id) or id] = nil
+		end
+		for id in pairs(tombs.cultures or {}) do
+			bundle.cultures[id] = nil
+		end
+		for id in pairs(tombs.religions or {}) do
+			bundle.religions[id] = nil
+		end
+		for id in pairs(tombs.ideologies or {}) do
+			bundle.ideologies[id] = nil
+		end
+		for id in pairs(tombs.governmentTypes or {}) do
+			bundle.governments[id] = nil
+		end
 	end
 	return bundle
 end
 
 function DataEditor.saveDraft()
-	if activeUser == nil then return { ok = false, error = "no active user" } end
+	if activeUser == nil then
+		return { ok = false, error = "no active user" }
+	end
 	local draft = draftOverlayModule()
-	if not draft then return { ok = false, error = "DraftOverlay unavailable" } end
+	if not draft then
+		return { ok = false, error = "DraftOverlay unavailable" }
+	end
 	ensureLoaded()
 	local bundle = currentBundleForDraft()
 	local result = draft.saveDraft(activeUser, bundle)
@@ -1991,24 +2399,28 @@ function DataEditor.saveDraft()
 end
 
 function DataEditor.loadDraft()
-	if activeUser == nil then return { ok = false, error = "no active user" } end
+	if activeUser == nil then
+		return { ok = false, error = "no active user" }
+	end
 	local draft = draftOverlayModule()
-	if not draft then return { ok = false, error = "DraftOverlay unavailable" } end
+	if not draft then
+		return { ok = false, error = "DraftOverlay unavailable" }
+	end
 	local stored = draft.loadDraft(activeUser)
 	if stored then
 		DataEditor.restoreFullState({
-			countries   = stored.countries,
-			provinces   = stored.provinces,
-			eu4Map      = stored.eu4Map,
-			tileOwners  = stored.tileOwners,
-			cultures    = stored.cultures,
-			religions   = stored.religions,
-			ideologies  = stored.ideologies,
+			countries = stored.countries,
+			provinces = stored.provinces,
+			eu4Map = stored.eu4Map,
+			tileOwners = stored.tileOwners,
+			cultures = stored.cultures,
+			religions = stored.religions,
+			ideologies = stored.ideologies,
 			governments = stored.governments,
-			history     = {},
-			redoStack   = {},
-			baseline    = nil,
-			loaded      = true,
+			history = {},
+			redoStack = {},
+			baseline = nil,
+			loaded = true,
 		})
 		baseline = sharedSnapshotBundle()
 		return { ok = true, mode = "loaded_draft" }
@@ -2021,18 +2433,26 @@ end
 
 function DataEditor.computeDiffVsShared()
 	local draft = draftOverlayModule()
-	if not draft then return { ok = false, error = "DraftOverlay unavailable" } end
+	if not draft then
+		return { ok = false, error = "DraftOverlay unavailable" }
+	end
 	ensureLoaded()
 	local current = currentBundleForDraft()
 	local shared = sharedSnapshotBundle()
-	if not shared then return { ok = false, error = "could not snapshot shared" } end
+	if not shared then
+		return { ok = false, error = "could not snapshot shared" }
+	end
 	return { ok = true, diffs = draft.diffBundles(current, shared, baseline) }
 end
 
 function DataEditor.discardDraft()
-	if activeUser == nil then return { ok = false, error = "no active user" } end
+	if activeUser == nil then
+		return { ok = false, error = "no active user" }
+	end
 	local draft = draftOverlayModule()
-	if not draft then return { ok = false, error = "DraftOverlay unavailable" } end
+	if not draft then
+		return { ok = false, error = "DraftOverlay unavailable" }
+	end
 	local result = draft.discardDraft(activeUser)
 	if result.ok then
 		DataEditor.load()
@@ -2052,18 +2472,26 @@ function DataEditor.pullFromShared()
 end
 
 function DataEditor.promote(fieldSelections)
-	if activeUser == nil then return { ok = false, error = "no active user" } end
+	if activeUser == nil then
+		return { ok = false, error = "no active user" }
+	end
 	local overlay = overlayModule()
-	if not overlay then return { ok = false, error = "DataOverlay unavailable" } end
+	if not overlay then
+		return { ok = false, error = "DataOverlay unavailable" }
+	end
 	local draft = draftOverlayModule()
-	if not draft then return { ok = false, error = "DraftOverlay unavailable" } end
+	if not draft then
+		return { ok = false, error = "DraftOverlay unavailable" }
+	end
 	ensureLoaded()
 	-- Promote painted tiles to real seeds first so the diff carries province + eu4map adds
 	-- (which register) instead of raw owner-only tile overrides (which never register).
 	promotePaintedTiles()
 	local current = currentBundleForDraft()
 	local shared = sharedSnapshotBundle()
-	if not shared then return { ok = false, error = "could not snapshot shared" } end
+	if not shared then
+		return { ok = false, error = "could not snapshot shared" }
+	end
 	local allDiffs = draft.diffBundles(current, shared, baseline)
 	local selectionSet = {}
 	if type(fieldSelections) == "table" then
@@ -2076,47 +2504,77 @@ function DataEditor.promote(fieldSelections)
 		end
 	end
 	local applied = {}
-	local edits = { countries = {}, provinces = {}, eu4map = {}, tiles = {}, cultures = {}, religions = {}, ideologies = {}, governmentTypes = {} }
+	local edits = {
+		countries = {},
+		provinces = {},
+		eu4map = {},
+		tiles = {},
+		cultures = {},
+		religions = {},
+		ideologies = {},
+		governmentTypes = {},
+	}
 	local TOMB = overlay.TOMBSTONE or false
 	local editBucket = {
-		country = edits.countries, province = edits.provinces, eu4map = edits.eu4map,
-		tile = edits.tiles, culture = edits.cultures, religion = edits.religions,
-		ideology = edits.ideologies, government_type = edits.governmentTypes,
+		country = edits.countries,
+		province = edits.provinces,
+		eu4map = edits.eu4map,
+		tile = edits.tiles,
+		culture = edits.cultures,
+		religion = edits.religions,
+		ideology = edits.ideologies,
+		government_type = edits.governmentTypes,
 	}
 	for _, d in ipairs(allDiffs) do
 		if selectionSet[d.kind .. ":" .. tostring(d.key)] then
 			local kind, key = d.kind, d.key
 			if d.action == "delete" then
-				if kind == "country" then overlay.deleteCountry(key)
-				elseif kind == "province" then overlay.deleteProvince(tonumber(key) or key)
-				elseif kind == "eu4map" then overlay.deleteEU4Map(tonumber(key) or key)
-				elseif kind == "tile" then overlay.deleteTile(key)
-				elseif kind == "culture" then overlay.deleteCulture(key)
-				elseif kind == "religion" then overlay.deleteReligion(key)
-				elseif kind == "ideology" and overlay.deleteIdeology then overlay.deleteIdeology(key)
-				elseif kind == "government_type" and overlay.deleteGovernmentType then overlay.deleteGovernmentType(key) end
-				if editBucket[kind] then editBucket[kind][tostring(key)] = TOMB end
+				if kind == "country" then
+					overlay.deleteCountry(key)
+				elseif kind == "province" then
+					overlay.deleteProvince(tonumber(key) or key)
+				elseif kind == "eu4map" then
+					overlay.deleteEU4Map(tonumber(key) or key)
+				elseif kind == "tile" then
+					overlay.deleteTile(key)
+				elseif kind == "culture" then
+					overlay.deleteCulture(key)
+				elseif kind == "religion" then
+					overlay.deleteReligion(key)
+				elseif kind == "ideology" and overlay.deleteIdeology then
+					overlay.deleteIdeology(key)
+				elseif kind == "government_type" and overlay.deleteGovernmentType then
+					overlay.deleteGovernmentType(key)
+				end
+				if editBucket[kind] then
+					editBucket[kind][tostring(key)] = TOMB
+				end
 			else
-				if kind == "country" then overlay.setCountry(key, d.draftValue)
-				elseif kind == "province" then overlay.setProvince(tonumber(key) or key, d.draftValue)
-				elseif kind == "eu4map" then overlay.setEU4Map(tonumber(key) or key, d.draftValue)
-				elseif kind == "tile" then overlay.setTile(key, d.draftValue)
-				elseif kind == "culture" then overlay.setCulture(key, d.draftValue)
-				elseif kind == "religion" then overlay.setReligion(key, d.draftValue)
-				elseif kind == "ideology" and overlay.setIdeology then overlay.setIdeology(key, d.draftValue)
-				elseif kind == "government_type" and overlay.setGovernmentType then overlay.setGovernmentType(key, d.draftValue) end
-				if editBucket[kind] then editBucket[kind][tostring(key)] = d.draftValue end
+				if kind == "country" then
+					overlay.setCountry(key, d.draftValue)
+				elseif kind == "province" then
+					overlay.setProvince(tonumber(key) or key, d.draftValue)
+				elseif kind == "eu4map" then
+					overlay.setEU4Map(tonumber(key) or key, d.draftValue)
+				elseif kind == "tile" then
+					overlay.setTile(key, d.draftValue)
+				elseif kind == "culture" then
+					overlay.setCulture(key, d.draftValue)
+				elseif kind == "religion" then
+					overlay.setReligion(key, d.draftValue)
+				elseif kind == "ideology" and overlay.setIdeology then
+					overlay.setIdeology(key, d.draftValue)
+				elseif kind == "government_type" and overlay.setGovernmentType then
+					overlay.setGovernmentType(key, d.draftValue)
+				end
+				if editBucket[kind] then
+					editBucket[kind][tostring(key)] = d.draftValue
+				end
 			end
 			table.insert(applied, { kind = kind, key = key, action = d.action })
 		end
 	end
 	local flush = overlay.flush and overlay.flush() or {}
-	if #applied > 0 and overlay.pushToRelay then
-		task.spawn(function()
-			local pushed, info = overlay.pushToRelay(edits)
-			if not pushed then warn("[DataEditor] relay mirror push failed: " .. tostring(info)) end
-		end)
-	end
 	baseline = sharedSnapshotBundle()
 	if activeUser ~= nil then
 		userStates[activeUser] = DataEditor.captureFullState()
@@ -2141,8 +2599,11 @@ function DataEditor.collapseToPartIds(opts)
 	if not audit.collapseReady then
 		return {
 			ok = false,
-			error = string.format("mapping is not a clean bijection (%d duplicate target(s), %d unmapped province(s)) — resolve before collapsing",
-				audit.counts.duplicateTargets, audit.counts.provincesWithoutMapping),
+			error = string.format(
+				"mapping is not a clean bijection (%d duplicate target(s), %d unmapped province(s)) — resolve before collapsing",
+				audit.counts.duplicateTargets,
+				audit.counts.provincesWithoutMapping
+			),
 			audit = audit,
 		}
 	end
@@ -2153,7 +2614,11 @@ function DataEditor.collapseToPartIds(opts)
 	for serialId, record in pairs(provinces) do
 		local partId = eu4Map[serialId]
 		if partId == nil then
-			return { ok = false, error = string.format("province %s has no eu4Map entry", tostring(serialId)), audit = audit }
+			return {
+				ok = false,
+				error = string.format("province %s has no eu4Map entry", tostring(serialId)),
+				audit = audit,
+			}
 		end
 		if provincesV3[partId] ~= nil then
 			return { ok = false, error = string.format("two provinces map to part %s", tostring(partId)), audit = audit }
@@ -2186,11 +2651,22 @@ function DataEditor.collapseToPartIds(opts)
 	local committed = false
 	if opts.commit == true then
 		if not (writeReport.ok and verify and verify.ok) then
-			return { ok = false, error = "refusing to commit — @v3 write/verify did not pass", write = writeReport, verify = verify, audit = audit }
+			return {
+				ok = false,
+				error = "refusing to commit — @v3 write/verify did not pass",
+				write = writeReport,
+				verify = verify,
+				audit = audit,
+			}
 		end
 		local cOk, cErr = overlay.commitCollapse()
 		if not cOk then
-			return { ok = false, error = "commit (schema flip) failed: " .. tostring(cErr), write = writeReport, verify = verify }
+			return {
+				ok = false,
+				error = "commit (schema flip) failed: " .. tostring(cErr),
+				write = writeReport,
+				verify = verify,
+			}
 		end
 		committed = true
 	end
@@ -2202,8 +2678,16 @@ function DataEditor.collapseToPartIds(opts)
 		verify = verify,
 		audit = audit,
 		message = committed
-			and string.format("Collapsed to part-id schema (v3): %d provinces, %d countries. Schema flag flipped. Now regenerate ProvinceAdjacency/SeaZones in play mode, then verify per the runbook.", sourceCount, writeReport.countries.count)
-			or string.format("Wrote @v3 aggregates (additive, v2 intact): %d provinces, %d countries. NOT committed — verify, then re-run with { commit = true }.", sourceCount, writeReport.countries.count),
+				and string.format(
+					"Collapsed to part-id schema (v3): %d provinces, %d countries. Schema flag flipped. Now regenerate ProvinceAdjacency/SeaZones in play mode, then verify per the runbook.",
+					sourceCount,
+					writeReport.countries.count
+				)
+			or string.format(
+				"Wrote @v3 aggregates (additive, v2 intact): %d provinces, %d countries. NOT committed — verify, then re-run with { commit = true }.",
+				sourceCount,
+				writeReport.countries.count
+			),
 	}
 end
 
@@ -2218,7 +2702,9 @@ function DataEditor.rollbackCollapse()
 	return {
 		ok = ok,
 		error = (not ok) and tostring(err) or nil,
-		message = ok and "Schema flag flipped back to v2. The serial-keyed data is authoritative again — re-publish the pre-collapse code." or nil,
+		message = ok
+				and "Schema flag flipped back to v2. The serial-keyed data is authoritative again — re-publish the pre-collapse code."
+			or nil,
 	}
 end
 
@@ -2226,7 +2712,7 @@ function DataEditor.help()
 	print([[
 DataEditor API:
   Editor.load()                                - reload from source modules + overlay snapshot
-  Editor.save()                                - flush all edits to overlay + push to relay + verify
+  Editor.save()                                - flush all edits to overlay + verify
   Editor.exportToLua()                         - write source ModuleScripts (edit mode only)
 
   Editor.listCountries()                       - print country list

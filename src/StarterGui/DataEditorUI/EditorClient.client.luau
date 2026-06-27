@@ -15,7 +15,9 @@ do
 	local piModule = modules and modules:FindFirstChild("ProvinceInteraction")
 	if piModule then
 		local ok, mod = pcall(require, piModule)
-		if ok then ProvinceInteraction = mod end
+		if ok then
+			ProvinceInteraction = mod
+		end
 	end
 end
 
@@ -27,30 +29,34 @@ local function provinceLabel(idOrItem, record)
 end
 
 local PALETTE = {
-	bgDim       = Color3.fromRGB(18, 20, 24),
-	bgPanel     = Color3.fromRGB(28, 30, 36),
-	bgPanelAlt  = Color3.fromRGB(40, 43, 52),
-	bgInput     = Color3.fromRGB(22, 24, 30),
-	border      = Color3.fromRGB(62, 66, 78),
-	borderHot   = Color3.fromRGB(200, 160, 80),
-	text        = Color3.fromRGB(228, 230, 235),
-	textBright  = Color3.fromRGB(245, 247, 250),
-	textMuted   = Color3.fromRGB(150, 152, 162),
-	accent      = Color3.fromRGB(200, 160, 80),
-	accentHot   = Color3.fromRGB(235, 195, 110),
-	good        = Color3.fromRGB(90, 160, 95),
-	bad         = Color3.fromRGB(200, 80, 70),
-	warn        = Color3.fromRGB(220, 160, 70),
+	bgDim = Color3.fromRGB(18, 20, 24),
+	bgPanel = Color3.fromRGB(28, 30, 36),
+	bgPanelAlt = Color3.fromRGB(40, 43, 52),
+	bgInput = Color3.fromRGB(22, 24, 30),
+	border = Color3.fromRGB(62, 66, 78),
+	borderHot = Color3.fromRGB(200, 160, 80),
+	text = Color3.fromRGB(228, 230, 235),
+	textBright = Color3.fromRGB(245, 247, 250),
+	textMuted = Color3.fromRGB(150, 152, 162),
+	accent = Color3.fromRGB(200, 160, 80),
+	accentHot = Color3.fromRGB(235, 195, 110),
+	good = Color3.fromRGB(90, 160, 95),
+	bad = Color3.fromRGB(200, 80, 70),
+	warn = Color3.fromRGB(220, 160, 70),
 }
 
-local function px(x) return UDim2.fromOffset(x, 0) end
+local function px(x)
+	return UDim2.fromOffset(x, 0)
+end
 
 local function newInstance(className, props, parent)
 	local inst = Instance.new(className)
 	for k, v in pairs(props or {}) do
 		inst[k] = v
 	end
-	if parent then inst.Parent = parent end
+	if parent then
+		inst.Parent = parent
+	end
 	return inst
 end
 
@@ -285,9 +291,15 @@ do
 	end)
 
 	UserInputService.InputChanged:Connect(function(input)
-		if not dragging then return end
-		if input.UserInputType ~= Enum.UserInputType.MouseMovement
-			and input.UserInputType ~= Enum.UserInputType.Touch then return end
+		if not dragging then
+			return
+		end
+		if
+			input.UserInputType ~= Enum.UserInputType.MouseMovement
+			and input.UserInputType ~= Enum.UserInputType.Touch
+		then
+			return
+		end
 		local mp = UserInputService:GetMouseLocation()
 		local delta = Vector2.new(mp.X, mp.Y) - startMouse
 		local vp = viewportSize()
@@ -298,8 +310,10 @@ do
 	end)
 
 	UserInputService.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
+		if
+			input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch
+		then
 			dragging = false
 		end
 	end)
@@ -333,13 +347,23 @@ do
 		startSize = root.AbsoluteSize
 	end)
 
-	resizeGrip.MouseEnter:Connect(function() resizeGrip.TextTransparency = 0 end)
-	resizeGrip.MouseLeave:Connect(function() resizeGrip.TextTransparency = 0.3 end)
+	resizeGrip.MouseEnter:Connect(function()
+		resizeGrip.TextTransparency = 0
+	end)
+	resizeGrip.MouseLeave:Connect(function()
+		resizeGrip.TextTransparency = 0.3
+	end)
 
 	UserInputService.InputChanged:Connect(function(input)
-		if not resizing then return end
-		if input.UserInputType ~= Enum.UserInputType.MouseMovement
-			and input.UserInputType ~= Enum.UserInputType.Touch then return end
+		if not resizing then
+			return
+		end
+		if
+			input.UserInputType ~= Enum.UserInputType.MouseMovement
+			and input.UserInputType ~= Enum.UserInputType.Touch
+		then
+			return
+		end
 		local mp = UserInputService:GetMouseLocation()
 		local delta = Vector2.new(mp.X, mp.Y) - startMouse
 		local vp = viewportSize()
@@ -353,8 +377,10 @@ do
 	end)
 
 	UserInputService.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
+		if
+			input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch
+		then
 			resizing = false
 		end
 	end)
@@ -446,7 +472,9 @@ local function showConfirm(opts)
 
 	local closed = false
 	local function close(result)
-		if closed then return end
+		if closed then
+			return
+		end
 		closed = true
 		overlay:Destroy()
 		if result and opts.onConfirm then
@@ -455,9 +483,15 @@ local function showConfirm(opts)
 			opts.onCancel()
 		end
 	end
-	cancelBtn.MouseButton1Click:Connect(function() close(false) end)
-	confirmBtn.MouseButton1Click:Connect(function() close(true) end)
-	overlay.MouseButton1Click:Connect(function() close(false) end)
+	cancelBtn.MouseButton1Click:Connect(function()
+		close(false)
+	end)
+	confirmBtn.MouseButton1Click:Connect(function()
+		close(true)
+	end)
+	overlay.MouseButton1Click:Connect(function()
+		close(false)
+	end)
 end
 
 local attachTooltip
@@ -482,12 +516,16 @@ do
 	addStroke(tooltip, PALETTE.border, 1)
 	local tooltipToken = 0
 	function attachTooltip(btn, text)
-		if not btn then return end
+		if not btn then
+			return
+		end
 		btn.MouseEnter:Connect(function()
 			tooltipToken += 1
 			local myToken = tooltipToken
 			task.delay(0.35, function()
-				if tooltipToken ~= myToken or not btn.Parent then return end
+				if tooltipToken ~= myToken or not btn.Parent then
+					return
+				end
 				local measured = TextService:GetTextSize(text, 12, Enum.Font.Gotham, Vector2.new(420, 100))
 				local w = math.ceil(measured.X) + 16
 				local h = math.ceil(measured.Y) + 8
@@ -498,7 +536,10 @@ do
 				local aboveTop = btn.AbsolutePosition.Y - root.AbsolutePosition.Y - 6
 				if aboveTop - h < 4 then
 					tooltip.AnchorPoint = Vector2.new(0.5, 0)
-					tooltip.Position = UDim2.fromOffset(relX, (btn.AbsolutePosition.Y + btn.AbsoluteSize.Y) - root.AbsolutePosition.Y + 6)
+					tooltip.Position = UDim2.fromOffset(
+						relX,
+						(btn.AbsolutePosition.Y + btn.AbsoluteSize.Y) - root.AbsolutePosition.Y + 6
+					)
 				else
 					tooltip.AnchorPoint = Vector2.new(0.5, 1)
 					tooltip.Position = UDim2.fromOffset(relX, aboveTop)
@@ -565,15 +606,32 @@ local paintRefresh
 local pendingProvincesAPI
 
 local WRITE_COMMANDS_LOCAL = {
-	addCountry = true, updateCountry = true, removeCountry = true,
-	addProvince = true, updateProvince = true, removeProvince = true,
-	addCulture = true, updateCulture = true, removeCulture = true,
-	addReligion = true, updateReligion = true, removeReligion = true,
-	addIdeology = true, updateIdeology = true, removeIdeology = true,
-	addGovernmentType = true, updateGovernmentType = true, removeGovernmentType = true,
-	assignProvince = true, mapProvinceToPart = true, setTileOwner = true,
-	assignBatch = true, assignProvinceField = true, assignProvinceFieldBatch = true,
-	undo = true, redo = true,
+	addCountry = true,
+	updateCountry = true,
+	removeCountry = true,
+	addProvince = true,
+	updateProvince = true,
+	removeProvince = true,
+	addCulture = true,
+	updateCulture = true,
+	removeCulture = true,
+	addReligion = true,
+	updateReligion = true,
+	removeReligion = true,
+	addIdeology = true,
+	updateIdeology = true,
+	removeIdeology = true,
+	addGovernmentType = true,
+	updateGovernmentType = true,
+	removeGovernmentType = true,
+	assignProvince = true,
+	mapProvinceToPart = true,
+	setTileOwner = true,
+	assignBatch = true,
+	assignProvinceField = true,
+	assignProvinceFieldBatch = true,
+	undo = true,
+	redo = true,
 }
 
 local TITLE_BASE = "Art of War — Data Editor"
@@ -583,12 +641,16 @@ local function markDirty(flag)
 end
 
 local function sanitizeStatus(msg)
-	if msg == nil then return "" end
+	if msg == nil then
+		return ""
+	end
 	local s = tostring(msg)
 	s = s:gsub("<[^>]->", " ")
 	s = s:gsub("%s+", " ")
 	s = s:match("^%s*(.-)%s*$") or s
-	if #s > 160 then s = s:sub(1, 157) .. "…" end
+	if #s > 160 then
+		s = s:sub(1, 157) .. "…"
+	end
 	return s
 end
 
@@ -602,7 +664,9 @@ local function pushLog(msg, color)
 	while #logBuffer > LOG_MAX do
 		table.remove(logBuffer, 1)
 	end
-	if logSink then logSink(entry) end
+	if logSink then
+		logSink(entry)
+	end
 end
 
 local function setStatus(msg, color)
@@ -632,16 +696,19 @@ local function bumpPaintBurst(tag)
 	else
 		paintBurst.count = paintBurst.count + 1
 	end
-	setStatus(string.format("Painted %d tile%s for %s",
-		paintBurst.count, paintBurst.count == 1 and "" or "s", tostring(tag)),
-		PALETTE.good)
+	setStatus(
+		string.format("Painted %d tile%s for %s", paintBurst.count, paintBurst.count == 1 and "" or "s", tostring(tag)),
+		PALETTE.good
+	)
 end
 
 paintRefresh = function()
 	paintRefreshGen += 1
 	local gen = paintRefreshGen
 	task.delay(PAINT_REFRESH_DELAY, function()
-		if gen ~= paintRefreshGen then return end
+		if gen ~= paintRefreshGen then
+			return
+		end
 		if pendingProvincesAPI and pendingProvincesAPI.refresh then
 			pendingProvincesAPI.refresh()
 		end
@@ -653,15 +720,23 @@ local function ownerOf(partName)
 	local map = workspace:FindFirstChild("ArtOfWarMap")
 	local provinces = map and map:FindFirstChild("Provinces")
 	local part = provinces and provinces:FindFirstChild(partName)
-	if not part then return nil end
+	if not part then
+		return nil
+	end
 	local owner = part:GetAttribute("owner")
-	if type(owner) ~= "string" or owner == "" or owner == "NONE" then return nil end
+	if type(owner) ~= "string" or owner == "" or owner == "NONE" then
+		return nil
+	end
 	return owner
 end
 
 local function shouldConfirmOverwrite(currentOwner, newTag)
-	if not currentOwner or currentOwner == newTag then return false end
-	if state.overwriteArmedFor == newTag then return false end
+	if not currentOwner or currentOwner == newTag then
+		return false
+	end
+	if state.overwriteArmedFor == newTag then
+		return false
+	end
 	return true
 end
 
@@ -674,10 +749,16 @@ local function disarmOverwrite()
 	pendingOverwrite = nil
 end
 
-local CALL_OK = setmetatable({}, { __tostring = function() return "<CALL_OK>" end })
+local CALL_OK = setmetatable({}, {
+	__tostring = function()
+		return "<CALL_OK>"
+	end,
+})
 
 local function call(command, payload)
-	local ok, response = pcall(function() return api:InvokeServer(command, payload) end)
+	local ok, response = pcall(function()
+		return api:InvokeServer(command, payload)
+	end)
 	if not ok then
 		setStatus("remote error: " .. tostring(response), PALETTE.bad)
 		return nil
@@ -691,7 +772,9 @@ local function call(command, payload)
 	elseif command == "save" then
 		markDirty(false)
 	end
-	if response and response.result ~= nil then return response.result end
+	if response and response.result ~= nil then
+		return response.result
+	end
 	return CALL_OK
 end
 
@@ -730,7 +813,9 @@ local function makeTab(key, label)
 	}, content)
 
 	tabs[key] = { button = btn, body = body }
-	btn.MouseButton1Click:Connect(function() setTab(key) end)
+	btn.MouseButton1Click:Connect(function()
+		setTab(key)
+	end)
 	return body
 end
 
@@ -954,10 +1039,14 @@ local function makeCombo(row, options, value, opts)
 	end
 
 	local function displayText(id)
-		if id == nil or id == "" then return "" end
+		if id == nil or id == "" then
+			return ""
+		end
 		local name = labelFor(id)
 		if name ~= tostring(id) then
-			if opts.hideIdSuffix then return name end
+			if opts.hideIdSuffix then
+				return name
+			end
 			return name .. "  (" .. tostring(id) .. ")"
 		end
 		return tostring(id)
@@ -975,7 +1064,9 @@ local function makeCombo(row, options, value, opts)
 
 	local function closeList()
 		list.Visible = false
-		if openCombo == list then openCombo = nil end
+		if openCombo == list then
+			openCombo = nil
+		end
 	end
 
 	local rowEntries
@@ -984,7 +1075,9 @@ local function makeCombo(row, options, value, opts)
 	local truncatedHint
 
 	local function ensureData()
-		if rowEntries then return end
+		if rowEntries then
+			return
+		end
 		rowEntries = {}
 		for _, opt in ipairs(options) do
 			local id, name = normalizeOption(opt)
@@ -994,7 +1087,9 @@ local function makeCombo(row, options, value, opts)
 	end
 
 	local function ensurePool()
-		if buttonPool then return end
+		if buttonPool then
+			return
+		end
 		ensureData()
 		buttonPool = {}
 		for i = 1, poolSize do
@@ -1014,16 +1109,24 @@ local function makeCombo(row, options, value, opts)
 			}, scroll)
 			btn:SetAttribute("optionId", "")
 			btn:SetAttribute("optionName", "")
-			btn.MouseEnter:Connect(function() btn.BackgroundColor3 = PALETTE.bgPanelAlt end)
-			btn.MouseLeave:Connect(function() btn.BackgroundColor3 = PALETTE.bgPanel end)
+			btn.MouseEnter:Connect(function()
+				btn.BackgroundColor3 = PALETTE.bgPanelAlt
+			end)
+			btn.MouseLeave:Connect(function()
+				btn.BackgroundColor3 = PALETTE.bgPanel
+			end)
 			btn.MouseButton1Click:Connect(function()
 				local id = btn:GetAttribute("optionId")
-				if not id or id == "" then return end
+				if not id or id == "" then
+					return
+				end
 				selectedId = id
 				selectedName = btn:GetAttribute("optionName")
 				setBoxText(displayText(id))
 				closeList()
-				if onChange then onChange(id) end
+				if onChange then
+					onChange(id)
+				end
 			end)
 			buttonPool[i] = btn
 		end
@@ -1044,10 +1147,14 @@ local function makeCombo(row, options, value, opts)
 
 	local function bindButton(idx, entry)
 		local btn = buttonPool and buttonPool[idx]
-		if not btn then return end
+		if not btn then
+			return
+		end
 		if entry then
 			local label = "  " .. entry.name
-			if not opts.hideIdSuffix then label = label .. "  (" .. entry.id .. ")" end
+			if not opts.hideIdSuffix then
+				label = label .. "  (" .. entry.id .. ")"
+			end
 			btn.Text = label
 			btn:SetAttribute("optionId", entry.id)
 			btn:SetAttribute("optionName", entry.name)
@@ -1094,14 +1201,20 @@ local function makeCombo(row, options, value, opts)
 	end
 
 	local function bestMatch(query)
-		if not query or query == "" then return nil end
+		if not query or query == "" then
+			return nil
+		end
 		ensureData()
 		local lower = query:lower()
 		for _, entry in ipairs(rowEntries) do
-			if entry.id:lower() == lower then return entry.id end
+			if entry.id:lower() == lower then
+				return entry.id
+			end
 		end
 		for _, entry in ipairs(rowEntries) do
-			if entry.name:lower() == lower then return entry.id end
+			if entry.name:lower() == lower then
+				return entry.id
+			end
 		end
 		for _, entry in ipairs(rowEntries) do
 			if entry.id:lower():find(lower, 1, true) or entry.name:lower():find(lower, 1, true) then
@@ -1112,14 +1225,20 @@ local function makeCombo(row, options, value, opts)
 	end
 
 	local function openList()
-		if openCombo and openCombo ~= list then openCombo.Visible = false end
+		if openCombo and openCombo ~= list then
+			openCombo.Visible = false
+		end
 		openCombo = list
 		applyFilter("")
 		list.Visible = true
 	end
 
 	chevron.MouseButton1Click:Connect(function()
-		if list.Visible then closeList() else openList() end
+		if list.Visible then
+			closeList()
+		else
+			openList()
+		end
 	end)
 
 	box.Focused:Connect(openList)
@@ -1129,17 +1248,23 @@ local function makeCombo(row, options, value, opts)
 			applyFilter(box.Text)
 			return
 		end
-		if not list.Visible then openList() end
+		if not list.Visible then
+			openList()
+		end
 		applyFilter(box.Text)
 	end)
 	box.FocusLost:Connect(function(enter)
 		task.delay(0.12, function()
-			if list.Visible then closeList() end
+			if list.Visible then
+				closeList()
+			end
 		end)
 		task.defer(function()
 			if enter and allowFreeform then
 				selectedId = box.Text ~= "" and box.Text or nil
-				if onChange then onChange(selectedId) end
+				if onChange then
+					onChange(selectedId)
+				end
 			elseif enter then
 				local raw = box.Text or ""
 				local typed = raw:match("^%s*(.-)%s*$") or ""
@@ -1148,14 +1273,18 @@ local function makeCombo(row, options, value, opts)
 					if selectedId ~= nil then
 						selectedId = nil
 						selectedName = nil
-						if onChange then onChange(nil) end
+						if onChange then
+							onChange(nil)
+						end
 					end
 				else
 					local match = bestMatch(typed)
 					if match and match ~= selectedId then
 						selectedId = match
 						selectedName = labelFor(match)
-						if onChange then onChange(match) end
+						if onChange then
+							onChange(match)
+						end
 					end
 				end
 			end
@@ -1228,7 +1357,9 @@ local function makeResourceList(parent, options, initialMap, layoutOrder)
 	local addBtn
 
 	local function refreshEmptyHint()
-		if not emptyHint then return end
+		if not emptyHint then
+			return
+		end
 		emptyHint.Visible = #entries == 0
 	end
 
@@ -1309,7 +1440,9 @@ local function makeResourceList(parent, options, initialMap, layoutOrder)
 
 	if type(initialMap) == "table" then
 		local sortedKeys = {}
-		for k in pairs(initialMap) do table.insert(sortedKeys, k) end
+		for k in pairs(initialMap) do
+			table.insert(sortedKeys, k)
+		end
 		table.sort(sortedKeys)
 		for _, k in ipairs(sortedKeys) do
 			makeRow(k, initialMap[k])
@@ -1324,12 +1457,17 @@ local function makeResourceList(parent, options, initialMap, layoutOrder)
 		local taken = {}
 		for _, e in ipairs(entries) do
 			local v = e.combo.getValue()
-			if v then taken[v] = true end
+			if v then
+				taken[v] = true
+			end
 		end
 		local firstFree = nil
 		for _, opt in ipairs(options) do
 			local id = type(opt) == "table" and opt.id or opt
-			if not taken[id] then firstFree = id; break end
+			if not taken[id] then
+				firstFree = id
+				break
+			end
 		end
 		makeRow(firstFree, 1)
 	end)
@@ -1370,16 +1508,18 @@ local function collectAllMapTiles()
 	local list = {}
 	local map = workspace:FindFirstChild("ArtOfWarMap")
 	local folder = map and map:FindFirstChild("Provinces")
-	if not folder then return list end
+	if not folder then
+		return list
+	end
 	for _, part in folder:GetChildren() do
 		if part:IsA("BasePart") then
 			local pretty = prettyTileName(part.Name)
 			local partId = tonumber(part.Name:match("prov_(%d+)"))
 			list[part.Name] = {
 				partName = part.Name,
-				display  = partId and ("[" .. partId .. "] " .. pretty) or pretty,
-				partId   = partId,
-				seedId   = part:GetAttribute("province_id"),
+				display = partId and ("[" .. partId .. "] " .. pretty) or pretty,
+				partId = partId,
+				seedId = part:GetAttribute("province_id"),
 			}
 		end
 	end
@@ -1388,12 +1528,14 @@ end
 
 local function collectOwnedEntries(tag)
 	local list = {}
-	if not state.snapshot or not tag then return list end
+	if not state.snapshot or not tag then
+		return list
+	end
 	for id, prov in pairs(state.snapshot.provinces) do
 		if prov.ownerTag == tag then
 			table.insert(list, {
-				kind    = "seed",
-				id      = tonumber(id) or id,
+				kind = "seed",
+				id = tonumber(id) or id,
 				display = provinceLabel(id, prov),
 				sortKey = tostring(prov.name or id),
 			})
@@ -1403,15 +1545,17 @@ local function collectOwnedEntries(tag)
 		for partName, ownerTag in pairs(state.snapshot.tileOwners) do
 			if ownerTag == tag then
 				table.insert(list, {
-					kind     = "tile",
+					kind = "tile",
 					partName = partName,
-					display  = prettyTileName(partName),
-					sortKey  = prettyTileName(partName),
+					display = prettyTileName(partName),
+					sortKey = prettyTileName(partName),
 				})
 			end
 		end
 	end
-	table.sort(list, function(a, b) return a.sortKey < b.sortKey end)
+	table.sort(list, function(a, b)
+		return a.sortKey < b.sortKey
+	end)
 	return list
 end
 
@@ -1437,9 +1581,11 @@ local function buildProvincesSection(parent, ctx, order)
 
 	local armStroke = armBtn:FindFirstChildOfClass("UIStroke")
 
-	attachTooltip(armBtn, isPending
-		and "Click tiles on the map to queue them for this new country"
-		or "Click tiles on the map to assign them to this country")
+	attachTooltip(
+		armBtn,
+		isPending and "Click tiles on the map to queue them for this new country"
+			or "Click tiles on the map to assign them to this country"
+	)
 
 	local function isArmed()
 		return state.armedTag == tag
@@ -1450,24 +1596,31 @@ local function buildProvincesSection(parent, ctx, order)
 			armBtn.Text = "■  STOP click-to-assign  —  map clicks ARMED"
 			armBtn.BackgroundColor3 = PALETTE.accent
 			armBtn.TextColor3 = PALETTE.bgDim
-			if armStroke then armStroke.Color = PALETTE.accentHot end
+			if armStroke then
+				armStroke.Color = PALETTE.accentHot
+			end
 		else
-			armBtn.Text = isPending
-				and "▶  Arm map-click to queue tiles"
+			armBtn.Text = isPending and "▶  Arm map-click to queue tiles"
 				or ("▶  Arm map-click to assign tiles to " .. tostring(tag))
 			armBtn.BackgroundColor3 = PALETTE.bgInput
 			armBtn.TextColor3 = PALETTE.text
-			if armStroke then armStroke.Color = PALETTE.border end
+			if armStroke then
+				armStroke.Color = PALETTE.border
+			end
 		end
 	end
 	refreshArmBtn()
 
 	local function applyArmedHighlight()
-		if not ProvinceInteraction or not ProvinceInteraction.setSelectColor then return end
+		if not ProvinceInteraction or not ProvinceInteraction.setSelectColor then
+			return
+		end
 		local snap = state.snapshot
 		local country = snap and snap.countries and snap.countries[tag]
 		local rgb = country and country.color
-		if type(rgb) ~= "table" then return end
+		if type(rgb) ~= "table" then
+			return
+		end
 		local r = (tonumber(rgb[1]) or 128) / 255
 		local g = (tonumber(rgb[2]) or 128) / 255
 		local b = (tonumber(rgb[3]) or 128) / 255
@@ -1535,7 +1688,9 @@ local function buildProvincesSection(parent, ctx, order)
 
 	local function renderList()
 		for _, c in scroll:GetChildren() do
-			if not c:IsA("UIListLayout") then c:Destroy() end
+			if not c:IsA("UIListLayout") then
+				c:Destroy()
+			end
 		end
 
 		local entries
@@ -1558,7 +1713,8 @@ local function buildProvincesSection(parent, ctx, order)
 					local prov = state.snapshot.provinces[item]
 					if prov then
 						table.insert(entries, {
-							kind = "seed", id = item,
+							kind = "seed",
+							id = item,
 							display = provinceLabel(item, prov),
 						})
 					end
@@ -1572,7 +1728,8 @@ local function buildProvincesSection(parent, ctx, order)
 			newInstance("TextLabel", {
 				Size = UDim2.new(1, -8, 0, 28),
 				BackgroundTransparency = 1,
-				Text = isPending and "  (no provinces queued — add below or click on the map)" or "  (no provinces owned)",
+				Text = isPending and "  (no provinces queued — add below or click on the map)"
+					or "  (no provinces owned)",
 				TextColor3 = PALETTE.textMuted,
 				Font = Enum.Font.Gotham,
 				TextSize = 12,
@@ -1610,10 +1767,8 @@ local function buildProvincesSection(parent, ctx, order)
 			removeBtn.MouseButton1Click:Connect(function()
 				if isPending then
 					for i, queued in ipairs(state.pendingProvinces) do
-						local match = type(queued) == "table" and
-							((queued.kind == entry.kind) and
-							 (queued.kind == "seed" and queued.id == entry.id
-							   or queued.kind == "tile" and queued.partName == entry.partName))
+						local match = type(queued) == "table"
+								and ((queued.kind == entry.kind) and (queued.kind == "seed" and queued.id == entry.id or queued.kind == "tile" and queued.partName == entry.partName))
 							or queued == entry.id
 						if match then
 							table.remove(state.pendingProvinces, i)
@@ -1680,7 +1835,9 @@ local function buildProvincesSection(parent, ctx, order)
 			end
 		end
 	end
-	table.sort(pickerOptions, function(a, b) return a.sortKey < b.sortKey end)
+	table.sort(pickerOptions, function(a, b)
+		return a.sortKey < b.sortKey
+	end)
 
 	local picker = makeCombo(controls, pickerOptions, nil, { placeholder = "search any tile…", maxButtons = 200 })
 
@@ -1723,11 +1880,14 @@ local function buildProvincesSection(parent, ctx, order)
 			return
 		end
 		local currentOwner = province.ownerTag
-		if currentOwner == "NONE" or currentOwner == "" then currentOwner = nil end
+		if currentOwner == "NONE" or currentOwner == "" then
+			currentOwner = nil
+		end
 		if shouldConfirmOverwrite(currentOwner, tag) then
 			local now = os.clock()
 			local key = "seed:" .. tostring(pid)
-			if pendingOverwrite
+			if
+				pendingOverwrite
 				and pendingOverwrite.key == key
 				and now - pendingOverwrite.at < OVERWRITE_CONFIRM_WINDOW
 			then
@@ -1735,8 +1895,16 @@ local function buildProvincesSection(parent, ctx, order)
 				armOverwrite(tag)
 			else
 				pendingOverwrite = { key = key, at = now }
-				setStatus(string.format("Province %s belongs to %s — click again within %ds to take it for %s",
-					tostring(pid), tostring(currentOwner), OVERWRITE_CONFIRM_WINDOW, tag), PALETTE.warn)
+				setStatus(
+					string.format(
+						"Province %s belongs to %s — click again within %ds to take it for %s",
+						tostring(pid),
+						tostring(currentOwner),
+						OVERWRITE_CONFIRM_WINDOW,
+						tag
+					),
+					PALETTE.warn
+				)
 				return
 			end
 		end
@@ -1774,7 +1942,8 @@ local function buildProvincesSection(parent, ctx, order)
 		if shouldConfirmOverwrite(currentOwner, tag) then
 			local now = os.clock()
 			local key = "tile:" .. partName
-			if pendingOverwrite
+			if
+				pendingOverwrite
 				and pendingOverwrite.key == key
 				and now - pendingOverwrite.at < OVERWRITE_CONFIRM_WINDOW
 			then
@@ -1782,8 +1951,16 @@ local function buildProvincesSection(parent, ctx, order)
 				armOverwrite(tag)
 			else
 				pendingOverwrite = { key = key, at = now }
-				setStatus(string.format("%s belongs to %s — click again within %ds to take it for %s",
-					prettyTileName(partName), tostring(currentOwner), OVERWRITE_CONFIRM_WINDOW, tag), PALETTE.warn)
+				setStatus(
+					string.format(
+						"%s belongs to %s — click again within %ds to take it for %s",
+						prettyTileName(partName),
+						tostring(currentOwner),
+						OVERWRITE_CONFIRM_WINDOW,
+						tag
+					),
+					PALETTE.warn
+				)
 				return
 			end
 		end
@@ -1798,7 +1975,9 @@ local function buildProvincesSection(parent, ctx, order)
 	end
 
 	local function tryAddFromMap(part)
-		if not part then return end
+		if not part then
+			return
+		end
 		local seedPid = part:GetAttribute("province_id")
 		if seedPid then
 			tryAddSeed(seedPid)
@@ -1808,7 +1987,9 @@ local function buildProvincesSection(parent, ctx, order)
 	end
 
 	local function tryRemoveFromMap(part)
-		if not part then return end
+		if not part then
+			return
+		end
 		local seedPid = part:GetAttribute("province_id")
 		if isPending then
 			local removed = false
@@ -1849,7 +2030,9 @@ local function buildProvincesSection(parent, ctx, order)
 	end
 
 	local function bulkAssign(parts)
-		if not parts or #parts == 0 then return end
+		if not parts or #parts == 0 then
+			return
+		end
 		local items = {}
 		for _, part in ipairs(parts) do
 			if part:IsA("BasePart") then
@@ -1861,14 +2044,19 @@ local function buildProvincesSection(parent, ctx, order)
 				end
 			end
 		end
-		if #items == 0 then return end
+		if #items == 0 then
+			return
+		end
 		if isPending then
 			local added = 0
 			for _, it in ipairs(items) do
 				local exists = false
 				for _, existing in ipairs(state.pendingProvinces) do
 					if type(existing) == "table" and existing.kind == it.kind then
-						if (it.kind == "seed" and existing.id == it.id) or (it.kind == "tile" and existing.partName == it.partName) then
+						if
+							(it.kind == "seed" and existing.id == it.id)
+							or (it.kind == "tile" and existing.partName == it.partName)
+						then
 							exists = true
 							break
 						end
@@ -1878,12 +2066,14 @@ local function buildProvincesSection(parent, ctx, order)
 					if it.kind == "seed" then
 						local prov = state.snapshot.provinces[it.id]
 						table.insert(state.pendingProvinces, {
-							kind = "seed", id = it.id,
+							kind = "seed",
+							id = it.id,
 							display = prov and provinceLabel(it.id, prov) or ("Province " .. tostring(it.id)),
 						})
 					else
 						table.insert(state.pendingProvinces, {
-							kind = "tile", partName = it.partName,
+							kind = "tile",
+							partName = it.partName,
 							display = prettyTileName(it.partName),
 						})
 					end
@@ -1919,16 +2109,26 @@ local function buildProvincesSection(parent, ctx, order)
 	multiAssignBtn.TextSize = 12
 	multiAssignBtn.Visible = false
 	multiAssignBtn.MouseButton1Click:Connect(function()
-		if not ProvinceInteraction or not ProvinceInteraction.getMultiSelection then return end
+		if not ProvinceInteraction or not ProvinceInteraction.getMultiSelection then
+			return
+		end
 		local sel = ProvinceInteraction.getMultiSelection()
-		if #sel < 2 then return end
+		if #sel < 2 then
+			return
+		end
 		showConfirm({
 			title = "Bulk assign?",
-			message = string.format("Assign %d shift-selected tiles to %s?", #sel, isPending and "the new country" or tag),
+			message = string.format(
+				"Assign %d shift-selected tiles to %s?",
+				#sel,
+				isPending and "the new country" or tag
+			),
 			confirmText = "Assign all",
 			cancelText = "Cancel",
 			accent = PALETTE.good,
-			onConfirm = function() bulkAssign(sel) end,
+			onConfirm = function()
+				bulkAssign(sel)
+			end,
 		})
 	end)
 
@@ -1937,7 +2137,8 @@ local function buildProvincesSection(parent, ctx, order)
 		unsubMulti = ProvinceInteraction.addMultiSelectListener(function(selection)
 			local n = selection and #selection or 0
 			if n >= 2 then
-				multiAssignBtn.Text = string.format("Assign %d shift-selected to %s", n, isPending and "new country" or tag)
+				multiAssignBtn.Text =
+					string.format("Assign %d shift-selected to %s", n, isPending and "new country" or tag)
 				multiAssignBtn.Visible = true
 			else
 				multiAssignBtn.Visible = false
@@ -1973,27 +2174,29 @@ local function buildProvincesSection(parent, ctx, order)
 		isArmed = isArmed,
 		active = true,
 		cleanup = function()
-			if unsubMulti then unsubMulti() end
+			if unsubMulti then
+				unsubMulti()
+			end
 		end,
 	}
 end
 
 local TECH_GROUPS = {
-	{ id = "western",        name = "Western" },
-	{ id = "eastern",        name = "Eastern" },
-	{ id = "muslim",         name = "Muslim" },
-	{ id = "ottoman",        name = "Ottoman" },
-	{ id = "indian",         name = "Indian" },
-	{ id = "chinese",        name = "Chinese" },
-	{ id = "nomadic",        name = "Nomadic" },
-	{ id = "sub_saharan",    name = "Sub-Saharan" },
+	{ id = "western", name = "Western" },
+	{ id = "eastern", name = "Eastern" },
+	{ id = "muslim", name = "Muslim" },
+	{ id = "ottoman", name = "Ottoman" },
+	{ id = "indian", name = "Indian" },
+	{ id = "chinese", name = "Chinese" },
+	{ id = "nomadic", name = "Nomadic" },
+	{ id = "sub_saharan", name = "Sub-Saharan" },
 	{ id = "north_american", name = "North American" },
-	{ id = "mesoamerican",   name = "Mesoamerican" },
+	{ id = "mesoamerican", name = "Mesoamerican" },
 	{ id = "south_american", name = "South American" },
-	{ id = "andean",         name = "Andean" },
-	{ id = "polynesian",     name = "Polynesian" },
-	{ id = "aboriginal",     name = "Aboriginal" },
-	{ id = "high_american",  name = "High American" },
+	{ id = "andean", name = "Andean" },
+	{ id = "polynesian", name = "Polynesian" },
+	{ id = "aboriginal", name = "Aboriginal" },
+	{ id = "high_american", name = "High American" },
 }
 
 local function rebuildCountryForm()
@@ -2004,7 +2207,9 @@ local function rebuildCountryForm()
 	end
 	pendingProvincesAPI = nil
 	local s = state.snapshot
-	if not s then return end
+	if not s then
+		return
+	end
 
 	local country = state.selectedCountryTag and s.countries[state.selectedCountryTag] or nil
 	local isNew = country == nil
@@ -2042,7 +2247,9 @@ local function rebuildCountryForm()
 	local seenCapitalTile = {}
 	local seededEU4 = {}
 	if s.eu4Map then
-		for _, eu4 in pairs(s.eu4Map) do seededEU4[tostring(eu4)] = true end
+		for _, eu4 in pairs(s.eu4Map) do
+			seededEU4[tostring(eu4)] = true
+		end
 	end
 	for pid, p in pairs(s.provinces) do
 		table.insert(capitalOptions, {
@@ -2052,7 +2259,9 @@ local function rebuildCountryForm()
 		})
 	end
 	local function pushTileOption(partName, label)
-		if not partName or partName == "" or seenCapitalTile[partName] then return end
+		if not partName or partName == "" or seenCapitalTile[partName] then
+			return
+		end
 		seenCapitalTile[partName] = true
 		local pretty = (partName:gsub("^prov_%d+_", "")):gsub("_", " ")
 		table.insert(capitalOptions, {
@@ -2085,7 +2294,9 @@ local function rebuildCountryForm()
 			end
 		end
 	end
-	table.sort(capitalOptions, function(a, b) return a.sortKey < b.sortKey end)
+	table.sort(capitalOptions, function(a, b)
+		return a.sortKey < b.sortKey
+	end)
 	countryFields.capitalProvinceId = addField(13, "Capital Province", function(row)
 		local existing
 		if country and country.capitalProvinceId ~= nil then
@@ -2098,7 +2309,7 @@ local function rebuildCountryForm()
 		})
 	end)
 	countryFields.color = addField(14, "Color (R,G,B)", function(row)
-		local c = country and country.color or {128, 128, 128}
+		local c = country and country.color or { 128, 128, 128 }
 		return makeTextBox(row, "40, 40, 40", string.format("%d, %d, %d", c[1] or 128, c[2] or 128, c[3] or 128))
 	end)
 	countryFields.flagAssetId = addField(15, "Flag Image (rbxassetid)", function(row)
@@ -2207,7 +2418,9 @@ local function rebuildCountryForm()
 			rowOrder += 1
 			local isGlobal = def.starting == true
 			local check = (not isGlobal) and owned[def.id] == true
-			if check then selected[def.id] = true end
+			if check then
+				selected[def.id] = true
+			end
 			local row = newInstance("Frame", {
 				Size = UDim2.new(1, 0, 0, 22),
 				BackgroundTransparency = 1,
@@ -2260,10 +2473,18 @@ local function rebuildCountryForm()
 	applyBtn.Size = UDim2.fromOffset(200, 32)
 	applyBtn.LayoutOrder = 99
 	applyBtn.MouseButton1Click:Connect(function()
-		local function parseList(t) local out = {} for s in (t or ""):gmatch("[^,%s]+") do table.insert(out, s) end return out end
+		local function parseList(t)
+			local out = {}
+			for s in (t or ""):gmatch("[^,%s]+") do
+				table.insert(out, s)
+			end
+			return out
+		end
 		local function parseColor(t)
 			local parts = {}
-			for n in (t or ""):gmatch("%d+") do table.insert(parts, tonumber(n)) end
+			for n in (t or ""):gmatch("%d+") do
+				table.insert(parts, tonumber(n))
+			end
 			return { parts[1] or 128, parts[2] or 128, parts[3] or 128 }
 		end
 		local flagText = countryFields.flagAssetId.Text
@@ -2303,20 +2524,37 @@ local function rebuildCountryForm()
 			setStatus("Tag must be 2–4 uppercase letters", PALETTE.bad)
 			return
 		end
-		local function isBlank(v) return v == nil or v == "" end
+		local function isBlank(v)
+			return v == nil or v == ""
+		end
 		local missing = {}
-		if isBlank(opts.displayName) then table.insert(missing, "Display Name") end
-		if isBlank(opts.primaryCulture) then table.insert(missing, "Primary Culture") end
-		if isBlank(opts.stateReligion) then table.insert(missing, "State Religion") end
-		if isBlank(opts.governmentForm) then table.insert(missing, "Government") end
-		if isBlank(opts.ideology) then table.insert(missing, "Ideology") end
-		if not capitalId and not capitalTilePart then table.insert(missing, "Capital Province") end
+		if isBlank(opts.displayName) then
+			table.insert(missing, "Display Name")
+		end
+		if isBlank(opts.primaryCulture) then
+			table.insert(missing, "Primary Culture")
+		end
+		if isBlank(opts.stateReligion) then
+			table.insert(missing, "State Religion")
+		end
+		if isBlank(opts.governmentForm) then
+			table.insert(missing, "Government")
+		end
+		if isBlank(opts.ideology) then
+			table.insert(missing, "Ideology")
+		end
+		if not capitalId and not capitalTilePart then
+			table.insert(missing, "Capital Province")
+		end
 		if #missing > 0 then
 			setStatus("Missing required: " .. table.concat(missing, ", "), PALETTE.bad)
 			return
 		end
 		if capitalId and state.snapshot and not state.snapshot.provinces[capitalId] then
-			setStatus("Capital Province " .. tostring(capitalId) .. " does not exist — pick from the list", PALETTE.bad)
+			setStatus(
+				"Capital Province " .. tostring(capitalId) .. " does not exist — pick from the list",
+				PALETTE.bad
+			)
 			return
 		end
 		if capitalTilePart then
@@ -2340,7 +2578,9 @@ local function rebuildCountryForm()
 				local flushed = 0
 				if #items > 0 then
 					local result = call("assignBatch", { ownerTag = tag, items = items })
-					if type(result) == "table" then flushed = result.processed or 0 end
+					if type(result) == "table" then
+						flushed = result.processed or 0
+					end
 				end
 				state.pendingProvinces = {}
 				setStatus(string.format("Created %s (+%d entries)", tag, flushed), PALETTE.good)
@@ -2368,9 +2608,13 @@ end
 local function rebuildCountryList(filter)
 	clearFrame(countryScroll)
 	countryListItems = {}
-	if not state.snapshot then return end
+	if not state.snapshot then
+		return
+	end
 	local tags = {}
-	for t in pairs(state.snapshot.countries) do table.insert(tags, t) end
+	for t in pairs(state.snapshot.countries) do
+		table.insert(tags, t)
+	end
 	table.sort(tags)
 	filter = filter and filter:lower() or ""
 	local order = 0
@@ -2405,7 +2649,11 @@ local function rebuildCountryList(filter)
 				local colorChip = newInstance("Frame", {
 					Size = UDim2.fromOffset(14, 14),
 					Position = UDim2.fromOffset(8, 10),
-					BackgroundColor3 = Color3.fromRGB((c.color or {})[1] or 128, (c.color or {})[2] or 128, (c.color or {})[3] or 128),
+					BackgroundColor3 = Color3.fromRGB(
+						(c.color or {})[1] or 128,
+						(c.color or {})[2] or 128,
+						(c.color or {})[3] or 128
+					),
 					BorderSizePixel = 0,
 				}, item)
 				addCorner(colorChip, 2)
@@ -2447,7 +2695,9 @@ local function rebuildCountryList(filter)
 				TextXAlignment = Enum.TextXAlignment.Left,
 			}, item)
 
-			item.MouseButton1Click:Connect(function() selectCountry(tag) end)
+			item.MouseButton1Click:Connect(function()
+				selectCountry(tag)
+			end)
 			countryListItems[tag] = item
 		end
 	end
@@ -2466,7 +2716,9 @@ local function rebuildProvinceForm()
 	clearFrame(provinceForm)
 	provinceFields = {}
 	local s = state.snapshot
-	if not s then return end
+	if not s then
+		return
+	end
 
 	local prov = state.selectedProvinceId and s.provinces[state.selectedProvinceId] or nil
 	local isNew = prov == nil
@@ -2475,7 +2727,8 @@ local function rebuildProvinceForm()
 	if isNew then
 		headerLabel = "NEW PROVINCE"
 	else
-		headerLabel = string.format("EDIT PROVINCE [%s] %s", tostring(state.selectedProvinceId), tostring(prov.name or ""))
+		headerLabel =
+			string.format("EDIT PROVINCE [%s] %s", tostring(state.selectedProvinceId), tostring(prov.name or ""))
 	end
 	makeSection(provinceForm, headerLabel, 1)
 
@@ -2485,7 +2738,11 @@ local function rebuildProvinceForm()
 	end
 
 	provinceFields.id = addField(2, "ID", function(row)
-		local box = makeTextBox(row, s.collapsed and "(set by Map Part)" or "42", prov and tostring(state.selectedProvinceId) or "")
+		local box = makeTextBox(
+			row,
+			s.collapsed and "(set by Map Part)" or "42",
+			prov and tostring(state.selectedProvinceId) or ""
+		)
 		-- v3: a province's id IS its map part number, so it's derived from the Map Part picker, not typed.
 		box.TextEditable = isNew and not s.collapsed
 		return box
@@ -2538,7 +2795,9 @@ local function rebuildProvinceForm()
 	for tag, c in pairs(s.countries) do
 		table.insert(countryList, { id = tag, name = c.displayName or tag })
 	end
-	table.sort(countryList, function(a, b) return a.name < b.name end)
+	table.sort(countryList, function(a, b)
+		return a.name < b.name
+	end)
 	provinceFields.ownerTag = addField(16, "Owner", function(row)
 		return makeDropdown(row, countryList, prov and prov.ownerTag or "NONE")
 	end)
@@ -2585,7 +2844,9 @@ local function rebuildProvinceForm()
 			table.insert(partOptions, { id = info.partId, name = info.display, sortKey = (info.display or ""):lower() })
 		end
 	end
-	table.sort(partOptions, function(a, b) return a.sortKey < b.sortKey end)
+	table.sort(partOptions, function(a, b)
+		return a.sortKey < b.sortKey
+	end)
 	provinceFields.btPartId = addField(29, "Map Part (Studio name)", function(row)
 		-- v3: a province's part IS its id, so the current part is just the id itself.
 		local existing = s.collapsed and state.selectedProvinceId or s.eu4Map[state.selectedProvinceId]
@@ -2646,16 +2907,34 @@ local function rebuildProvinceForm()
 			setStatus("Province " .. id .. " already exists", PALETTE.bad)
 			return
 		end
-		local function pBlank(v) return v == nil or v == "" end
+		local function pBlank(v)
+			return v == nil or v == ""
+		end
 		local pMissing = {}
-		if pBlank(opts.name) then table.insert(pMissing, "Name") end
-		if pBlank(opts.areaId) then table.insert(pMissing, "Area") end
-		if pBlank(opts.regionId) then table.insert(pMissing, "Region") end
-		if pBlank(opts.superRegionId) then table.insert(pMissing, "Super-Region") end
-		if pBlank(opts.terrain) then table.insert(pMissing, "Terrain") end
-		if pBlank(opts.climate) then table.insert(pMissing, "Climate") end
-		if pBlank(opts.culture) then table.insert(pMissing, "Culture") end
-		if pBlank(opts.religion) then table.insert(pMissing, "Religion") end
+		if pBlank(opts.name) then
+			table.insert(pMissing, "Name")
+		end
+		if pBlank(opts.areaId) then
+			table.insert(pMissing, "Area")
+		end
+		if pBlank(opts.regionId) then
+			table.insert(pMissing, "Region")
+		end
+		if pBlank(opts.superRegionId) then
+			table.insert(pMissing, "Super-Region")
+		end
+		if pBlank(opts.terrain) then
+			table.insert(pMissing, "Terrain")
+		end
+		if pBlank(opts.climate) then
+			table.insert(pMissing, "Climate")
+		end
+		if pBlank(opts.culture) then
+			table.insert(pMissing, "Culture")
+		end
+		if pBlank(opts.religion) then
+			table.insert(pMissing, "Religion")
+		end
 		if #pMissing > 0 then
 			setStatus("Missing required: " .. table.concat(pMissing, ", "), PALETTE.bad)
 			return
@@ -2665,14 +2944,18 @@ local function rebuildProvinceForm()
 				setStatus("Created province " .. id, PALETTE.good)
 				state.selectedProvinceId = id
 				local bt = tonumber(provinceFields.btPartId.getValue())
-				if bt then call("mapProvinceToPart", { id = id, btPartId = bt }) end
+				if bt then
+					call("mapProvinceToPart", { id = id, btPartId = bt })
+				end
 				refresh()
 			end
 		else
 			if call("updateProvince", { id = state.selectedProvinceId, opts = opts }) ~= nil then
 				setStatus("Updated province " .. state.selectedProvinceId, PALETTE.good)
 				local bt = tonumber(provinceFields.btPartId.getValue())
-				if bt then call("mapProvinceToPart", { id = state.selectedProvinceId, btPartId = bt }) end
+				if bt then
+					call("mapProvinceToPart", { id = state.selectedProvinceId, btPartId = bt })
+				end
 				refresh()
 			end
 		end
@@ -2691,9 +2974,13 @@ end
 local function rebuildProvinceList(filter)
 	clearFrame(provinceScroll)
 	provinceListItems = {}
-	if not state.snapshot then return end
+	if not state.snapshot then
+		return
+	end
 	local ids = {}
-	for id in pairs(state.snapshot.provinces) do table.insert(ids, id) end
+	for id in pairs(state.snapshot.provinces) do
+		table.insert(ids, id)
+	end
 	table.sort(ids)
 	filter = filter and filter:lower() or ""
 	local order = 0
@@ -2701,7 +2988,8 @@ local function rebuildProvinceList(filter)
 		local p = state.snapshot.provinces[id]
 		local provName = tostring(p.name or "")
 		local cityName = tostring(p.displayCityName or "")
-		if filter == ""
+		if
+			filter == ""
 			or tostring(id):find(filter, 1, true)
 			or provName:lower():find(filter, 1, true)
 			or cityName:lower():find(filter, 1, true)
@@ -2719,7 +3007,8 @@ local function rebuildProvinceList(filter)
 			addStroke(item, PALETTE.border, 1)
 
 			local primary = (cityName ~= "" and cityName) or provName
-			local secondary = (cityName ~= "" and cityName ~= provName and provName ~= "") and (" — " .. provName) or ""
+			local secondary = (cityName ~= "" and cityName ~= provName and provName ~= "") and (" — " .. provName)
+				or ""
 			newInstance("TextLabel", {
 				Size = UDim2.new(1, -16, 0, 14),
 				Position = UDim2.fromOffset(8, 2),
@@ -2742,7 +3031,9 @@ local function rebuildProvinceList(filter)
 				TextXAlignment = Enum.TextXAlignment.Left,
 			}, item)
 
-			item.MouseButton1Click:Connect(function() selectProvince(id) end)
+			item.MouseButton1Click:Connect(function()
+				selectProvince(id)
+			end)
 			provinceListItems[id] = item
 		end
 	end
@@ -2761,7 +3052,9 @@ local function rebuildProvinceList(filter)
 				end
 			end
 		end
-		table.sort(painted, function(a, b) return a.partName < b.partName end)
+		table.sort(painted, function(a, b)
+			return a.partName < b.partName
+		end)
 		for _, t in ipairs(painted) do
 			local pretty = (t.partName:gsub("^prov_%d+_", "")):gsub("_", " ")
 			local partNum = t.partName:match("prov_(%d+)") or "?"
@@ -2802,7 +3095,14 @@ local function rebuildProvinceList(filter)
 
 				local localTile = t
 				item.MouseButton1Click:Connect(function()
-					setStatus(string.format("Tile %s (%s) — promotes to a seed on next Save, then editable here", pretty, localTile.ownerTag), PALETTE.warn)
+					setStatus(
+						string.format(
+							"Tile %s (%s) — promotes to a seed on next Save, then editable here",
+							pretty,
+							localTile.ownerTag
+						),
+						PALETTE.warn
+					)
 				end)
 			end
 		end
@@ -2830,7 +3130,9 @@ mappingLayout.Parent = mappingScroll
 
 local function rebuildMappingView()
 	clearFrame(mappingScroll)
-	if not state.snapshot then return end
+	if not state.snapshot then
+		return
+	end
 	local s = state.snapshot
 	local info = newInstance("TextLabel", {
 		Size = UDim2.new(1, 0, 0, 48),
@@ -2850,20 +3152,30 @@ local function rebuildMappingView()
 	-- client-side from the snapshot (the authoritative gate is server-side Editor.auditMapping).
 	do
 		local targetCount = {}
-		for _, pid in pairs(s.eu4Map or {}) do targetCount[pid] = (targetCount[pid] or 0) + 1 end
+		for _, pid in pairs(s.eu4Map or {}) do
+			targetCount[pid] = (targetCount[pid] or 0) + 1
+		end
 		local dupes = 0
-		for _, n in pairs(targetCount) do if n > 1 then dupes += 1 end end
+		for _, n in pairs(targetCount) do
+			if n > 1 then
+				dupes += 1
+			end
+		end
 		local unmapped = 0
 		for id in pairs(s.provinces or {}) do
-			if (s.eu4Map or {})[id] == nil then unmapped += 1 end
+			if (s.eu4Map or {})[id] == nil then
+				unmapped += 1
+			end
 		end
 		local ready = dupes == 0 and unmapped == 0
 		newInstance("TextLabel", {
 			Size = UDim2.new(1, 0, 0, 22),
 			BackgroundTransparency = 1,
-			Text = ready
-				and "\u{2713} Mapping is a clean bijection — ready to collapse."
-				or string.format("\u{26A0} %d duplicate part target(s), %d unmapped province(s) — resolve before collapsing.", dupes, unmapped),
+			Text = ready and "\u{2713} Mapping is a clean bijection — ready to collapse." or string.format(
+				"\u{26A0} %d duplicate part target(s), %d unmapped province(s) — resolve before collapsing.",
+				dupes,
+				unmapped
+			),
 			TextColor3 = ready and PALETTE.good or PALETTE.warn,
 			Font = Enum.Font.GothamBold,
 			TextSize = 12,
@@ -2874,7 +3186,9 @@ local function rebuildMappingView()
 	end
 
 	local ids = {}
-	for id in pairs(s.provinces) do table.insert(ids, id) end
+	for id in pairs(s.provinces) do
+		table.insert(ids, id)
+	end
 	table.sort(ids)
 	local order = 10
 	for _, id in ipairs(ids) do
@@ -2903,7 +3217,9 @@ local function rebuildMappingView()
 
 	if s.tileOwners then
 		local seededEU4 = {}
-		for _, eu4 in pairs(s.eu4Map or {}) do seededEU4[eu4] = true end
+		for _, eu4 in pairs(s.eu4Map or {}) do
+			seededEU4[eu4] = true
+		end
 		local painted = {}
 		for partName, ownerTag in pairs(s.tileOwners) do
 			if type(ownerTag) == "string" and ownerTag ~= "" and ownerTag ~= "NONE" then
@@ -2913,7 +3229,9 @@ local function rebuildMappingView()
 				end
 			end
 		end
-		table.sort(painted, function(a, b) return (a.eu4Pid or 0) < (b.eu4Pid or 0) end)
+		table.sort(painted, function(a, b)
+			return (a.eu4Pid or 0) < (b.eu4Pid or 0)
+		end)
 		for _, t in ipairs(painted) do
 			order += 1
 			local pretty = (t.partName:gsub("^prov_%d+_", "")):gsub("_", " ")
@@ -2929,8 +3247,12 @@ local function rebuildMappingView()
 			newInstance("TextLabel", {
 				Size = UDim2.fromScale(1, 1),
 				BackgroundTransparency = 1,
-				Text = string.format("  [tile]  %-22s  →  BT part  %s   • painted (%s) — promotes on save",
-					pretty, tostring(t.eu4Pid or "?"), t.ownerTag),
+				Text = string.format(
+					"  [tile]  %-22s  →  BT part  %s   • painted (%s) — promotes on save",
+					pretty,
+					tostring(t.eu4Pid or "?"),
+					t.ownerTag
+				),
 				TextColor3 = PALETTE.warn,
 				Font = Enum.Font.Code,
 				TextSize = 12,
@@ -3026,11 +3348,22 @@ dsPadding.Parent = dsScroll
 local dataStoreSnapshot = nil
 
 local function describeValue(kind, value)
-	if type(value) ~= "table" then return tostring(value) end
+	if type(value) ~= "table" then
+		return tostring(value)
+	end
 	if kind == "country" then
-		return string.format("displayName=%q cap=%s", tostring(value.displayName or ""), tostring(value.capitalProvinceId or "?"))
+		return string.format(
+			"displayName=%q cap=%s",
+			tostring(value.displayName or ""),
+			tostring(value.capitalProvinceId or "?")
+		)
 	elseif kind == "province" then
-		return string.format("name=%q owner=%s culture=%s", tostring(value.name or ""), tostring(value.ownerTag or "?"), tostring(value.culture or "?"))
+		return string.format(
+			"name=%q owner=%s culture=%s",
+			tostring(value.name or ""),
+			tostring(value.ownerTag or "?"),
+			tostring(value.culture or "?")
+		)
 	elseif kind == "tile" then
 		return "owner=" .. tostring(value)
 	elseif kind == "eu4map" then
@@ -3092,14 +3425,20 @@ local function renderDataStoreList(filter)
 	end
 
 	table.sort(list, function(a, b)
-		if a.kind == b.kind then return a.key < b.key end
+		if a.kind == b.kind then
+			return a.key < b.key
+		end
 		return a.kind < b.kind
 	end)
 
 	local term = (filter or ""):lower()
 	local shown = 0
 	for idx, entry in ipairs(list) do
-		if term == "" or entry.display:lower():find(term, 1, true) or (entry.detail or ""):lower():find(term, 1, true) then
+		if
+			term == ""
+			or entry.display:lower():find(term, 1, true)
+			or (entry.detail or ""):lower():find(term, 1, true)
+		then
 			shown += 1
 			local row = newInstance("Frame", {
 				Size = UDim2.new(1, -12, 0, 22),
@@ -3149,13 +3488,19 @@ local function renderDataStoreList(filter)
 end
 
 local function countTable(t)
-	local n = 0 for _ in pairs(t or {}) do n += 1 end return n
+	local n = 0
+	for _ in pairs(t or {}) do
+		n += 1
+	end
+	return n
 end
 
 local function loadDataStore(forceRefresh)
 	setStatus(forceRefresh and "Refetching DataStore…" or "Loading DataStore…", PALETTE.accent)
 	local snap = call("dumpDataStore", { forceRefresh = forceRefresh })
-	if not snap then return end
+	if not snap then
+		return
+	end
 	if type(snap) == "table" and snap.mode == "error" then
 		setStatus("DataStore load failed: " .. tostring(snap.error), PALETTE.bad)
 		return
@@ -3167,18 +3512,31 @@ local function loadDataStore(forceRefresh)
 		tostring(snap.universe or "?"),
 		tonumber(snap.placeId) or 0,
 		tostring(snap.scope or "?"),
-		countTable(snap.countries), countTable(snap.provinces), countTable(snap.eu4Map), countTable(snap.tiles),
-		countTable(tombs.country), countTable(tombs.province), countTable(tombs.eu4map), countTable(tombs.tile))
+		countTable(snap.countries),
+		countTable(snap.provinces),
+		countTable(snap.eu4Map),
+		countTable(snap.tiles),
+		countTable(tombs.country),
+		countTable(tombs.province),
+		countTable(tombs.eu4map),
+		countTable(tombs.tile)
+	)
 	renderDataStoreList(dsSearch.Text)
 	setStatus(forceRefresh and "DataStore refreshed from backend" or "DataStore loaded", PALETTE.good)
 end
 
-dsLoadBtn.MouseButton1Click:Connect(function() loadDataStore(false) end)
-dsForceBtn.MouseButton1Click:Connect(function() loadDataStore(true) end)
+dsLoadBtn.MouseButton1Click:Connect(function()
+	loadDataStore(false)
+end)
+dsForceBtn.MouseButton1Click:Connect(function()
+	loadDataStore(true)
+end)
 dsMigrateBtn.MouseButton1Click:Connect(function()
 	setStatus("Scanning legacy keys…", PALETTE.accent)
 	local result = call("migrateLegacy")
-	if not result then return end
+	if not result then
+		return
+	end
 	if type(result) == "table" and result.mode == "error" then
 		setStatus("Migrate failed: " .. tostring(result.error), PALETTE.bad)
 		return
@@ -3258,12 +3616,16 @@ local function renderLogEntry(entry)
 	return row
 end
 
-for _, entry in ipairs(logBuffer) do renderLogEntry(entry) end
+for _, entry in ipairs(logBuffer) do
+	renderLogEntry(entry)
+end
 logSink = renderLogEntry
 
 logsClearBtn.MouseButton1Click:Connect(function()
 	for _, c in logsScroll:GetChildren() do
-		if c:IsA("TextLabel") then c:Destroy() end
+		if c:IsA("TextLabel") then
+			c:Destroy()
+		end
 	end
 	table.clear(logBuffer)
 	logRowOrder = 0
@@ -3273,15 +3635,17 @@ local identityTabRebuilders = {}
 
 local function safeRun(label, fn, ...)
 	local ok, err = pcall(fn, ...)
-	if not ok then warn(string.format("[Editor] %s failed: %s", label, tostring(err))) end
+	if not ok then
+		warn(string.format("[Editor] %s failed: %s", label, tostring(err)))
+	end
 end
 
 local function rebuildAllTabs()
-	safeRun("rebuildCountryList",  rebuildCountryList,  countrySearch.Text)
-	safeRun("rebuildCountryForm",  rebuildCountryForm)
+	safeRun("rebuildCountryList", rebuildCountryList, countrySearch.Text)
+	safeRun("rebuildCountryForm", rebuildCountryForm)
 	safeRun("rebuildProvinceList", rebuildProvinceList, provinceSearch.Text)
 	safeRun("rebuildProvinceForm", rebuildProvinceForm)
-	safeRun("rebuildMappingView",  rebuildMappingView)
+	safeRun("rebuildMappingView", rebuildMappingView)
 	for index, rebuild in ipairs(identityTabRebuilders) do
 		safeRun("identityTabRebuilders[" .. index .. "]", rebuild)
 	end
@@ -3289,12 +3653,18 @@ end
 
 refresh = function()
 	local snap = call("loadState")
-	if not snap then return end
+	if not snap then
+		return
+	end
 	state.snapshot = snap
 	rebuildAllTabs()
 	local cn, pn = 0, 0
-	for _ in pairs(snap.countries) do cn += 1 end
-	for _ in pairs(snap.provinces) do pn += 1 end
+	for _ in pairs(snap.countries) do
+		cn += 1
+	end
+	for _ in pairs(snap.provinces) do
+		pn += 1
+	end
 	setStatus(string.format("%d countries  •  %d provinces", cn, pn), PALETTE.textMuted)
 end
 
@@ -3310,7 +3680,9 @@ local function forceReload()
 	end
 	pendingReloadAt = 0
 	local snap = call("reloadState")
-	if not snap then return end
+	if not snap then
+		return
+	end
 	state.snapshot = snap
 	rebuildAllTabs()
 	markDirty(false)
@@ -3318,18 +3690,28 @@ local function forceReload()
 end
 
 local function formatDiffSegment(label, d)
-	if not d or (d.added == 0 and d.modified == 0 and d.removed == 0) then return nil end
+	if not d or (d.added == 0 and d.modified == 0 and d.removed == 0) then
+		return nil
+	end
 	local parts = {}
-	if d.added > 0 then table.insert(parts, "+" .. d.added) end
-	if d.modified > 0 then table.insert(parts, "*" .. d.modified) end
-	if d.removed > 0 then table.insert(parts, "-" .. d.removed) end
+	if d.added > 0 then
+		table.insert(parts, "+" .. d.added)
+	end
+	if d.modified > 0 then
+		table.insert(parts, "*" .. d.modified)
+	end
+	if d.removed > 0 then
+		table.insert(parts, "-" .. d.removed)
+	end
 	return label .. " " .. table.concat(parts, "/")
 end
 
 local function performSave()
 	setStatus("Saving to DataStore…", PALETTE.accent)
 	local result = call("save")
-	if result == nil then return end
+	if result == nil then
+		return
+	end
 	if type(result) == "table" and result.mode == "datastore" then
 		local failures = result.writes and result.writes.failures or 0
 		local verify = result.verify
@@ -3347,21 +3729,34 @@ end
 
 saveBtn.MouseButton1Click:Connect(function()
 	local diffResult = call("getDiff")
-	if diffResult == nil then return end
+	if diffResult == nil then
+		return
+	end
 	local diff = type(diffResult) == "table" and diffResult.diff or nil
 	if not diff or diff.totalChanges == 0 then
 		setStatus("No changes to save", PALETTE.textMuted)
 		return
 	end
 	local segments = {}
-	for _, kind in ipairs({ "countries", "provinces", "eu4Map", "tileOwners", "cultures", "religions", "ideologies", "governments" }) do
+	for _, kind in ipairs({
+		"countries",
+		"provinces",
+		"eu4Map",
+		"tileOwners",
+		"cultures",
+		"religions",
+		"ideologies",
+		"governments",
+	}) do
 		local seg = formatDiffSegment(kind, diff[kind])
-		if seg then table.insert(segments, seg) end
+		if seg then
+			table.insert(segments, seg)
+		end
 	end
 	local summary = #segments > 0 and table.concat(segments, "  ·  ") or "no changes"
 	showConfirm({
 		title = "Save changes?",
-		message = "About to save: " .. summary .. " — writes to DataStore and pushes to the relay (mirrors to the other universe).",
+		message = "About to save: " .. summary .. " — writes to the shared DataStore.",
 		confirmText = "Save",
 		cancelText = "Cancel",
 		accent = PALETTE.good,
@@ -3372,7 +3767,9 @@ end)
 exportBtn.MouseButton1Click:Connect(function()
 	setStatus("Exporting to Lua source…", PALETTE.accent)
 	local result = call("exportToLua")
-	if result == nil then return end
+	if result == nil then
+		return
+	end
 	if type(result) == "table" then
 		if result.mode == "source" then
 			setStatus("Exported to .lua source ✓ — reopen the place to persist", PALETTE.good)
@@ -3387,7 +3784,9 @@ end)
 reloadBtn.MouseButton1Click:Connect(forceReload)
 
 local function applyHistorySnap(snap, verb, fallbackMsg)
-	if type(snap) ~= "table" then return false end
+	if type(snap) ~= "table" then
+		return false
+	end
 	state.snapshot = snap
 	rebuildAllTabs()
 	local label = snap.undoLabel or snap.redoLabel
@@ -3402,13 +3801,17 @@ end
 
 local function performUndo()
 	local snap = call("undo")
-	if snap == nil then return end
+	if snap == nil then
+		return
+	end
 	applyHistorySnap(snap, "Undid", "Undone")
 end
 
 local function performRedo()
 	local snap = call("redo")
-	if snap == nil then return end
+	if snap == nil then
+		return
+	end
 	applyHistorySnap(snap, "Redid", "Redone")
 end
 
@@ -3438,7 +3841,12 @@ deleteBtn.MouseButton1Click:Connect(function()
 		local displayName = country and country.displayName or tag
 		showConfirm({
 			title = "Delete country?",
-			message = string.format("Delete %s (%s)? All provinces owned by %s will be released to NONE. This is reversible until you Save.", displayName, tag, tag),
+			message = string.format(
+				"Delete %s (%s)? All provinces owned by %s will be released to NONE. This is reversible until you Save.",
+				displayName,
+				tag,
+				tag
+			),
 			confirmText = "Delete",
 			cancelText = "Cancel",
 			accent = PALETTE.bad,
@@ -3477,7 +3885,6 @@ deleteBtn.MouseButton1Click:Connect(function()
 	end
 end)
 
-
 local MINIMIZED_HEIGHT = 34
 local MINIMIZE_TWEEN_TIME = 0.22
 local minimized = false
@@ -3505,7 +3912,9 @@ end
 
 local function setMinimized(flag)
 	flag = flag and true or false
-	if minimized == flag then return end
+	if minimized == flag then
+		return
+	end
 	minimized = flag
 	cancelMinimizeTween()
 
@@ -3518,25 +3927,33 @@ local function setMinimized(flag)
 		toolbar.Visible = false
 		resizeGrip.Visible = false
 		minimizeBtn.Text = "+"
-		minimizeTween = TweenService:Create(root,
+		minimizeTween = TweenService:Create(
+			root,
 			TweenInfo.new(MINIMIZE_TWEEN_TIME, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out),
-			{ Size = UDim2.fromOffset(currentWidth, MINIMIZED_HEIGHT) })
+			{ Size = UDim2.fromOffset(currentWidth, MINIMIZED_HEIGHT) }
+		)
 		minimizeTween:Play()
 	else
 		sizeConstraint.MinSize = Vector2.new(WINDOW_MIN_W, WINDOW_MIN_H)
 		local targetW = restoreSize.X.Offset
 		local targetH = restoreSize.Y.Offset
-		if targetW < WINDOW_MIN_W then targetW = WINDOW_MIN_W end
-		if targetH < WINDOW_MIN_H then targetH = WINDOW_MIN_H end
+		if targetW < WINDOW_MIN_W then
+			targetW = WINDOW_MIN_W
+		end
+		if targetH < WINDOW_MIN_H then
+			targetH = WINDOW_MIN_H
+		end
 		clampPositionForSize(targetW, targetH)
 		minimizeBtn.Text = "–"
 		tabBar.Visible = true
 		content.Visible = true
 		toolbar.Visible = true
 		resizeGrip.Visible = true
-		minimizeTween = TweenService:Create(root,
+		minimizeTween = TweenService:Create(
+			root,
 			TweenInfo.new(MINIMIZE_TWEEN_TIME, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out),
-			{ Size = UDim2.fromOffset(targetW, targetH) })
+			{ Size = UDim2.fromOffset(targetW, targetH) }
+		)
 		minimizeTween:Play()
 	end
 end
@@ -3552,7 +3969,9 @@ local function showRoot()
 	else
 		clampToViewport()
 	end
-	if not state.snapshot then refresh() end
+	if not state.snapshot then
+		refresh()
+	end
 end
 
 local function hideRoot()
@@ -3561,15 +3980,25 @@ end
 closeBtn.MouseButton1Click:Connect(hideRoot)
 
 UserInputService.InputBegan:Connect(function(input, processed)
-	if processed then return end
-	if input.KeyCode == Enum.KeyCode.Backquote then
-		if root.Visible then hideRoot() else showRoot() end
+	if processed then
 		return
 	end
-	if not root.Visible or minimized then return end
+	if input.KeyCode == Enum.KeyCode.Backquote then
+		if root.Visible then
+			hideRoot()
+		else
+			showRoot()
+		end
+		return
+	end
+	if not root.Visible or minimized then
+		return
+	end
 	local ctrl = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
 		or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
-	if not ctrl then return end
+	if not ctrl then
+		return
+	end
 	if input.KeyCode == Enum.KeyCode.Z then
 		performUndo()
 	elseif input.KeyCode == Enum.KeyCode.U or input.KeyCode == Enum.KeyCode.Y then
@@ -3584,25 +4013,42 @@ do
 	if piModule then
 		local ProvinceInteraction = require(piModule)
 		ProvinceInteraction.addSelectListener(function(part)
-			if not root.Visible or minimized then return end
-			if not part then return end
+			if not root.Visible or minimized then
+				return
+			end
+			if not part then
+				return
+			end
 			if state.currentTab == "provinces" then
 				local parent = part.Parent
-				if parent and parent.Name == "Sea" then return end
+				if parent and parent.Name == "Sea" then
+					return
+				end
 				local seedId = part:GetAttribute("province_id")
 				if seedId and state.snapshot and state.snapshot.provinces and state.snapshot.provinces[seedId] then
 					selectProvince(seedId)
 					local item = provinceListItems[seedId]
 					if item and provinceScroll then
-						provinceScroll.CanvasPosition = Vector2.new(0, math.max(0, item.AbsolutePosition.Y - provinceScroll.AbsolutePosition.Y - 40))
+						provinceScroll.CanvasPosition = Vector2.new(
+							0,
+							math.max(0, item.AbsolutePosition.Y - provinceScroll.AbsolutePosition.Y - 40)
+						)
 					end
-					setStatus(string.format("Selected province %s", tostring(part:GetAttribute("province_name") or seedId)), PALETTE.accent)
+					setStatus(
+						string.format("Selected province %s", tostring(part:GetAttribute("province_name") or seedId)),
+						PALETTE.accent
+					)
 				else
-					setStatus("That tile isn't seeded as a province yet — paint it under Countries first, then Save to promote", PALETTE.warn)
+					setStatus(
+						"That tile isn't seeded as a province yet — paint it under Countries first, then Save to promote",
+						PALETTE.warn
+					)
 				end
 				return
 			end
-			if state.currentTab ~= "countries" then return end
+			if state.currentTab ~= "countries" then
+				return
+			end
 			local parent = part.Parent
 			if parent and parent.Name == "Sea" then
 				if ProvinceInteraction.clearSelection then
@@ -3651,18 +4097,30 @@ local function buildIdentityTab(body, kind, opts)
 
 	local function refresh()
 		local snap = call("loadState")
-		if not snap then return end
+		if not snap then
+			return
+		end
 		state.snapshot = snap
 		rebuildList(listSearch.Text)
 		rebuildForm()
 	end
 
 	local function getRecords()
-		if not state.snapshot then return {} end
-		if kind == "culture"    then return state.snapshot.cultures or {} end
-		if kind == "religion"   then return state.snapshot.religions or {} end
-		if kind == "ideology"   then return state.snapshot.ideologies or {} end
-		if kind == "government" then return state.snapshot.governmentTypes or {} end
+		if not state.snapshot then
+			return {}
+		end
+		if kind == "culture" then
+			return state.snapshot.cultures or {}
+		end
+		if kind == "religion" then
+			return state.snapshot.religions or {}
+		end
+		if kind == "ideology" then
+			return state.snapshot.ideologies or {}
+		end
+		if kind == "government" then
+			return state.snapshot.governmentTypes or {}
+		end
 		return {}
 	end
 
@@ -3673,7 +4131,12 @@ local function buildIdentityTab(body, kind, opts)
 		local rec = selectedId and records[selectedId] or nil
 		local isNew = rec == nil
 
-		makeSection(formScroll, isNew and ("NEW " .. string.upper(titleSingular)) or ("EDIT " .. string.upper(titleSingular) .. "  " .. tostring(selectedId or "")), 1)
+		makeSection(
+			formScroll,
+			isNew and ("NEW " .. string.upper(titleSingular))
+				or ("EDIT " .. string.upper(titleSingular) .. "  " .. tostring(selectedId or "")),
+			1
+		)
 
 		local function addField(order, label, mk)
 			local row = makeRow(formScroll, label, order)
@@ -3690,8 +4153,14 @@ local function buildIdentityTab(body, kind, opts)
 		end)
 		if not opts.noGroup and groupField then
 			fields.group = addField(4, opts.groupLabel or "Group", function(row)
-				local opt = (state.snapshot and state.snapshot.registries and state.snapshot.registries[registryName]) or {}
-				return makeCombo(row, opt, rec and rec[groupField] or nil, { allowFreeform = true, placeholder = "type or pick a group…" })
+				local opt = (state.snapshot and state.snapshot.registries and state.snapshot.registries[registryName])
+					or {}
+				return makeCombo(
+					row,
+					opt,
+					rec and rec[groupField] or nil,
+					{ allowFreeform = true, placeholder = "type or pick a group…" }
+				)
 			end)
 		end
 
@@ -3705,25 +4174,37 @@ local function buildIdentityTab(body, kind, opts)
 			end
 		end
 
-		local applyBtn = makeButton(formScroll, isNew and ("Create " .. titleSingular) or "Apply Changes", PALETTE.accent)
+		local applyBtn =
+			makeButton(formScroll, isNew and ("Create " .. titleSingular) or "Apply Changes", PALETTE.accent)
 		applyBtn.Size = UDim2.fromOffset(200, 32)
 		applyBtn.LayoutOrder = 99
 		applyBtn.MouseButton1Click:Connect(function()
 			local id = fields.id.Text:lower():gsub("%s", "_"):gsub("[^%w_]", "")
-			if id == "" then setStatus("ID required (lowercase, letters/numbers/underscore)", PALETTE.bad); return end
+			if id == "" then
+				setStatus("ID required (lowercase, letters/numbers/underscore)", PALETTE.bad)
+				return
+			end
 			local displayName = fields.displayName.Text
-			if displayName == "" then setStatus("Display Name required", PALETTE.bad); return end
+			if displayName == "" then
+				setStatus("Display Name required", PALETTE.bad)
+				return
+			end
 			local optsPayload = { displayName = displayName }
 			if fields.group then
 				optsPayload[groupField] = fields.group.getValue()
 			end
 			for k, getter in pairs(extraGetters) do
 				local ok, val = pcall(getter)
-				if ok then optsPayload[k] = val end
+				if ok then
+					optsPayload[k] = val
+				end
 			end
 			if isNew then
 				local existingRecords = getRecords()
-				if existingRecords[id] then setStatus(titleSingular .. " " .. id .. " already exists", PALETTE.bad); return end
+				if existingRecords[id] then
+					setStatus(titleSingular .. " " .. id .. " already exists", PALETTE.bad)
+					return
+				end
 				if call(addCmd, { id = id, opts = optsPayload }) ~= nil then
 					setStatus("Created " .. titleSingular:lower() .. " " .. id, PALETTE.good)
 					selectedId = id
@@ -3744,7 +4225,10 @@ local function buildIdentityTab(body, kind, opts)
 			local hint = newInstance("TextLabel", {
 				Size = UDim2.new(1, 0, 0, 32),
 				BackgroundTransparency = 1,
-				Text = string.format("Paste province IDs separated by commas, spaces, or newlines. The selected %s will be applied to each province.", bulkField),
+				Text = string.format(
+					"Paste province IDs separated by commas, spaces, or newlines. The selected %s will be applied to each province.",
+					bulkField
+				),
 				TextColor3 = PALETTE.textMuted,
 				Font = Enum.Font.Gotham,
 				TextSize = 11,
@@ -3802,16 +4286,35 @@ local function buildIdentityTab(body, kind, opts)
 			applyBulkBtn.LayoutOrder = 113
 			applyBulkBtn.MouseButton1Click:Connect(function()
 				local ids = refreshCount()
-				if #ids == 0 then setStatus("No province IDs found in input", PALETTE.bad); return end
-				if #ids > 500 then setStatus(string.format("Too many IDs: %d (max 500) — split it up", #ids), PALETTE.bad); return end
+				if #ids == 0 then
+					setStatus("No province IDs found in input", PALETTE.bad)
+					return
+				end
+				if #ids > 500 then
+					setStatus(string.format("Too many IDs: %d (max 500) — split it up", #ids), PALETTE.bad)
+					return
+				end
 				local result = call("assignProvinceFieldBatch", { items = ids, field = bulkField, value = selectedId })
-				if not result then return end
+				if not result then
+					return
+				end
 				if type(result) == "table" and result.processed then
 					local errCount = result.errors and #result.errors or 0
 					if errCount > 0 then
-						setStatus(string.format("Applied %s to %d provinces (%d failed)", bulkField, result.processed, errCount), PALETTE.warn)
+						setStatus(
+							string.format(
+								"Applied %s to %d provinces (%d failed)",
+								bulkField,
+								result.processed,
+								errCount
+							),
+							PALETTE.warn
+						)
 					else
-						setStatus(string.format("Applied %s '%s' to %d provinces", bulkField, selectedId, result.processed), PALETTE.good)
+						setStatus(
+							string.format("Applied %s '%s' to %d provinces", bulkField, selectedId, result.processed),
+							PALETTE.good
+						)
 						bulkBox.Text = ""
 					end
 					refresh()
@@ -3827,7 +4330,12 @@ local function buildIdentityTab(body, kind, opts)
 				local id = selectedId
 				showConfirm({
 					title = "Delete " .. titleSingular:lower() .. "?",
-					message = string.format("Delete %s '%s' (%s)? Provinces/countries referencing it will need to be reassigned.", titleSingular:lower(), tostring(rec.displayName or id), id),
+					message = string.format(
+						"Delete %s '%s' (%s)? Provinces/countries referencing it will need to be reassigned.",
+						titleSingular:lower(),
+						tostring(rec.displayName or id),
+						id
+					),
 					confirmText = "Delete",
 					cancelText = "Cancel",
 					accent = PALETTE.bad,
@@ -3856,7 +4364,9 @@ local function buildIdentityTab(body, kind, opts)
 		listItems = {}
 		local records = getRecords()
 		local ids = {}
-		for id in pairs(records) do table.insert(ids, id) end
+		for id in pairs(records) do
+			table.insert(ids, id)
+		end
 		table.sort(ids)
 		filter = filter and filter:lower() or ""
 		local order = 0
@@ -3889,19 +4399,27 @@ local function buildIdentityTab(body, kind, opts)
 					Size = UDim2.new(1, -16, 0, 12),
 					Position = UDim2.fromOffset(8, 18),
 					BackgroundTransparency = 1,
-					Text = string.format("%s  •  %s", id, tostring((groupField and r[groupField]) or (opts.subtitleFn and opts.subtitleFn(r)) or "—")),
+					Text = string.format(
+						"%s  •  %s",
+						id,
+						tostring((groupField and r[groupField]) or (opts.subtitleFn and opts.subtitleFn(r)) or "—")
+					),
 					TextColor3 = PALETTE.textMuted,
 					Font = Enum.Font.Gotham,
 					TextSize = 10,
 					TextXAlignment = Enum.TextXAlignment.Left,
 				}, item)
-				item.MouseButton1Click:Connect(function() selectRow(id) end)
+				item.MouseButton1Click:Connect(function()
+					selectRow(id)
+				end)
 				listItems[id] = item
 			end
 		end
 	end
 
-	listSearch:GetPropertyChangedSignal("Text"):Connect(function() rebuildList(listSearch.Text) end)
+	listSearch:GetPropertyChangedSignal("Text"):Connect(function()
+		rebuildList(listSearch.Text)
+	end)
 
 	return {
 		rebuild = function()
@@ -3913,7 +4431,9 @@ local function buildIdentityTab(body, kind, opts)
 			rebuildForm()
 			setStatus("Blank " .. titleSingular:lower() .. " form — fill in and click Create", PALETTE.accent)
 		end,
-		hasSelection = function() return selectedId ~= nil end,
+		hasSelection = function()
+			return selectedId ~= nil
+		end,
 	}
 end
 
@@ -3944,10 +4464,14 @@ local religionsTab = buildIdentityTab(religionsBody, "religion", {
 })
 
 local function modifiersToText(modifiers)
-	if type(modifiers) ~= "table" then return "" end
+	if type(modifiers) ~= "table" then
+		return ""
+	end
 	local lines = {}
 	local keys = {}
-	for k in pairs(modifiers) do table.insert(keys, k) end
+	for k in pairs(modifiers) do
+		table.insert(keys, k)
+	end
 	table.sort(keys)
 	for _, k in ipairs(keys) do
 		local v = modifiers[k]
@@ -3964,14 +4488,18 @@ local function parseModifiers(text)
 		local key, value = line:match("^%s*([%w_]+)%s*=%s*(%-?[%d%.]+)%s*$")
 		if key and value then
 			local n = tonumber(value)
-			if n then out[key] = n end
+			if n then
+				out[key] = n
+			end
 		end
 	end
 	return out
 end
 
 local function arrayToText(arr)
-	if type(arr) ~= "table" then return "" end
+	if type(arr) ~= "table" then
+		return ""
+	end
 	return table.concat(arr, ", ")
 end
 
@@ -3998,7 +4526,11 @@ local ideologiesTab = buildIdentityTab(ideologiesBody, "ideology", {
 	noGroup = true,
 	subtitleFn = function(rec)
 		local n = 0
-		if type(rec.modifiers) == "table" then for _ in pairs(rec.modifiers) do n = n + 1 end end
+		if type(rec.modifiers) == "table" then
+			for _ in pairs(rec.modifiers) do
+				n = n + 1
+			end
+		end
 		return n .. " modifier" .. (n == 1 and "" or "s")
 	end,
 	extraFields = function(formScroll, rec, isNew, addField)
@@ -4032,7 +4564,9 @@ local ideologiesTab = buildIdentityTab(ideologiesBody, "ideology", {
 			return frame
 		end)
 		return {
-			modifiers = function() return parseModifiers(modifiersBox.Text) end,
+			modifiers = function()
+				return parseModifiers(modifiersBox.Text)
+			end,
 		}
 	end,
 })
@@ -4054,7 +4588,8 @@ local governmentsTab = buildIdentityTab(governmentsBody, "government", {
 	extraFields = function(formScroll, rec, isNew, addField)
 		local allowedBox, modifiersBox, ppStartBox, ppPerTickBox
 		addField(15, "Allowed Ideologies", function(row)
-			local box = makeTextBox(row, "absolutism, conservatism, liberalism", arrayToText(rec and rec.allowedIdeologies))
+			local box =
+				makeTextBox(row, "absolutism, conservatism, liberalism", arrayToText(rec and rec.allowedIdeologies))
 			allowedBox = box
 			return box
 		end)
@@ -4097,10 +4632,18 @@ local governmentsTab = buildIdentityTab(governmentsBody, "government", {
 			return frame
 		end)
 		return {
-			allowedIdeologies = function() return parseIdsArray(allowedBox.Text) end,
-			ppStartBonus = function() return tonumber(ppStartBox.Text) or 0 end,
-			ppPerTick = function() return tonumber(ppPerTickBox.Text) or 1.0 end,
-			modifiers = function() return parseModifiers(modifiersBox.Text) end,
+			allowedIdeologies = function()
+				return parseIdsArray(allowedBox.Text)
+			end,
+			ppStartBonus = function()
+				return tonumber(ppStartBox.Text) or 0
+			end,
+			ppPerTick = function()
+				return tonumber(ppPerTickBox.Text) or 1.0
+			end,
+			modifiers = function()
+				return parseModifiers(modifiersBox.Text)
+			end,
 		}
 	end,
 })
@@ -4114,25 +4657,38 @@ local liveSync
 local softRefresh
 
 do
-	local remotesFolder = ReplicatedStorage:FindFirstChild("ArtOfWar") and ReplicatedStorage.ArtOfWar:FindFirstChild("Remotes")
+	local remotesFolder = ReplicatedStorage:FindFirstChild("ArtOfWar")
+		and ReplicatedStorage.ArtOfWar:FindFirstChild("Remotes")
 	liveSync = remotesFolder and remotesFolder:FindFirstChild("DataEditorLive")
 	local presenceRemote = remotesFolder and remotesFolder:FindFirstChild("DataEditorPresence")
 
 	state.presence = {}
 
 	local function readBefore(item)
-		if not state.snapshot or type(item) ~= "table" then return nil end
+		if not state.snapshot or type(item) ~= "table" then
+			return nil
+		end
 		local kind, key = item.kind, item.key
-		if kind == "country"  then return state.snapshot.countries[key] end
-		if kind == "province" then return state.snapshot.provinces[tonumber(key) or key] end
-		if kind == "culture"  then return state.snapshot.cultures[key] end
-		if kind == "religion" then return state.snapshot.religions[key] end
+		if kind == "country" then
+			return state.snapshot.countries[key]
+		end
+		if kind == "province" then
+			return state.snapshot.provinces[tonumber(key) or key]
+		end
+		if kind == "culture" then
+			return state.snapshot.cultures[key]
+		end
+		if kind == "religion" then
+			return state.snapshot.religions[key]
+		end
 		return nil
 	end
 
 	local function diffFields(before, after)
 		local list = {}
-		if type(before) ~= "table" or type(after) ~= "table" then return list end
+		if type(before) ~= "table" or type(after) ~= "table" then
+			return list
+		end
 		local seen = {}
 		for k, v in pairs(after) do
 			seen[k] = true
@@ -4142,14 +4698,18 @@ do
 			end
 		end
 		for k in pairs(before) do
-			if not seen[k] then table.insert(list, k) end
+			if not seen[k] then
+				table.insert(list, k)
+			end
 		end
 		table.sort(list)
 		return list
 	end
 
 	local function applyDelta(item)
-		if not state.snapshot or type(item) ~= "table" then return end
+		if not state.snapshot or type(item) ~= "table" then
+			return
+		end
 		local kind, key, value = item.kind, item.key, item.value
 		if kind == "country" then
 			state.snapshot.countries[key] = value
@@ -4189,7 +4749,9 @@ do
 
 	local function ensurePresenceBadge(row)
 		local existing = row:FindFirstChild("__PresenceBadge__")
-		if existing then return existing end
+		if existing then
+			return existing
+		end
 
 		local badge = Instance.new("Frame")
 		badge.Name = "__PresenceBadge__"
@@ -4234,7 +4796,9 @@ do
 	end
 
 	local function decorateRows(items, kind)
-		if not items then return end
+		if not items then
+			return
+		end
 		for key, row in pairs(items) do
 			if typeof(row) == "Instance" and row.Parent then
 				local names = presenceForRecord(kind, key)
@@ -4260,38 +4824,57 @@ do
 	end
 
 	softRefresh = function()
-		if not state.snapshot then return end
+		if not state.snapshot then
+			return
+		end
 		local tab = state.currentTab
 		if tab == "countries" then
 			rebuildCountryList(countrySearch.Text)
 		elseif tab == "provinces" then
 			rebuildProvinceList(provinceSearch.Text)
 		elseif tab == "cultures" or tab == "religions" then
-			for _, fn in ipairs(identityTabRebuilders) do pcall(fn) end
+			for _, fn in ipairs(identityTabRebuilders) do
+				pcall(fn)
+			end
 		end
 		decoratePresence()
 	end
 
 	local function touchesSelected(item)
-		if not item then return false end
-		if item.kind == "country" and state.selectedCountryTag == item.key then return true end
+		if not item then
+			return false
+		end
+		if item.kind == "country" and state.selectedCountryTag == item.key then
+			return true
+		end
 		if item.kind == "province" then
 			local pid = tonumber(item.key) or item.key
-			if state.selectedProvinceId == pid or tostring(state.selectedProvinceId) == tostring(pid) then return true end
+			if state.selectedProvinceId == pid or tostring(state.selectedProvinceId) == tostring(pid) then
+				return true
+			end
 		end
 		return false
 	end
 
 	if liveSync then
 		liveSync.OnClientEvent:Connect(function(payload)
-			if type(payload) ~= "table" then return end
+			if type(payload) ~= "table" then
+				return
+			end
 			if payload.reload then
 				local snap = call("loadState")
 				if snap then
 					state.snapshot = snap
 					softRefresh()
 				end
-				setStatus(string.format("Reloaded — %s did %s", tostring(payload.originName or "another mapper"), tostring(payload.reason or "an undo")), PALETTE.warn)
+				setStatus(
+					string.format(
+						"Reloaded — %s did %s",
+						tostring(payload.originName or "another mapper"),
+						tostring(payload.reason or "an undo")
+					),
+					PALETTE.warn
+				)
 				return
 			end
 			local items = payload.items or { payload }
@@ -4300,7 +4883,9 @@ do
 			for _, item in ipairs(items) do
 				diffs[item] = diffFields(readBefore(item), item.value)
 				applyDelta(item)
-				if touchesSelected(item) then hitSelected = true end
+				if touchesSelected(item) then
+					hitSelected = true
+				end
 			end
 			softRefresh()
 			local origin = payload.originName or "another mapper"
@@ -4310,10 +4895,21 @@ do
 				local fieldStr = ""
 				if fields and #fields > 0 then
 					local preview = table.concat(fields, ", ", 1, math.min(3, #fields))
-					if #fields > 3 then preview = preview .. ", +" .. (#fields - 3) end
+					if #fields > 3 then
+						preview = preview .. ", +" .. (#fields - 3)
+					end
 					fieldStr = "  ·  fields: " .. preview
 				end
-				setStatus(string.format("⚠ %s edited %s %s%s — your draft is preserved", origin, tostring(first.kind), tostring(first.key), fieldStr), PALETTE.warn)
+				setStatus(
+					string.format(
+						"⚠ %s edited %s %s%s — your draft is preserved",
+						origin,
+						tostring(first.kind),
+						tostring(first.key),
+						fieldStr
+					),
+					PALETTE.warn
+				)
 			else
 				local first = items[1]
 				if first then
@@ -4321,10 +4917,21 @@ do
 					local fieldStr = ""
 					if fields and #fields > 0 then
 						local preview = table.concat(fields, ", ", 1, math.min(3, #fields))
-						if #fields > 3 then preview = preview .. ", +" .. (#fields - 3) end
+						if #fields > 3 then
+							preview = preview .. ", +" .. (#fields - 3)
+						end
 						fieldStr = " (" .. preview .. ")"
 					end
-					setStatus(string.format("Live · %s updated %s %s%s", origin, tostring(first.kind), tostring(first.key), fieldStr), PALETTE.accent)
+					setStatus(
+						string.format(
+							"Live · %s updated %s %s%s",
+							origin,
+							tostring(first.kind),
+							tostring(first.key),
+							fieldStr
+						),
+						PALETTE.accent
+					)
 				end
 			end
 		end)
@@ -4339,7 +4946,9 @@ do
 		local lastSent
 		local function sendPresence(kind, key)
 			local sig = key ~= nil and (kind .. ":" .. tostring(key)) or nil
-			if sig == lastSent then return end
+			if sig == lastSent then
+				return
+			end
 			lastSent = sig
 			if key == nil then
 				presenceRemote:FireServer("clear")
@@ -4352,7 +4961,9 @@ do
 		local presenceTick = 0
 		RunService.Heartbeat:Connect(function(dt)
 			presenceTick = presenceTick + dt
-			if presenceTick < 0.5 then return end
+			if presenceTick < 0.5 then
+				return
+			end
 			presenceTick = 0
 			if state.currentTab == "countries" and state.selectedCountryTag then
 				sendPresence("country", state.selectedCountryTag)
@@ -4374,278 +4985,299 @@ setTab("countries")
 do
 	local stagingResp = call("isStagingEnabled")
 	local stagingEnabled = type(stagingResp) == "table" and stagingResp.enabled == true
-	if not stagingEnabled then return end
+	if not stagingEnabled then
+		return
+	end
 
 	local stagingOk, stagingErr = pcall(function()
+		local chip = Instance.new("Frame")
+		chip.Name = "DraftModeChip"
+		chip.Size = UDim2.fromOffset(118, 20)
+		chip.Position = UDim2.new(1, -72, 0.5, 0)
+		chip.AnchorPoint = Vector2.new(1, 0.5)
+		chip.BackgroundColor3 = PALETTE.accent
+		chip.BackgroundTransparency = 0.15
+		chip.BorderSizePixel = 0
+		chip.Parent = titleBar
 
-	local chip = Instance.new("Frame")
-	chip.Name = "DraftModeChip"
-	chip.Size = UDim2.fromOffset(118, 20)
-	chip.Position = UDim2.new(1, -72, 0.5, 0)
-	chip.AnchorPoint = Vector2.new(1, 0.5)
-	chip.BackgroundColor3 = PALETTE.accent
-	chip.BackgroundTransparency = 0.15
-	chip.BorderSizePixel = 0
-	chip.Parent = titleBar
+		local chipCorner = Instance.new("UICorner")
+		chipCorner.CornerRadius = UDim.new(0, 4)
+		chipCorner.Parent = chip
 
-	local chipCorner = Instance.new("UICorner")
-	chipCorner.CornerRadius = UDim.new(0, 4)
-	chipCorner.Parent = chip
+		local chipLabel = Instance.new("TextLabel")
+		chipLabel.Size = UDim2.fromScale(1, 1)
+		chipLabel.BackgroundTransparency = 1
+		chipLabel.Text = "DRAFT MODE"
+		chipLabel.TextColor3 = PALETTE.textBright
+		chipLabel.Font = Enum.Font.GothamBold
+		chipLabel.TextSize = 11
+		chipLabel.TextXAlignment = Enum.TextXAlignment.Center
+		chipLabel.Parent = chip
 
-	local chipLabel = Instance.new("TextLabel")
-	chipLabel.Size = UDim2.fromScale(1, 1)
-	chipLabel.BackgroundTransparency = 1
-	chipLabel.Text = "DRAFT MODE"
-	chipLabel.TextColor3 = PALETTE.textBright
-	chipLabel.Font = Enum.Font.GothamBold
-	chipLabel.TextSize = 11
-	chipLabel.TextXAlignment = Enum.TextXAlignment.Center
-	chipLabel.Parent = chip
+		local promoteBtn = makeButton(primaryRight, "↑  Promote", PALETTE.accent)
+		promoteBtn.Size = UDim2.fromOffset(106, 28)
+		promoteBtn.LayoutOrder = 3
 
-	local promoteBtn = makeButton(primaryRight, "↑  Promote", PALETTE.accent)
-	promoteBtn.Size = UDim2.fromOffset(106, 28)
-	promoteBtn.LayoutOrder = 3
+		local pullBtn = makeButton(primaryRight, "⇣  Pull", PALETTE.bgInput)
+		pullBtn.Size = UDim2.fromOffset(84, 28)
+		pullBtn.LayoutOrder = 2
 
-	local pullBtn = makeButton(primaryRight, "⇣  Pull", PALETTE.bgInput)
-	pullBtn.Size = UDim2.fromOffset(84, 28)
-	pullBtn.LayoutOrder = 2
+		local discardBtn = makeButton(primaryRight, "✕  Discard", PALETTE.bad)
+		discardBtn.Size = UDim2.fromOffset(106, 28)
+		discardBtn.LayoutOrder = 1
 
-	local discardBtn = makeButton(primaryRight, "✕  Discard", PALETTE.bad)
-	discardBtn.Size = UDim2.fromOffset(106, 28)
-	discardBtn.LayoutOrder = 1
+		attachTooltip(promoteBtn, "Pick which of your changes to publish to the live map")
+		attachTooltip(pullBtn, "Refresh your draft from live — discards unsaved local edits")
+		attachTooltip(discardBtn, "Delete your whole draft and reload the live state")
 
-	attachTooltip(promoteBtn, "Pick which of your changes to publish to the live map")
-	attachTooltip(pullBtn, "Refresh your draft from live — discards unsaved local edits")
-	attachTooltip(discardBtn, "Delete your whole draft and reload the live state")
-
-	local function valuePreview(value)
-		if value == nil then return "<none>" end
-		if type(value) == "string" then return value end
-		if type(value) == "number" then return tostring(value) end
-		if type(value) == "boolean" then return tostring(value) end
-		if type(value) == "table" then
-			local ok, json = pcall(game:GetService("HttpService").JSONEncode, game:GetService("HttpService"), value)
-			if ok then
-				if #json > 60 then return json:sub(1, 57) .. "..." end
-				return json
+		local function valuePreview(value)
+			if value == nil then
+				return "<none>"
 			end
-			return "<table>"
-		end
-		return tostring(value)
-	end
-
-	local function openPromoteModal(diffs)
-		if #diffs == 0 then
-			setStatus("No changes to promote — your draft matches shared.", PALETTE.warn)
-			return
-		end
-
-		local modal = Instance.new("Frame")
-		modal.Name = "PromoteModal"
-		modal.AnchorPoint = Vector2.new(0.5, 0.5)
-		modal.Position = UDim2.fromScale(0.5, 0.5)
-		modal.Size = UDim2.fromOffset(720, 540)
-		modal.BackgroundColor3 = PALETTE.bgPanel
-		modal.BorderSizePixel = 0
-		modal.ZIndex = 1000
-		modal.Parent = root
-
-		local overlay = Instance.new("Frame")
-		overlay.Size = UDim2.fromScale(1, 1)
-		overlay.BackgroundColor3 = Color3.new(0, 0, 0)
-		overlay.BackgroundTransparency = 0.55
-		overlay.BorderSizePixel = 0
-		overlay.ZIndex = 999
-		overlay.Parent = root
-
-		local title = Instance.new("TextLabel")
-		title.Text = string.format("Promote to Live  ·  %d change(s) detected", #diffs)
-		title.Size = UDim2.new(1, -24, 0, 32)
-		title.Position = UDim2.fromOffset(12, 8)
-		title.BackgroundTransparency = 1
-		title.TextColor3 = PALETTE.textBright
-		title.Font = Enum.Font.GothamBold
-		title.TextSize = 16
-		title.TextXAlignment = Enum.TextXAlignment.Left
-		title.ZIndex = 1001
-		title.Parent = modal
-
-		local scroll = Instance.new("ScrollingFrame")
-		scroll.Position = UDim2.fromOffset(12, 52)
-		scroll.Size = UDim2.new(1, -24, 1, -120)
-		scroll.BackgroundColor3 = PALETTE.bgInput
-		scroll.BorderSizePixel = 0
-		scroll.ScrollBarThickness = 8
-		scroll.CanvasSize = UDim2.fromOffset(0, 0)
-		scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-		scroll.ZIndex = 1001
-		scroll.Parent = modal
-
-		local layout = Instance.new("UIListLayout")
-		layout.Padding = UDim.new(0, 4)
-		layout.SortOrder = Enum.SortOrder.LayoutOrder
-		layout.Parent = scroll
-
-		local checks = {}
-		for i, d in ipairs(diffs) do
-			local row = Instance.new("Frame")
-			row.Size = UDim2.new(1, -8, 0, 44)
-			row.BackgroundColor3 = PALETTE.bgPanel
-			row.BorderSizePixel = 0
-			row.LayoutOrder = i
-			row.ZIndex = 1002
-			row.Parent = scroll
-
-			local isDelete = d.action == "delete"
-			local onColor = isDelete and PALETTE.bad or PALETTE.accent
-
-			local check = Instance.new("TextButton")
-			check.Size = UDim2.fromOffset(22, 22)
-			check.Position = UDim2.fromOffset(8, 11)
-			check.BackgroundColor3 = isDelete and PALETTE.bgInput or onColor
-			check.Text = isDelete and "" or "✓"
-			check.TextColor3 = Color3.new(1, 1, 1)
-			check.Font = Enum.Font.GothamBold
-			check.TextSize = 16
-			check.BorderSizePixel = 0
-			check.ZIndex = 1003
-			check.Parent = row
-			checks[i] = { selected = not isDelete, button = check, diff = d }
-
-			check.MouseButton1Click:Connect(function()
-				checks[i].selected = not checks[i].selected
-				check.BackgroundColor3 = checks[i].selected and onColor or PALETTE.bgInput
-				check.Text = checks[i].selected and "✓" or ""
-			end)
-
-			local label = Instance.new("TextLabel")
-			label.Size = UDim2.new(1, -40, 0, 18)
-			label.Position = UDim2.fromOffset(38, 4)
-			label.BackgroundTransparency = 1
-			label.TextColor3 = isDelete and PALETTE.bad or PALETTE.textBright
-			label.Font = Enum.Font.GothamSemibold
-			label.TextSize = 13
-			label.TextXAlignment = Enum.TextXAlignment.Left
-			label.Text = string.format("[%s]  %s/%s", d.action:upper(), d.kind, tostring(d.key))
-			label.ZIndex = 1003
-			label.Parent = row
-
-			local detail = Instance.new("TextLabel")
-			detail.Size = UDim2.new(1, -40, 0, 18)
-			detail.Position = UDim2.fromOffset(38, 22)
-			detail.BackgroundTransparency = 1
-			detail.TextColor3 = PALETTE.text
-			detail.Font = Enum.Font.Code
-			detail.TextSize = 11
-			detail.TextXAlignment = Enum.TextXAlignment.Left
-			if d.action == "add" then
-				detail.Text = "shared: <none>  →  yours: " .. valuePreview(d.draftValue)
-			elseif d.action == "delete" then
-				detail.Text = "shared: " .. valuePreview(d.sharedValue) .. "  →  yours: <delete>"
-			else
-				detail.Text = "shared: " .. valuePreview(d.sharedValue) .. "  →  yours: " .. valuePreview(d.draftValue)
+			if type(value) == "string" then
+				return value
 			end
-			detail.ZIndex = 1003
-			detail.Parent = row
-		end
-
-		local function close()
-			overlay:Destroy()
-			modal:Destroy()
-		end
-
-		local cancelBtn = makeButton(modal, "Cancel", PALETTE.bgInput)
-		cancelBtn.Size = UDim2.fromOffset(120, 36)
-		cancelBtn.Position = UDim2.new(1, -260, 1, -52)
-		cancelBtn.AnchorPoint = Vector2.new(0, 0)
-		cancelBtn.ZIndex = 1003
-		cancelBtn.MouseButton1Click:Connect(close)
-		overlay.MouseButton1Click:Connect(close)
-
-		local confirmBtn = makeButton(modal, "Promote selected", PALETTE.good)
-		confirmBtn.Size = UDim2.fromOffset(140, 36)
-		confirmBtn.Position = UDim2.new(1, -130, 1, -52)
-		confirmBtn.AnchorPoint = Vector2.new(0, 0)
-		confirmBtn.ZIndex = 1003
-		confirmBtn.MouseButton1Click:Connect(function()
-			local selections = {}
-			for _, c in ipairs(checks) do
-				if c.selected then
-					table.insert(selections, { kind = c.diff.kind, key = c.diff.key })
+			if type(value) == "number" then
+				return tostring(value)
+			end
+			if type(value) == "boolean" then
+				return tostring(value)
+			end
+			if type(value) == "table" then
+				local ok, json = pcall(game:GetService("HttpService").JSONEncode, game:GetService("HttpService"), value)
+				if ok then
+					if #json > 60 then
+						return json:sub(1, 57) .. "..."
+					end
+					return json
 				end
+				return "<table>"
 			end
-			close()
-			if #selections == 0 then
-				setStatus("No fields selected — nothing promoted.", PALETTE.warn)
+			return tostring(value)
+		end
+
+		local function openPromoteModal(diffs)
+			if #diffs == 0 then
+				setStatus("No changes to promote — your draft matches shared.", PALETTE.warn)
 				return
 			end
-			local result = call("promote", { selections = selections })
-			if result then
-				setStatus(string.format("Promoted %d change(s) to live.", #(result.promoted or {})), PALETTE.good)
-			end
-		end)
-	end
 
-	promoteBtn.MouseButton1Click:Connect(function()
-		local diffResult = call("computeDiffVsShared")
-		if type(diffResult) ~= "table" or not diffResult.ok then
-			setStatus("Could not compute diff vs shared.", PALETTE.bad)
-			return
+			local modal = Instance.new("Frame")
+			modal.Name = "PromoteModal"
+			modal.AnchorPoint = Vector2.new(0.5, 0.5)
+			modal.Position = UDim2.fromScale(0.5, 0.5)
+			modal.Size = UDim2.fromOffset(720, 540)
+			modal.BackgroundColor3 = PALETTE.bgPanel
+			modal.BorderSizePixel = 0
+			modal.ZIndex = 1000
+			modal.Parent = root
+
+			local overlay = Instance.new("Frame")
+			overlay.Size = UDim2.fromScale(1, 1)
+			overlay.BackgroundColor3 = Color3.new(0, 0, 0)
+			overlay.BackgroundTransparency = 0.55
+			overlay.BorderSizePixel = 0
+			overlay.ZIndex = 999
+			overlay.Parent = root
+
+			local title = Instance.new("TextLabel")
+			title.Text = string.format("Promote to Live  ·  %d change(s) detected", #diffs)
+			title.Size = UDim2.new(1, -24, 0, 32)
+			title.Position = UDim2.fromOffset(12, 8)
+			title.BackgroundTransparency = 1
+			title.TextColor3 = PALETTE.textBright
+			title.Font = Enum.Font.GothamBold
+			title.TextSize = 16
+			title.TextXAlignment = Enum.TextXAlignment.Left
+			title.ZIndex = 1001
+			title.Parent = modal
+
+			local scroll = Instance.new("ScrollingFrame")
+			scroll.Position = UDim2.fromOffset(12, 52)
+			scroll.Size = UDim2.new(1, -24, 1, -120)
+			scroll.BackgroundColor3 = PALETTE.bgInput
+			scroll.BorderSizePixel = 0
+			scroll.ScrollBarThickness = 8
+			scroll.CanvasSize = UDim2.fromOffset(0, 0)
+			scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+			scroll.ZIndex = 1001
+			scroll.Parent = modal
+
+			local layout = Instance.new("UIListLayout")
+			layout.Padding = UDim.new(0, 4)
+			layout.SortOrder = Enum.SortOrder.LayoutOrder
+			layout.Parent = scroll
+
+			local checks = {}
+			for i, d in ipairs(diffs) do
+				local row = Instance.new("Frame")
+				row.Size = UDim2.new(1, -8, 0, 44)
+				row.BackgroundColor3 = PALETTE.bgPanel
+				row.BorderSizePixel = 0
+				row.LayoutOrder = i
+				row.ZIndex = 1002
+				row.Parent = scroll
+
+				local isDelete = d.action == "delete"
+				local onColor = isDelete and PALETTE.bad or PALETTE.accent
+
+				local check = Instance.new("TextButton")
+				check.Size = UDim2.fromOffset(22, 22)
+				check.Position = UDim2.fromOffset(8, 11)
+				check.BackgroundColor3 = isDelete and PALETTE.bgInput or onColor
+				check.Text = isDelete and "" or "✓"
+				check.TextColor3 = Color3.new(1, 1, 1)
+				check.Font = Enum.Font.GothamBold
+				check.TextSize = 16
+				check.BorderSizePixel = 0
+				check.ZIndex = 1003
+				check.Parent = row
+				checks[i] = { selected = not isDelete, button = check, diff = d }
+
+				check.MouseButton1Click:Connect(function()
+					checks[i].selected = not checks[i].selected
+					check.BackgroundColor3 = checks[i].selected and onColor or PALETTE.bgInput
+					check.Text = checks[i].selected and "✓" or ""
+				end)
+
+				local label = Instance.new("TextLabel")
+				label.Size = UDim2.new(1, -40, 0, 18)
+				label.Position = UDim2.fromOffset(38, 4)
+				label.BackgroundTransparency = 1
+				label.TextColor3 = isDelete and PALETTE.bad or PALETTE.textBright
+				label.Font = Enum.Font.GothamSemibold
+				label.TextSize = 13
+				label.TextXAlignment = Enum.TextXAlignment.Left
+				label.Text = string.format("[%s]  %s/%s", d.action:upper(), d.kind, tostring(d.key))
+				label.ZIndex = 1003
+				label.Parent = row
+
+				local detail = Instance.new("TextLabel")
+				detail.Size = UDim2.new(1, -40, 0, 18)
+				detail.Position = UDim2.fromOffset(38, 22)
+				detail.BackgroundTransparency = 1
+				detail.TextColor3 = PALETTE.text
+				detail.Font = Enum.Font.Code
+				detail.TextSize = 11
+				detail.TextXAlignment = Enum.TextXAlignment.Left
+				if d.action == "add" then
+					detail.Text = "shared: <none>  →  yours: " .. valuePreview(d.draftValue)
+				elseif d.action == "delete" then
+					detail.Text = "shared: " .. valuePreview(d.sharedValue) .. "  →  yours: <delete>"
+				else
+					detail.Text = "shared: "
+						.. valuePreview(d.sharedValue)
+						.. "  →  yours: "
+						.. valuePreview(d.draftValue)
+				end
+				detail.ZIndex = 1003
+				detail.Parent = row
+			end
+
+			local function close()
+				overlay:Destroy()
+				modal:Destroy()
+			end
+
+			local cancelBtn = makeButton(modal, "Cancel", PALETTE.bgInput)
+			cancelBtn.Size = UDim2.fromOffset(120, 36)
+			cancelBtn.Position = UDim2.new(1, -260, 1, -52)
+			cancelBtn.AnchorPoint = Vector2.new(0, 0)
+			cancelBtn.ZIndex = 1003
+			cancelBtn.MouseButton1Click:Connect(close)
+			overlay.MouseButton1Click:Connect(close)
+
+			local confirmBtn = makeButton(modal, "Promote selected", PALETTE.good)
+			confirmBtn.Size = UDim2.fromOffset(140, 36)
+			confirmBtn.Position = UDim2.new(1, -130, 1, -52)
+			confirmBtn.AnchorPoint = Vector2.new(0, 0)
+			confirmBtn.ZIndex = 1003
+			confirmBtn.MouseButton1Click:Connect(function()
+				local selections = {}
+				for _, c in ipairs(checks) do
+					if c.selected then
+						table.insert(selections, { kind = c.diff.kind, key = c.diff.key })
+					end
+				end
+				close()
+				if #selections == 0 then
+					setStatus("No fields selected — nothing promoted.", PALETTE.warn)
+					return
+				end
+				local result = call("promote", { selections = selections })
+				if result then
+					setStatus(string.format("Promoted %d change(s) to live.", #(result.promoted or {})), PALETTE.good)
+				end
+			end)
 		end
-		openPromoteModal(diffResult.diffs or {})
-	end)
 
-	pullBtn.MouseButton1Click:Connect(function()
-		showConfirm({
-			title = "Pull from Live?",
-			message = "Discards your unsaved local edits and reloads your draft from the current shared state. Continue?",
-			confirmText = "Pull",
-			cancelText = "Cancel",
-			accent = PALETTE.accent,
-			onConfirm = function()
-				local snap = call("pullFromShared")
-				if snap then
-					state.snapshot = snap
-					state.dirty = false
-					markDirty(false)
-					softRefresh()
-					setStatus("Pulled from live — draft refreshed.", PALETTE.good)
-				end
-			end,
-		})
-	end)
-
-	discardBtn.MouseButton1Click:Connect(function()
-		showConfirm({
-			title = "Discard your draft?",
-			message = "Permanently deletes your draft from the DataStore and reloads the shared state. Other users are not affected. Continue?",
-			confirmText = "Discard Draft",
-			cancelText = "Cancel",
-			accent = PALETTE.bad,
-			onConfirm = function()
-				local snap = call("discardDraft")
-				if snap then
-					state.snapshot = snap
-					state.dirty = false
-					markDirty(false)
-					softRefresh()
-					setStatus("Draft discarded.", PALETTE.warn)
-				end
-			end,
-		})
-	end)
-
-	if liveSync then
-		liveSync.OnClientEvent:Connect(function(payload)
-			if type(payload) ~= "table" then return end
-			if payload.sharedMoved then
-				local promotedCount = type(payload.promoted) == "table" and #payload.promoted or 0
-				setStatus(string.format("%s promoted %d change(s) to live. Click Pull to refresh your draft.",
-					tostring(payload.originName or "another mapper"), promotedCount), PALETTE.warn)
+		promoteBtn.MouseButton1Click:Connect(function()
+			local diffResult = call("computeDiffVsShared")
+			if type(diffResult) ~= "table" or not diffResult.ok then
+				setStatus("Could not compute diff vs shared.", PALETTE.bad)
+				return
 			end
+			openPromoteModal(diffResult.diffs or {})
 		end)
-	end
 
+		pullBtn.MouseButton1Click:Connect(function()
+			showConfirm({
+				title = "Pull from Live?",
+				message = "Discards your unsaved local edits and reloads your draft from the current shared state. Continue?",
+				confirmText = "Pull",
+				cancelText = "Cancel",
+				accent = PALETTE.accent,
+				onConfirm = function()
+					local snap = call("pullFromShared")
+					if snap then
+						state.snapshot = snap
+						state.dirty = false
+						markDirty(false)
+						softRefresh()
+						setStatus("Pulled from live — draft refreshed.", PALETTE.good)
+					end
+				end,
+			})
+		end)
+
+		discardBtn.MouseButton1Click:Connect(function()
+			showConfirm({
+				title = "Discard your draft?",
+				message = "Permanently deletes your draft from the DataStore and reloads the shared state. Other users are not affected. Continue?",
+				confirmText = "Discard Draft",
+				cancelText = "Cancel",
+				accent = PALETTE.bad,
+				onConfirm = function()
+					local snap = call("discardDraft")
+					if snap then
+						state.snapshot = snap
+						state.dirty = false
+						markDirty(false)
+						softRefresh()
+						setStatus("Draft discarded.", PALETTE.warn)
+					end
+				end,
+			})
+		end)
+
+		if liveSync then
+			liveSync.OnClientEvent:Connect(function(payload)
+				if type(payload) ~= "table" then
+					return
+				end
+				if payload.sharedMoved then
+					local promotedCount = type(payload.promoted) == "table" and #payload.promoted or 0
+					setStatus(
+						string.format(
+							"%s promoted %d change(s) to live. Click Pull to refresh your draft.",
+							tostring(payload.originName or "another mapper"),
+							promotedCount
+						),
+						PALETTE.warn
+					)
+				end
+			end)
+		end
 	end)
 	if not stagingOk then
 		warn("[DataEditor] staging UI failed to build: " .. tostring(stagingErr))

@@ -1,6 +1,6 @@
 {
 	"name": "ArtOfWar",
-	"servePlaceIds": [126275639019912],
+	"servePlaceIds": [126275639019912, 118335093060492],
 	"tree": {
 		"$className": "DataModel",
 		"ServerScriptService": {
