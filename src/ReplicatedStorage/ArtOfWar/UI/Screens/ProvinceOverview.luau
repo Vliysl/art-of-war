@@ -110,9 +110,10 @@ local function unitTooltipRows(def)
 	}
 end
 
--- A compact square action button (recruit/build "+" or cancel "×"). Reuses Button.create for the variant
--- styling + hover, then strips its 18px word-label padding and enlarges the glyph (~75% over the 13px
--- default) so a single symbol stays centred and bold in a small square.
+-- A compact diamond action button (recruit/build "+" or cancel "×"). Reuses Button.create for the
+-- variant fill/hover, rotates its background into a symmetric diamond, and draws the glyph as GEOMETRY
+-- (centred bars) rather than a text glyph -- font metrics left a text +/× visibly off-centre in the
+-- small diamond, but centre-anchored bars are pixel-perfect at any size.
 local function squareButton(parent, variant, glyph, width, sizeKey, onClick, glyphSize)
 	local btn = Button.create({
 		parent = parent,
@@ -122,26 +123,11 @@ local function squareButton(parent, variant, glyph, width, sizeKey, onClick, gly
 		size = sizeKey,
 		onClick = onClick,
 	})
-	local lbl = btn:FindFirstChild("Label")
-	local pad = lbl and lbl:FindFirstChildOfClass("UIPadding")
-	if pad then
-		pad.PaddingLeft = UDim.new(0, 0)
-		pad.PaddingRight = UDim.new(0, 0)
-	end
-	if lbl then
-		lbl.TextSize = glyphSize or GLYPH_SIZE
-		lbl.TextXAlignment = Enum.TextXAlignment.Center
-		lbl.TextYAlignment = Enum.TextYAlignment.Center
-		-- The label box is already dead-centre on the button; +/× just render a hair high within a
-		-- centre-aligned line, so drop the glyph 1px so it sits optically centred in the diamond.
-		lbl.AnchorPoint = Vector2.new(0.5, 0.5)
-		lbl.Position = UDim2.new(0.5, 0, 0.5, 1)
-	end
-	-- Diamond styling: rotate a SQUARE background 45° (the glyph label is a sibling of Bg, not a child,
-	-- so it stays upright). The square side comes from the SMALLER button dimension so the diamond is
-	-- symmetric (the button is a touch taller than wide, which skewed it). Sharp points (no UICorner);
-	-- a stronger outer border (the variant stroke, thickened) + a paler inset inner border. The
-	-- TextButton isn't rotated, so the click area is unchanged; hover/disabled tweens still target Bg.
+
+	-- Diamond background: rotate a SQUARE 45° (the glyph is drawn separately, unrotated). The side comes
+	-- from the SMALLER button dimension so the diamond is symmetric. Sharp points (no UICorner); a
+	-- stronger outer border (variant stroke, thickened) + a paler inset inner border (skipped for the
+	-- danger "×"). The TextButton isn't rotated, so the click area + hover fill tweens are unchanged.
 	local bg = btn:FindFirstChild("Bg")
 	if bg then
 		local w, h = btn.Size.X.Offset, btn.Size.Y.Offset
@@ -150,13 +136,10 @@ local function squareButton(parent, variant, glyph, width, sizeKey, onClick, gly
 		bg.Position = UDim2.fromScale(0.5, 0.5)
 		bg.Size = UDim2.fromOffset(side, side)
 		bg.Rotation = 45
-		-- Sharp diamond points: drop the rounded corner.
 		local corner = bg:FindFirstChildOfClass("UICorner")
 		if corner then corner:Destroy() end
-		-- Outer border = the stronger tone (slightly thicker so it reads as the dominant edge).
 		local outer = bg:FindFirstChildOfClass("UIStroke")
 		if outer then outer.Thickness = 1.5 end
-		-- Inner border = a paler, inset line (sharp, no UICorner). Skipped for the danger "×" cancel.
 		if variant ~= "danger" then
 			local inner = Instance.new("Frame")
 			inner.Name = "InnerBorder"
@@ -173,6 +156,52 @@ local function squareButton(parent, variant, glyph, width, sizeKey, onClick, gly
 			inner.Parent = bg
 		end
 	end
+
+	-- Glyph as geometry: blank the text label (kept only as the variant colour source) and build the
+	-- + / × from centre-anchored bars so it's perfectly centred regardless of font.
+	local lbl = btn:FindFirstChild("Label")
+	local glyphColor = (lbl and lbl.TextColor3) or Colors.TextPrimary
+	if lbl then lbl.Text = "" end
+	local gsize = glyphSize or GLYPH_SIZE
+	local barLen = math.floor(gsize * 0.62 + 0.5)
+	local barThick = math.max(2, math.floor(gsize * 0.13 + 0.5))
+	local holder = Instance.new("Frame")
+	holder.Name = "Glyph"
+	holder.AnchorPoint = Vector2.new(0.5, 0.5)
+	holder.Position = UDim2.fromScale(0.5, 0.5)
+	holder.Size = UDim2.fromOffset(gsize, gsize)
+	holder.BackgroundTransparency = 1
+	holder.ZIndex = btn.ZIndex + 2
+	holder.Parent = btn
+	local isCross = (glyph == "\u{00D7}") or (glyph == "x") or (glyph == "X")
+	local function bar(rot, vertical)
+		local f = Instance.new("Frame")
+		f.AnchorPoint = Vector2.new(0.5, 0.5)
+		f.Position = UDim2.fromScale(0.5, 0.5)
+		f.Size = vertical and UDim2.fromOffset(barThick, barLen) or UDim2.fromOffset(barLen, barThick)
+		f.Rotation = rot
+		f.BackgroundColor3 = glyphColor
+		f.BorderSizePixel = 0
+		f.ZIndex = holder.ZIndex
+		f.Parent = holder
+	end
+	if isCross then
+		bar(45, false)
+		bar(-45, false)
+	else
+		bar(0, false)
+		bar(0, true)
+	end
+	-- Dim the glyph when the button is inactive (mirrors the label's disabled fade).
+	local function syncGlyph()
+		local t = (btn.Active == false) and 0.55 or 0
+		for _, f in ipairs(holder:GetChildren()) do
+			f.BackgroundTransparency = t
+		end
+	end
+	btn:GetPropertyChangedSignal("Active"):Connect(syncGlyph)
+	syncGlyph()
+
 	return btn
 end
 
