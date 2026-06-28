@@ -163,8 +163,8 @@ local function squareButton(parent, variant, glyph, width, sizeKey, onClick, gly
 	local glyphColor = (lbl and lbl.TextColor3) or Colors.TextPrimary
 	if lbl then lbl.Text = "" end
 	local gsize = glyphSize or GLYPH_SIZE
-	local barLen = math.floor(gsize * 0.5 + 0.5)
-	local barThick = math.max(1, math.floor(gsize * 0.06 + 0.5))
+	local barLen = math.floor(gsize * 0.42 + 0.5)
+	local barThick = math.max(2, math.floor(gsize * 0.10 + 0.5))
 	local holder = Instance.new("Frame")
 	holder.Name = "Glyph"
 	holder.AnchorPoint = Vector2.new(0.5, 0.5)
