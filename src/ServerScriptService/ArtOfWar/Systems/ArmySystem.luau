@@ -243,6 +243,9 @@ local function createArmy(tag, provinceId, composition, opts)
 		ownerTag = tag,
 		provinceId = provinceId,
 		composition = composition and table.clone(composition) or {},
+		-- High-water mark per unit type that manpower-fed reinforcement rebuilds toward after battle
+		-- losses. Grown by addRegiments/recruit, lowered by intentional removal, untouched by casualties.
+		reinforceTarget = composition and table.clone(composition) or {},
 		morale = ctx.WorldConstants.ArmyMoraleMax or 100,
 		createdAt = ctx.TickScheduler.getSimTime(),
 		entrenchment = 0,
@@ -290,6 +293,10 @@ local function addRegiments(armyId, unitTypeId, count)
 	if not army then return false end
 	army.composition = army.composition or {}
 	army.composition[unitTypeId] = (army.composition[unitTypeId] or 0) + count
+	-- Growing the army (recruitment) raises its reinforce target; reinforcement itself never routes
+	-- through here, so this only ever ratchets up.
+	army.reinforceTarget = army.reinforceTarget or {}
+	army.reinforceTarget[unitTypeId] = math.max(army.reinforceTarget[unitTypeId] or 0, army.composition[unitTypeId])
 	refreshBaseOrganization(army)
 	ctx.WorldState.setArmy(armyId, army)
 	return true
@@ -305,6 +312,12 @@ local function removeRegiments(armyId, unitTypeId, count)
 		army.composition[unitTypeId] = remaining
 	else
 		army.composition[unitTypeId] = nil
+	end
+	-- Intentional removal (disband/withdraw) lowers the reinforce target so it isn't refilled later.
+	if army.reinforceTarget then
+		army.reinforceTarget[unitTypeId] = (remaining > 0)
+				and math.min(army.reinforceTarget[unitTypeId] or 0, remaining)
+			or nil
 	end
 	refreshBaseOrganization(army)
 	ctx.WorldState.setArmy(armyId, army)
@@ -465,6 +478,7 @@ local function mergeArmies(primaryId, otherIds)
 	if #valid == 0 then return false, "no_valid_others" end
 
 	primary.composition = primary.composition or {}
+	primary.reinforceTarget = primary.reinforceTarget or table.clone(primary.composition)
 	local totalRegiments = totalRegimentCount(primary.composition)
 	local moraleMax = ctx.WorldConstants.ArmyMoraleMax or 100
 	local moraleSum = (primary.morale or moraleMax) * totalRegiments
@@ -476,6 +490,11 @@ local function mergeArmies(primaryId, otherIds)
 		totalRegiments = totalRegiments + weight
 		for unitTypeId, count in pairs(other.composition or {}) do
 			primary.composition[unitTypeId] = (primary.composition[unitTypeId] or 0) + count
+		end
+		-- Carry the merged army's reinforce target into the primary (so the combined army rebuilds to
+		-- the combined size). Fall back to its composition for armies created before this field existed.
+		for unitTypeId, count in pairs(other.reinforceTarget or other.composition or {}) do
+			primary.reinforceTarget[unitTypeId] = (primary.reinforceTarget[unitTypeId] or 0) + count
 		end
 		local oOrg = other.organization or other.baseOrganization or 0
 		if oOrg < minOrg then minOrg = oOrg end
@@ -550,6 +569,14 @@ local function splitArmy(sourceId, splitComposition)
 			source.composition[unitTypeId] = nil
 		end
 	end
+	-- The detached regiments take their reinforce target with them (createArmy seeded the new army's
+	-- target = take), so subtract them from the source -- it shouldn't refill regiments it gave away.
+	if source.reinforceTarget then
+		for unitTypeId, n in pairs(take) do
+			local rt = (source.reinforceTarget[unitTypeId] or 0) - n
+			source.reinforceTarget[unitTypeId] = (rt > 0) and rt or nil
+		end
+	end
 	refreshBaseOrganization(source)
 	source.organization = math.min(source.organization or source.baseOrganization or 0, source.baseOrganization or 0)
 	ctx.WorldState.setArmy(sourceId, source)
@@ -620,6 +647,7 @@ local function regenTick()
 	local mMin = ctx.WorldConstants.ArmyMoraleMin or 0
 	local oMin = ctx.WorldConstants.ArmyOrganizationMin or 0
 	local orgMaxDefault = ctx.WorldConstants.ArmyOrganizationMax or 10
+	local reinforcePerTick = ctx.WorldConstants.ReinforceRegimentsPerTick or 0.5
 	-- Single read-modify-write per army, change-guarded. Previously this called
 	-- adjustMorale + adjustOrganization, each re-fetching the army and issuing its own
 	-- setArmy (up to 3 dirties + 2 redundant getArmy per regenerating army). Now the army
@@ -646,6 +674,56 @@ local function regenTick()
 			if curOrg < base then
 				local nv = math.clamp(curOrg + orgRegen, oMin, base)
 				if nv ~= army.organization then army.organization = nv; changed = true end
+			end
+
+			-- Manpower-fed reinforcement: a settled army (not moving/retreating; battle already excluded
+			-- above) standing in a province it controls rebuilds battle losses toward its reinforceTarget,
+			-- paying the owner's manpower per restored regiment. The fractional progress accumulator is an
+			-- internal field (mutated in place, no replication); we only setArmy when composition changes.
+			if not army.movement and not army.retreating then
+				army.composition = army.composition or {}
+				if not army.reinforceTarget then
+					army.reinforceTarget = table.clone(army.composition) -- lazy-init for pre-existing armies
+				end
+				local deficit = 0
+				for u, target in pairs(army.reinforceTarget) do
+					local d = target - (army.composition[u] or 0)
+					if d > 0 then deficit += d end
+				end
+				local owner = army.ownerTag
+				local prov = (deficit > 0 and owner) and ctx.WorldState.getProvince(army.provinceId) or nil
+				if prov and prov.controllerTag == owner then
+					army.reinforceProgress = (army.reinforceProgress or 0) + reinforcePerTick
+					local budget = math.min(math.floor(army.reinforceProgress), deficit)
+					if budget > 0 then
+						local country = ctx.WorldState.getCountry(owner)
+						local units = ctx.Bundle and ctx.Bundle.unitTypes
+						if country and units then
+							local restored = 0
+							while restored < budget do
+								local bestU, bestD = nil, 0
+								for u, target in pairs(army.reinforceTarget) do
+									local d = target - (army.composition[u] or 0)
+									if d > bestD then bestU, bestD = u, d end
+								end
+								if not bestU then break end
+								local cost = (units[bestU] and units[bestU].recruitManpower) or 0
+								if cost > 0 and (country.manpower or 0) < cost then break end
+								army.composition[bestU] = (army.composition[bestU] or 0) + 1
+								country.manpower = (country.manpower or 0) - cost
+								restored += 1
+							end
+							if restored > 0 then
+								army.reinforceProgress -= restored
+								refreshBaseOrganization(army)
+								ctx.WorldState.setCountry(owner, country)
+								changed = true
+							end
+						end
+					end
+				elseif army.reinforceProgress then
+					army.reinforceProgress = nil -- in-memory reset (no deficit / not supplied); no replication
+				end
 			end
 
 			if changed then ctx.WorldState.setArmy(armyId, army) end
