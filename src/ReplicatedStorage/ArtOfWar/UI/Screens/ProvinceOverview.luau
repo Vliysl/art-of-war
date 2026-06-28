@@ -131,6 +131,10 @@ local function squareButton(parent, variant, glyph, width, sizeKey, onClick, gly
 		lbl.TextSize = glyphSize or GLYPH_SIZE
 		lbl.TextXAlignment = Enum.TextXAlignment.Center
 		lbl.TextYAlignment = Enum.TextYAlignment.Center
+		-- The label box is already dead-centre on the button; +/× just render a hair high within a
+		-- centre-aligned line, so drop the glyph 1px so it sits optically centred in the diamond.
+		lbl.AnchorPoint = Vector2.new(0.5, 0.5)
+		lbl.Position = UDim2.new(0.5, 0, 0.5, 1)
 	end
 	-- Diamond styling: rotate a SQUARE background 45° (the glyph label is a sibling of Bg, not a child,
 	-- so it stays upright). The square side comes from the SMALLER button dimension so the diamond is
@@ -151,20 +155,22 @@ local function squareButton(parent, variant, glyph, width, sizeKey, onClick, gly
 		-- Outer border = the stronger tone (slightly thicker so it reads as the dominant edge).
 		local outer = bg:FindFirstChildOfClass("UIStroke")
 		if outer then outer.Thickness = 1.5 end
-		-- Inner border = a paler, inset line (sharp, no UICorner).
-		local inner = Instance.new("Frame")
-		inner.Name = "InnerBorder"
-		inner.AnchorPoint = Vector2.new(0.5, 0.5)
-		inner.Position = UDim2.fromScale(0.5, 0.5)
-		inner.Size = UDim2.new(1, -6, 1, -6)
-		inner.BackgroundTransparency = 1
-		inner.ZIndex = bg.ZIndex + 1
-		local istroke = Instance.new("UIStroke")
-		istroke.Color = Colors.BorderSubtle
-		istroke.Thickness = 1
-		istroke.Transparency = 0.15
-		istroke.Parent = inner
-		inner.Parent = bg
+		-- Inner border = a paler, inset line (sharp, no UICorner). Skipped for the danger "×" cancel.
+		if variant ~= "danger" then
+			local inner = Instance.new("Frame")
+			inner.Name = "InnerBorder"
+			inner.AnchorPoint = Vector2.new(0.5, 0.5)
+			inner.Position = UDim2.fromScale(0.5, 0.5)
+			inner.Size = UDim2.new(1, -6, 1, -6)
+			inner.BackgroundTransparency = 1
+			inner.ZIndex = bg.ZIndex + 1
+			local istroke = Instance.new("UIStroke")
+			istroke.Color = Colors.BorderSubtle
+			istroke.Thickness = 1
+			istroke.Transparency = 0.15
+			istroke.Parent = inner
+			inner.Parent = bg
+		end
 	end
 	return btn
 end
