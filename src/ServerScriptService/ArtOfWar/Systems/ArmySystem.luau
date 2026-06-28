@@ -680,7 +680,7 @@ local function regenTick()
 			-- above) standing in a province it controls rebuilds battle losses toward its reinforceTarget,
 			-- paying the owner's manpower per restored regiment. The fractional progress accumulator is an
 			-- internal field (mutated in place, no replication); we only setArmy when composition changes.
-			if not army.movement and not army.retreating then
+			if not army.movement and not army.retreating and army.reinforceEnabled ~= false then
 				army.composition = army.composition or {}
 				if not army.reinforceTarget then
 					army.reinforceTarget = table.clone(army.composition) -- lazy-init for pre-existing armies

@@ -598,6 +598,14 @@ InputValidator.register("SetAutoCapture", {
 	rate = { count = 20, window = 10 },
 })
 
+InputValidator.register("SetReinforce", {
+	schema = {
+		{ name = "armyId", type = "string" },
+		{ name = "enabled", type = "boolean" },
+	},
+	rate = { count = 20, window = 10 },
+})
+
 InputValidator.register("DeclareWar", {
 	schema = { { name = "targetTag", type = "countryTag" } },
 	rate = { count = 2, window = 30 },
@@ -977,6 +985,19 @@ bindEvent("SetAutoCapture", function(player, armyId, enabled)
 	local army = context.WorldState.getArmy(armyId)
 	if not army or army.ownerTag ~= tag then return end
 	system.setAutoCapture(armyId, enabled)
+end)
+
+-- Per-army toggle for the manpower-fed reinforcement pass (ArmySystem.regenTick honours
+-- army.reinforceEnabled ~= false). Mirrors SetAutoCapture.
+bindEvent("SetReinforce", function(player, armyId, enabled)
+	local auth = authority()
+	if not auth then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	local army = context.WorldState.getArmy(armyId)
+	if not army or army.ownerTag ~= tag then return end
+	army.reinforceEnabled = enabled and true or false
+	context.WorldState.setArmy(armyId, army)
 end)
 
 bindEvent("AttackProvince", function(player, armyId, targetProvinceId)
