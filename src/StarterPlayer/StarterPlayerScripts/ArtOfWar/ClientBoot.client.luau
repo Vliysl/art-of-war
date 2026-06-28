@@ -33,7 +33,6 @@ local CharacterHandler    = safeRequire("CharacterHandler")
 local CameraController    = safeRequire("CameraController")
 local MapRenderer         = safeRequire("MapRenderer")
 local MapStyling          = safeRequire("MapStyling")
-local MapStyle            = safeRequire("MapStyle")
 local ProvinceInteraction = safeRequire("ProvinceInteraction")
 local ClientStateCache    = safeRequire("ClientStateCache")
 local PeerVisibility      = safeRequire("PeerVisibility")
@@ -220,13 +219,6 @@ task.defer(function()
 	end
 	if map then
 		map:SetAttribute("mapPainted", true)
-	end
-	-- Optional reversible visual restyle: per-terrain land materials + a less-plastic ocean. F7 toggles.
-	if MapStyle then
-		MapStyle.init()
-		if MapStyle.ENABLED_BY_DEFAULT then
-			MapStyle.setEnabled(true)
-		end
 	end
 end)
 
