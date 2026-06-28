@@ -6,8 +6,6 @@ local Responsive = DesignSystem.Responsive
 
 local Button = {}
 
-local CORNER = 6
-
 -- Buttons render their surface PROCEDURALLY (a Frame + UICorner + UIStroke + UIGradient) instead of
 -- 9-slice image shells. A 9-slice can't map its pixel-space SliceCenter until the texture decodes, so
 -- the gold border rendered inset/overflowing intermittently (asset-cache/timing dependent -- correct
@@ -89,10 +87,6 @@ function Button.create(config)
 	bg.BorderSizePixel = 0
 	bg.ZIndex = bgZ
 	bg.Parent = btn
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, CORNER)
-	corner.Parent = bg
 
 	local stroke = Instance.new("UIStroke")
 	stroke.Color = style.stroke

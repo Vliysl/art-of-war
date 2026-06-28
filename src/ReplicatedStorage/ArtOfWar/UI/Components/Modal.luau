@@ -14,25 +14,37 @@ function Modal.create(config)
 	local width = config.width or 540
 	local heightPx = config.height or 440
 
-	local scrim = Instance.new("TextButton")
-	scrim.Name = config.name or "Modal"
-	scrim.Size = UDim2.fromScale(1, 1)
-	scrim.BackgroundColor3 = Colors.SurfaceSunken
-	scrim.BackgroundTransparency = 1
-	scrim.AutoButtonColor = false
-	scrim.Text = ""
-	scrim.Modal = true
-	scrim.ZIndex = z
-	scrim:SetAttribute("AoWInputSink", true)
+	local floating = config.floating == true
 
 	local panel = Shells.create("panel_modal_shell", {
 		Name = "Window",
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
+		AnchorPoint = floating and (config.anchorPoint or Vector2.new(1, 0)) or Vector2.new(0.5, 0.5),
+		Position = floating and (config.position or UDim2.fromOffset(-8, 0)) or UDim2.fromScale(0.5, 0.5),
 		Size = UDim2.fromOffset(width, heightPx),
-		ZIndex = z + 1,
+		ZIndex = floating and (z + 5) or (z + 1),
 	})
-	panel.Parent = scrim
+
+	-- Modal mode: a full-screen scrim dims + blocks input behind a centered panel. Floating mode: NO
+	-- scrim -- the panel is the root, anchored to its trigger, and the map/HUD stay interactive; it
+	-- dismisses via the close button + an outside-click listener (set up in open()).
+	local scrim
+	local root = panel
+	if floating then
+		panel.Name = config.name or "Modal"
+	else
+		scrim = Instance.new("TextButton")
+		scrim.Name = config.name or "Modal"
+		scrim.Size = UDim2.fromScale(1, 1)
+		scrim.BackgroundColor3 = Colors.SurfaceSunken
+		scrim.BackgroundTransparency = 1
+		scrim.AutoButtonColor = false
+		scrim.Text = ""
+		scrim.Modal = true
+		scrim.ZIndex = z
+		scrim:SetAttribute("AoWInputSink", true)
+		panel.Parent = scrim
+		root = scrim
+	end
 
 	local catcher = Instance.new("TextButton")
 	catcher.Name = "Catcher"
@@ -139,14 +151,21 @@ function Modal.create(config)
 	cPad.PaddingRight = UDim.new(0, Spacing.space5)
 	cPad.Parent = content
 
+	local outsideConn
 	local function close()
 		if config.onClose then
 			config.onClose()
 		end
-		Animations.tween(scrim, Animations.Fast, { BackgroundTransparency = 1 })
+		if outsideConn then
+			outsideConn:Disconnect()
+			outsideConn = nil
+		end
 		Animations.tween(panel, Animations.Fast, { Size = UDim2.fromOffset(width, heightPx - 16) })
+		if scrim then
+			Animations.tween(scrim, Animations.Fast, { BackgroundTransparency = 1 })
+		end
 		task.delay(Animations.Fast.Time, function()
-			scrim:Destroy()
+			root:Destroy()
 		end)
 	end
 
@@ -157,23 +176,59 @@ function Modal.create(config)
 	closeBtn.MouseLeave:Connect(function()
 		x.ImageColor3 = Colors.Accent
 	end)
-	if config.dismissable ~= false then
+	if scrim and config.dismissable ~= false then
 		scrim.MouseButton1Click:Connect(close)
 	end
 
 	local function open(parent)
-		scrim.Parent = parent or config.parent
+		root.Parent = parent or config.parent
 		panel.Size = UDim2.fromOffset(width, heightPx - 16)
-		Animations.tween(scrim, Animations.ModalIn, { BackgroundTransparency = 0.4 })
 		Animations.tween(panel, Animations.ModalIn, { Size = UDim2.fromOffset(width, heightPx) })
+		if scrim then
+			Animations.tween(scrim, Animations.ModalIn, { BackgroundTransparency = 0.4 })
+		elseif config.dismissable ~= false then
+			-- Outside-click dismissal for floating mode: close when a press lands outside the panel AND
+			-- outside its trigger (config.keepOpenOver, e.g. the army panel), so the map stays clickable
+			-- and clicking the panel or its owning panel never self-dismisses.
+			local UIS = game:GetService("UserInputService")
+			local Players = game:GetService("Players")
+			outsideConn = UIS.InputBegan:Connect(function(input, gp)
+				if gp then
+					return
+				end
+				if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
+					return
+				end
+				local pg = Players.LocalPlayer and Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
+				if not pg then
+					return
+				end
+				local m = UIS:GetMouseLocation()
+				local keep = config.keepOpenOver
+				for _, h in ipairs(pg:GetGuiObjectsAtPosition(m.X, m.Y)) do
+					if h == panel or h:IsDescendantOf(panel) or (keep and (h == keep or h:IsDescendantOf(keep))) then
+						return
+					end
+				end
+				close()
+			end)
+		end
 	end
+
+	-- If the panel is destroyed externally (e.g. its owning screen closes), drop the input listener.
+	panel.AncestryChanged:Connect(function(_, parent)
+		if not parent and outsideConn then
+			outsideConn:Disconnect()
+			outsideConn = nil
+		end
+	end)
 
 	if config.parent then
 		open(config.parent)
 	end
 
 	return {
-		root = scrim,
+		root = root,
 		panel = panel,
 		header = header,
 		content = content,
