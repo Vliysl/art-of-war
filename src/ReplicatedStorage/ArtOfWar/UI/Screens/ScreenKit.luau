@@ -141,6 +141,21 @@ function ScreenKit.open(ctx, opts)
 	bLayout.Padding = UDim.new(0, Spacing.space2)
 	bLayout.Parent = body
 
+	-- Opt-in: size the panel to its content (header + body) instead of a fixed height, so a short panel
+	-- doesn't trail empty space. Capped to the viewport (minus the HUD bars) -- past the cap the body
+	-- scrolls as usual. Pass opts.size with a 0 height; the width/position/anchor are preserved.
+	if opts.autoHeight then
+		local function resize()
+			local contentH = bLayout.AbsoluteContentSize.Y + Spacing.space2 + Spacing.space5
+			local h = headerHeight + contentH
+			local cam = workspace.CurrentCamera
+			local maxH = opts.maxHeight or (cam and (cam.ViewportSize.Y - 132)) or 720
+			root.Size = UDim2.new(root.Size.X.Scale, root.Size.X.Offset, 0, math.ceil(math.min(h, maxH)))
+		end
+		bLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize)
+		resize()
+	end
+
 	if ctx.parent then
 		root.Parent = ctx.parent
 	end

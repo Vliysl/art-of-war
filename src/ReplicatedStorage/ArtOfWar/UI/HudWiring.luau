@@ -790,22 +790,43 @@ function HudWiring.start(modules)
 	end
 
 	if ArmyView and ArmyView.onArmySelected then
+		local pendingOpen = false
 		ArmyView.onArmySelected(function(armyId)
 			if not armyId then
 				return
 			end
-			local army = ClientStateCache.getArmy(armyId)
-			local provinceId = army and army.provinceId
-			local ids = {}
-			for id, a in pairs(ClientStateCache.allArmies() or {}) do
-				if a.ownerTag == claimedTag and a.provinceId == provinceId then
-					table.insert(ids, id)
+			-- A drag-select fires onArmySelected once per army; coalesce them into a single open on the
+			-- next step so the panel sees the FULL selection (which drives single-vs-aggregate view).
+			if pendingOpen then
+				return
+			end
+			pendingOpen = true
+			task.defer(function()
+				pendingOpen = false
+				local primary = armyId
+				if not ClientStateCache.getArmy(primary) then
+					return
 				end
-			end
-			if #ids == 0 then
-				ids = { armyId }
-			end
-			Hud.openArmyPanel({ armyId = armyId, armyIds = ids, provinceId = provinceId })
+				local sel = {}
+				for _, id in ipairs(selectedArmies() or {}) do
+					sel[#sel + 1] = id
+				end
+				if #sel == 0 then
+					sel = { primary }
+				end
+				local army = ClientStateCache.getArmy(primary)
+				local provinceId = army and army.provinceId
+				local ids = {}
+				for id, a in pairs(ClientStateCache.allArmies() or {}) do
+					if a.ownerTag == claimedTag and a.provinceId == provinceId then
+						table.insert(ids, id)
+					end
+				end
+				if #ids == 0 then
+					ids = { primary }
+				end
+				Hud.openArmyPanel({ armyId = primary, armyIds = ids, provinceId = provinceId, selectedIds = sel })
+			end)
 		end)
 	end
 
