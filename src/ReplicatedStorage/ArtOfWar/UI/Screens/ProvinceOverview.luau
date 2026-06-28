@@ -9,6 +9,7 @@ local Typography = DesignSystem.Typography
 local Icons = DesignSystem.Icons
 local SimClock = require(script.Parent.Parent.Parent.Modules.SimClock)
 local WorldConstants = require(script.Parent.Parent.Parent.Shared.WorldConstants)
+local RunService = game:GetService("RunService")
 
 local ProvinceOverview = {}
 
@@ -201,6 +202,7 @@ local function actionRow(parent, cfg)
 	end
 
 	local hasProgress = cfg.progress ~= nil
+	local progressFill
 	local name = Instance.new("TextLabel")
 	name.AnchorPoint = Vector2.new(0, hasProgress and 0 or 0.5)
 	name.Position = hasProgress and UDim2.fromOffset(labelX, 6) or UDim2.new(0, labelX, 0.5, 0)
@@ -242,12 +244,13 @@ local function actionRow(parent, cfg)
 		fill.BackgroundColor3 = Colors.Warning
 		fill.BorderSizePixel = 0
 		fill.Parent = track
+		progressFill = fill
 	end
 
 	if cfg.tooltip then
 		Tooltip.attach(row, cfg.tooltip)
 	end
-	return row
+	return row, progressFill
 end
 
 function ProvinceOverview.create(ctx)
@@ -257,6 +260,10 @@ function ProvinceOverview.create(ctx)
 	local handle
 	local owns = prov.isOwn == true
 	local currentTab = "information"
+	-- Progress bars that advance every sim-tick are updated IN PLACE by a throttled loop, so a recruit/
+	-- build tick never rebuilds the panel. Each entry = { fill = Frame, live = () -> 0..1 }; rebuilt only
+	-- on a structural change (see contentSignature). Reset at the start of every render().
+	local liveBars = {}
 
 	local function liveProvince()
 		return (ctx.cache and prov.id) and ctx.cache.getProvince(prov.id) or nil
@@ -524,11 +531,12 @@ function ProvinceOverview.create(ctx)
 			if g.count > 1 then
 				name = name .. "  \u{00D7}" .. g.count
 			end
-			actionRow(body, {
+			local active = g.active
+			local _, fill = actionRow(body, {
 				order = order,
 				icon = "Army",
 				label = name,
-				progress = { value = progressOf(g.active.queuedAt, g.active.completesAt) * 100, max = 100 },
+				progress = { value = progressOf(active.queuedAt, active.completesAt) * 100, max = 100 },
 				button = {
 					text = "\u{00D7}",
 					variant = "danger",
@@ -537,6 +545,10 @@ function ProvinceOverview.create(ctx)
 					end,
 				},
 			})
+			if fill then
+				liveBars[#liveBars + 1] =
+					{ fill = fill, live = function() return progressOf(active.queuedAt, active.completesAt) end }
+			end
 			order += 1
 		end
 		if #groupOrder == 0 then
@@ -620,19 +632,24 @@ function ProvinceOverview.create(ctx)
 			if item.provinceId == prov.id then
 				shown += 1
 				local def = buildingTypes()[item.buildingId]
-				actionRow(body, {
+				local bItem = item
+				local _, fill = actionRow(body, {
 					order = qo,
 					icon = "Building",
 					label = (def and def.displayName) or titleCase(item.buildingId),
-					progress = { value = progressOf(item.startedAt, item.completesAt) * 100, max = 100 },
+					progress = { value = progressOf(bItem.startedAt, bItem.completesAt) * 100, max = 100 },
 					button = {
 						text = "\u{00D7}",
 						variant = "danger",
 						onClick = function()
-							ctx.fire("CancelBuilding", item.id)
+							ctx.fire("CancelBuilding", bItem.id)
 						end,
 					},
 				})
+				if fill then
+					liveBars[#liveBars + 1] =
+						{ fill = fill, live = function() return progressOf(bItem.startedAt, bItem.completesAt) end }
+				end
 				qo += 1
 			end
 		end
@@ -695,6 +712,7 @@ function ProvinceOverview.create(ctx)
 
 	local function render(tab)
 		currentTab = tab
+		table.clear(liveBars) -- the old fills are about to be destroyed by clearBody()
 		handle.clearBody()
 		local fn = renderers[tab] or renderers.information
 		fn(handle.body)
@@ -703,10 +721,10 @@ function ProvinceOverview.create(ctx)
 	local lastSig = nil
 	local dirty = false
 
-	-- Hashes ONLY what the CURRENT owned tab visibly renders that can change, so an economy tick that
-	-- doesn't touch this province's displayed values is a no-op. Excludes raw treasury/manpower (never
-	-- shown on the owned tabs). Queue completion % is bucketed (3% steps) so progress bars step instead
-	-- of rebuilding every micro-tick. Available unit/building id sets are sorted for stability.
+	-- Hashes ONLY the STRUCTURE the current owned tab renders (ticket/unit/building id sets, counts,
+	-- tiers) -- NOT progress, which is advanced in place by the liveBars loop. So a recruit/build/economy
+	-- tick never rebuilds the panel; a rebuild happens only when a ticket is added/removed/completed, a
+	-- unit unlocks, or a tier/building changes. Id sets are sorted for stability.
 	local function contentSignature(tabKey)
 		local parts = { tabKey }
 		if tabKey == "recruitment" then
@@ -716,11 +734,10 @@ function ProvinceOverview.create(ctx)
 			for _, item in ipairs(queue) do
 				if item.provinceId == prov.id then
 					q[#q + 1] = string.format(
-						"%s:%s:%s:%d",
+						"%s:%s:%s",
 						tostring(item.id),
 						tostring(item.unitTypeId),
-						tostring(item.count or 1),
-						math.floor(progressOf(item.queuedAt, item.completesAt) * 100 / 3)
+						tostring(item.count or 1)
 					)
 				end
 			end
@@ -754,10 +771,9 @@ function ProvinceOverview.create(ctx)
 			for _, item in ipairs(queue) do
 				if item.provinceId == prov.id then
 					q[#q + 1] = string.format(
-						"%s:%s:%d",
+						"%s:%s",
 						tostring(item.id),
-						tostring(item.buildingId),
-						math.floor(progressOf(item.startedAt, item.completesAt) * 100 / 3)
+						tostring(item.buildingId)
 					)
 				end
 			end
@@ -822,6 +838,28 @@ function ProvinceOverview.create(ctx)
 			table.insert(conns, ctx.cache.onChangePrefix("provinces", scheduleRefresh))
 		end
 	end
+
+	-- Advance live progress fills in place (~10Hz) so a recruit/build tick updates bars without a panel
+	-- rebuild. Disconnected on destroy via conns.
+	local liveAccum = 0
+	local hbConn = RunService.Heartbeat:Connect(function(dt)
+		liveAccum += dt
+		if liveAccum < 0.1 then
+			return
+		end
+		liveAccum = 0
+		if not (handle and handle.root and handle.root.Parent) then
+			return
+		end
+		for _, b in ipairs(liveBars) do
+			if b.fill and b.fill.Parent then
+				b.fill.Size = UDim2.fromScale(math.clamp(b.live(), 0, 1), 1)
+			end
+		end
+	end)
+	table.insert(conns, function()
+		hbConn:Disconnect()
+	end)
 
 	render("information")
 	if owns then
