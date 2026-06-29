@@ -169,6 +169,9 @@ WorldConstants.ArmyOrganizationMax = 10
 WorldConstants.ArmyOrganizationMin = 0
 WorldConstants.ArmyOrganizationRegenPerTick = 0.5
 WorldConstants.ReinforceRegimentsPerTick = 0.5 -- regiments a settled army rebuilds toward its pre-loss size per regen tick (manpower-gated)
+-- perf: when true, MovementSystem/EntrenchmentSystem iterate ArmySystem's movingArmies()/idleArmies()
+-- membership indices instead of scanning allArmies() every tick (sparse-subset narrowing; behavior identical).
+WorldConstants.UseArmyMembershipIndex = true
 WorldConstants.ArmyOrganizationBattleLoss = 1.5
 WorldConstants.ArmyOrganizationCombatFloor = 0.3
 WorldConstants.ArmyDisbandManpowerRefund = 0.5

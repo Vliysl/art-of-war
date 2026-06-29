@@ -281,10 +281,23 @@ end
 
 local function tickMovements()
 	local now = ctx.TickScheduler.getSimTime()
-	for armyId, army in ctx.WorldState.allArmies() do
-		if army.movement and not army.battleId then
-			if now >= army.movement.completesAt then
-				finishMove(army)
+	-- perf: iterate only armies known to have a pending .movement (ArmySystem.movingArmies index)
+	-- instead of scanning every army. The index may over-include, so the per-army conditions below
+	-- are unchanged and re-applied verbatim -- behavior is identical, the loop is just narrower.
+	if ctx.WorldConstants.UseArmyMembershipIndex and ctx.ArmySystem and ctx.ArmySystem.movingArmies then
+		for _, army in ctx.ArmySystem.movingArmies() do
+			if army.movement and not army.battleId then
+				if now >= army.movement.completesAt then
+					finishMove(army)
+				end
+			end
+		end
+	else
+		for _, army in ctx.WorldState.allArmies() do
+			if army.movement and not army.battleId then
+				if now >= army.movement.completesAt then
+					finishMove(army)
+				end
 			end
 		end
 	end

@@ -6,6 +6,14 @@ local armiesByOwner = {}
 local armiesByProvince = {}
 local officerRollCount = 0
 
+-- perf: membership indices so hot per-tick systems iterate the sparse subset they care about
+-- instead of scanning allArmies() every tick. movingArmies = armies with a pending .movement;
+-- idleArmies = armies in state "idle" with no movement/retreat. Design rule: these may OVER-include
+-- (a stale member is harmless -- consumers re-apply their own filters) but must never UNDER-include,
+-- so we refresh on every relevant mutation/event and self-heal on a low-priority backstop tick.
+local movingArmies = {}
+local idleArmies = {}
+
 local function generateArmyId(tag)
 	nextArmySeq += 1
 	return string.format("army_%s_%d", tag, nextArmySeq)
@@ -31,6 +39,38 @@ local function deindexArmy(army)
 	if provinceBucket then
 		provinceBucket[army.id] = nil
 		if next(provinceBucket) == nil then armiesByProvince[army.provinceId] = nil end
+	end
+	-- perf: drop from the membership indices too (army record is going away)
+	movingArmies[army.id] = nil
+	idleArmies[army.id] = nil
+end
+
+-- perf: re-derive an army's membership in movingArmies/idleArmies from its CURRENT record.
+-- Resolving via getArmy keeps the indices honest no matter which mutation path ran. If the
+-- record is gone, clear both. Over-inclusion is acceptable; under-inclusion is not, so this
+-- is called from every create/relocate/setState path AND from the relevant event channels.
+local function refreshArmyMembership(armyId)
+	if not armyId then return end
+	local army = ctx.WorldState.getArmy(armyId)
+	if not army then
+		movingArmies[armyId] = nil
+		idleArmies[armyId] = nil
+		return
+	end
+	movingArmies[armyId] = (army.movement ~= nil) or nil
+	idleArmies[armyId] = (army.state == "idle" and not army.movement and not army.retreating) or nil
+end
+
+-- perf: self-healing backstop -- rebuild both indices from scratch by scanning allArmies().
+-- Registered on a low-priority ~15s scheduler entry so any missed-event staleness is bounded.
+local function rebuildMembership()
+	table.clear(movingArmies)
+	table.clear(idleArmies)
+	for armyId, army in ctx.WorldState.allArmies() do
+		if army.movement ~= nil then movingArmies[armyId] = true end
+		if army.state == "idle" and not army.movement and not army.retreating then
+			idleArmies[armyId] = true
+		end
 	end
 end
 
@@ -150,6 +190,7 @@ local function setState(armyId, state)
 	local previous = army.state
 	army.state = state
 	ctx.WorldState.setArmy(armyId, army)
+	refreshArmyMembership(armyId) -- perf: keep idle/moving indices current on every state change
 	ctx.EventBus.publish(ctx.Channels.ArmyStateChanged, {
 		armyId = armyId,
 		tag = army.ownerTag,
@@ -259,6 +300,7 @@ local function createArmy(tag, provinceId, composition, opts)
 	refreshBaseOrganization(record)
 	ctx.WorldState.setArmy(id, record)
 	indexArmy(record)
+	refreshArmyMembership(id) -- perf: a newly created army starts "idle" -> joins idleArmies
 	ctx.EventBus.publish(ctx.Channels.ArmyCreated, {
 		armyId = id, tag = tag, provinceId = provinceId, domain = domain,
 	})
@@ -731,6 +773,35 @@ local function regenTick()
 	end
 end
 
+-- perf: shared iterator factory for the membership accessors. Snapshots the member ids first
+-- (so consumers may mutate during iteration), then resolves each id to its LIVE record via
+-- getArmy, skipping ids whose record has vanished. Yields (armyId, armyRecord).
+local function membershipIterator(set)
+	local ids = {}
+	for armyId in set do
+		ids[#ids + 1] = armyId
+	end
+	local i = 0
+	return function()
+		while true do
+			i += 1
+			local armyId = ids[i]
+			if armyId == nil then return nil end
+			local army = ctx.WorldState.getArmy(armyId)
+			if army then return armyId, army end
+		end
+	end
+end
+
+-- perf: consumers iterate `for armyId, army in ArmySystem.movingArmies() do ... end`.
+local function movingArmiesIter()
+	return membershipIterator(movingArmies)
+end
+
+local function idleArmiesIter()
+	return membershipIterator(idleArmies)
+end
+
 function ArmySystem.register(context)
 	ctx = context
 	local api = {
@@ -760,6 +831,9 @@ function ArmySystem.register(context)
 		regenTick = regenTick,
 		effectiveMoraleMax = effectiveMoraleMax,
 		activeMoralePct = activeMoralePct,
+		-- perf: membership accessors -- each returns an iterator yielding (armyId, armyRecord)
+		movingArmies = movingArmiesIter,
+		idleArmies = idleArmiesIter,
 	}
 	context.ArmySystem = api
 	for k, v in pairs(api) do ArmySystem[k] = v end
@@ -769,6 +843,48 @@ function ArmySystem.register(context)
 		priority = 37,
 		updateIntervalSeconds = context.WorldConstants.CombatTickInterval or 3,
 		update = regenTick,
+	})
+
+	-- perf: maintain movingArmies/idleArmies off the existing mutation event channels. createArmy
+	-- and setState already refresh inline (above); these cover the paths that mutate army.movement /
+	-- army.retreating / army.battleId directly (MovementSystem, BattleManager). Battle channels carry
+	-- ARRAYS of ids (attackerArmyIds/defenderArmyIds), not a single armyId -- refresh each. No new
+	-- channels are added and the Channels/EventBus modules are untouched.
+	local Channels = context.Channels
+	local function refreshFromPayload(payload)
+		if payload and payload.armyId then refreshArmyMembership(payload.armyId) end
+	end
+	context.EventBus.subscribe(Channels.ArmyCreated, refreshFromPayload)        -- payload.armyId
+	context.EventBus.subscribe(Channels.ArmyMoveStarted, refreshFromPayload)    -- payload.armyId
+	context.EventBus.subscribe(Channels.ArmyMoveCompleted, refreshFromPayload)  -- payload.armyId
+	context.EventBus.subscribe(Channels.ArmyMoveCancelled, refreshFromPayload)  -- payload.armyId
+	context.EventBus.subscribe(Channels.ArmyStateChanged, refreshFromPayload)   -- payload.armyId
+	context.EventBus.subscribe(Channels.ArmyDisbanded, function(payload)
+		-- payload.armyId; record is already gone -> refresh clears both sets
+		if payload and payload.armyId then refreshArmyMembership(payload.armyId) end
+	end)
+	local function refreshArmyIdList(list)
+		if type(list) ~= "table" then return end
+		for _, armyId in ipairs(list) do
+			refreshArmyMembership(armyId)
+		end
+	end
+	local function refreshBattlePayload(payload)
+		-- BattleStarted/BattleResolved carry attackerArmyIds + defenderArmyIds (arrays), no scalar armyId
+		if not payload then return end
+		refreshArmyIdList(payload.attackerArmyIds)
+		refreshArmyIdList(payload.defenderArmyIds)
+	end
+	context.EventBus.subscribe(Channels.BattleStarted, refreshBattlePayload)
+	context.EventBus.subscribe(Channels.BattleResolved, refreshBattlePayload)
+
+	-- perf: self-healing backstop -- rebuild both indices from a full scan every ~15s so any
+	-- missed-event staleness is bounded. Low priority (runs after the systems that consume them).
+	context.TickScheduler.register({
+		id = "ArmyMembershipRebuild",
+		priority = 200,
+		updateIntervalSeconds = 15,
+		update = rebuildMembership,
 	})
 end
 
