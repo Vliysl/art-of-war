@@ -177,6 +177,11 @@ do
 end
 
 task.defer(function()
+	-- Cinematic intro: start zoomed in (behind the loading screen) so the reveal is a smooth zoom-out
+	-- to the wide view once the map has fully loaded (the ease-out happens after mapPainted, below).
+	if CameraController and CameraController.snapTo then
+		CameraController.snapTo(Vector3.new(0, 0, 0), 250)
+	end
 	if RequestFullState and ClientStateCache then
 		local ok, snapshot = pcall(function()
 			return RequestFullState:InvokeServer()
@@ -228,8 +233,37 @@ task.defer(function()
 			end)
 		end
 	end
+	-- Preload the CENTER province meshes in the BACKGROUND so the map fills in at ANY zoom instead of
+	-- streaming tiles in by camera proximity (far tiles otherwise stay bare ocean until you zoom onto
+	-- them, regardless of distance). LeftWrap/RightWrap are clones with identical MeshIds, so warming the
+	-- center folder caches their assets too. There are ~5713 unique meshes -- far too many to block the
+	-- loading screen on (a 20s+ stall) -- so this runs async: PreloadAsync force-loads every tile
+	-- regardless of camera, so they all appear within seconds (cold) or instantly (cached), masked by the
+	-- cinematic zoom-out below. This is the real fix; the camera move is just polish.
+	local provincesFolder = map and map:FindFirstChild("Provinces")
+	if provincesFolder then
+		task.spawn(function()
+			local toPreload = {}
+			for _, p in ipairs(provincesFolder:GetChildren()) do
+				if p:IsA("BasePart") then
+					toPreload[#toPreload + 1] = p
+				end
+			end
+			if #toPreload > 0 then
+				pcall(function()
+					game:GetService("ContentProvider"):PreloadAsync(toPreload)
+				end)
+			end
+		end)
+	end
 	if map then
 		map:SetAttribute("mapPainted", true)
+	end
+	-- Ease the cinematic camera out from the close intro to the default wide view; the background
+	-- preload above keeps filling tiles in as the view widens.
+	if CameraController and CameraController.setZoom then
+		local cfg = CameraController.getConfig and CameraController.getConfig()
+		CameraController.setZoom(cfg and cfg.DEFAULT_ZOOM or 990)
 	end
 end)
 
