@@ -313,7 +313,7 @@ function CameraController.focusArea(centerPos, spread)
 		CameraController.setPosition(centerPos)
 	end
 	spread = math.max(0, spread or 0)
-	CameraController.setZoom(math.clamp(spread * 1.2 + 120, 250, 1400))
+	CameraController.setZoom(math.clamp(spread * 1.3 + 80, 130, 1300))
 end
 
 function CameraController.getConfig() return table.clone(Config) end

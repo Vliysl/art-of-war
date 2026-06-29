@@ -832,14 +832,16 @@ function NationSelection.create(ctx)
 		local country = cache.getCountry and cache.getCountry(tag)
 		local capId = country and country.capitalProvinceId
 		local capitalPos = capId and ProvincePositions.centerOf(capId)
-		local capProv = capId and cache.getProvince and cache.getProvince(capId)
-		local capRegion = capProv and capProv.superRegionId
+		-- Homeland = owned provinces within HOMELAND_RADIUS of the capital (geographic, not region-tagged):
+		-- realms with overseas colonies (Spain/Portugal in 1750) frame their core instead of the globe,
+		-- and it's immune to the scrambled superRegion grouping (e.g. "iberia" includes Brazil in the data).
+		local HOMELAND_RADIUS = 300
 		local minX, maxX, minZ, maxZ = math.huge, -math.huge, math.huge, -math.huge
 		local sumX, sumZ, count = 0, 0, 0
 		for pid, prov in pairs((cache.allProvinces and cache.allProvinces()) or {}) do
-			if type(prov) == "table" and prov.ownerTag == tag and (not capRegion or prov.superRegionId == capRegion) then
+			if type(prov) == "table" and prov.ownerTag == tag then
 				local pos = ProvincePositions.centerOf(pid)
-				if pos then
+				if pos and (not capitalPos or (pos - capitalPos).Magnitude <= HOMELAND_RADIUS) then
 					minX = math.min(minX, pos.X)
 					maxX = math.max(maxX, pos.X)
 					minZ = math.min(minZ, pos.Z)
