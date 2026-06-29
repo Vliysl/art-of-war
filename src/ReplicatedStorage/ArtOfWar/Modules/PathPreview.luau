@@ -12,9 +12,10 @@
 -- entry points, the selection hook, every replicated army delta, and a slow Heartbeat backstop. Every
 -- async continuation is guarded by an identity + generation check (lanes[key] == lane and lane.gen ==
 -- gen), so a torn-down lane can never render or resurrect itself -- which is what makes orphaned
--- previews structurally impossible. Multi-select shows one "lane" per distinct ORIGIN province; a
--- SELECTED army already committed to a path instead previews its committed route, read straight from
--- replicated movement data (no server round-trip), so selecting a moving unit shows where it is headed.
+-- previews structurally impossible. Multi-select shows one "lane" per distinct ORIGIN province. A
+-- selected unit that is already MARCHING previews a RE-ROUTE to the hovered tile (from its current
+-- province) exactly like an idle unit, so the cyan preview tracks the cursor; the unit's committed
+-- order stays shown by MoveArrowView's arrow.
 --
 -- Hover policy: a transient hover over no province (border / sea tile / unmapped wilderness) does NOT
 -- clear -- the last valid route is kept until a new valid target, a deselect, or a committed move. A
@@ -156,7 +157,6 @@ local function getLane(key)
 		lane = {
 			key = key, folder = nil, lines = {},
 			shownFrom = nil, shownTo = nil, reqFrom = nil, reqTo = nil,
-			committedSig = nil,
 			inFlight = false, gen = 0,
 		}
 		lanes[key] = lane
@@ -174,7 +174,6 @@ local function destroyLane(key)
 	lane.inFlight = false
 	lane.shownFrom, lane.shownTo = nil, nil
 	lane.reqFrom, lane.reqTo = nil, nil
-	lane.committedSig = nil
 	clearLaneLines(lane)
 	if lane.folder and lane.folder.Parent then lane.folder:Destroy() end
 	lanes[key] = nil
@@ -232,76 +231,24 @@ local function ensureLane(key, fromId, toId)
 	dispatchLane(lane, fromId, toId)
 end
 
--- The committed route of a moving army (current leg origin -> destination -> any queued steps), read
--- straight from replicated movement data. Mirrors MoveArrowView.buildStatics so the preview overlays
--- the committed arrow exactly. nil if the army has no usable movement.
-local function committedNodes(army)
-	local mv = army.movement
-	if not mv or mv.fromProvinceId == nil or mv.toProvinceId == nil then return nil end
-	local nodes = { mv.fromProvinceId, mv.toProvinceId }
-	local mp = army.movementPath
-	if mp and mp.steps then
-		for _, id in ipairs(mp.steps) do nodes[#nodes + 1] = id end
-	end
-	return nodes
-end
-
--- Signature of the committed route, so a lane is only rebuilt when the route actually changes (mirrors
--- MoveArrowView.routeSig). Lets reconcile run on every army delta without re-rendering each time.
-local function committedSig(army)
-	local mv = army.movement
-	local s = tostring(mv.fromProvinceId) .. ">" .. tostring(mv.toProvinceId)
-	local mp = army.movementPath
-	if mp and mp.steps then
-		for _, id in ipairs(mp.steps) do s = s .. "," .. tostring(id) end
-	end
-	return s
-end
-
--- Render a SELECTED moving army's committed route directly (no server round-trip). Idempotent via
--- committedSig. Uses gen as the cancel token like the dispatch path, so a teardown still invalidates it.
-local function ensureCommittedLane(key, army)
-	local lane = getLane(key)
-	local sig = committedSig(army)
-	if lane.committedSig == sig then return end
-	local nodes = committedNodes(army)
-	if not nodes then return end
-	lane.gen += 1
-	lane.inFlight = false
-	lane.committedSig = sig
-	lane.shownFrom, lane.shownTo, lane.reqFrom, lane.reqTo = nil, nil, nil, nil
-	renderLane(lane, nodes, PATH_COLOR_FRIENDLY)
-end
-
--- The single mutation entry point. Desired lanes, derived from the LIVE selection:
---   * an idle army + a hovered destination -> a HOVER lane (key = origin province, server-routed);
---   * a moving army (committed to a path)  -> a COMMITTED lane (key = "mv:"..armyId, routed locally).
--- Drops every lane not desired and ensures every lane that is. Idempotent and cheap; safe to call from
--- any event. A disbanded army (getArmy == nil) contributes nothing, so its lane is dropped the same frame.
+-- The single mutation entry point. Desired lanes = one HOVER lane per distinct ORIGIN province of a
+-- live selected army (idle OR marching), routed to desiredTo. A marching unit therefore previews a
+-- RE-ROUTE to the hovered tile from its current province, exactly like an idle unit, and the preview
+-- tracks the cursor; its committed order keeps showing via MoveArrowView. Drops every lane not desired
+-- and ensures every lane that is. Idempotent; safe to call from any event. A disbanded army
+-- (getArmy == nil) contributes nothing, so its lane is dropped the same frame.
 local function reconcile()
-	local sel = (ArmyView.getSelectedArmyIds and ArmyView.getSelectedArmyIds()) or {}
-	-- Committed previews are selection-driven (no hover needed), so we can only skip work when there is
-	-- no hover AND nothing selected AND nothing already drawn.
-	if desiredTo == nil and #sel == 0 and next(lanes) == nil then return end
+	if desiredTo == nil and next(lanes) == nil then return end
 	local valid = {}
-	local committed = {} -- key -> army record (committed lanes render from local movement data)
 	local n = 0
-	for _, armyId in ipairs(sel) do
-		if n >= MAX_LANES then break end
-		local army = ClientStateCache.getArmy(armyId)
-		if army then
-			if army.movement then
-				local key = "mv:" .. tostring(armyId)
-				if not valid[key] then
-					valid[key] = true
-					committed[key] = army
-					n += 1
-				end
-			elseif desiredTo ~= nil and army.provinceId ~= nil and army.provinceId ~= desiredTo then
-				if not valid[army.provinceId] then
-					valid[army.provinceId] = true
-					n += 1
-				end
+	if desiredTo ~= nil then
+		local sel = (ArmyView.getSelectedArmyIds and ArmyView.getSelectedArmyIds()) or {}
+		for _, armyId in ipairs(sel) do
+			if n >= MAX_LANES then break end
+			local army = ClientStateCache.getArmy(armyId)
+			if army and army.provinceId ~= nil and army.provinceId ~= desiredTo and not valid[army.provinceId] then
+				valid[army.provinceId] = true
+				n += 1
 			end
 		end
 	end
@@ -309,12 +256,7 @@ local function reconcile()
 		if not valid[key] then destroyLane(key) end
 	end
 	for key in pairs(valid) do
-		local mover = committed[key]
-		if mover then
-			ensureCommittedLane(key, mover)
-		else
-			ensureLane(key, key, desiredTo)
-		end
+		ensureLane(key, key, desiredTo)
 	end
 end
 
