@@ -7,6 +7,7 @@ local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local aow = ReplicatedStorage:WaitForChild("ArtOfWar")
+local WorldConstants = require(aow:WaitForChild("Shared"):WaitForChild("WorldConstants"))
 local ClientStateCache = require(aow.Modules:WaitForChild("ClientStateCache"))
 local ProvinceInteraction = require(aow.Modules:WaitForChild("ProvinceInteraction"))
 local MapModeController = require(aow.Modules:WaitForChild("MapModeController"))
@@ -105,6 +106,13 @@ local heartbeatConn = nil
 local renderConn = nil
 local stateSub, battleSub, countriesSub, snapshotSub, provinceSub
 local cameraSub
+-- perf: coalesce machinery (gated by WorldConstants.UseArmyViewCoalesce).
+-- reconcileQueued collapses multiple same-frame snapshots into ONE deferred reconcileAll() pass.
+local reconcileQueued = false
+-- provinceOccSig[provinceId] = last-seen occupation signature ("byTag|required|progress") so a province
+-- delta that doesn't change the only province-record field reconcileOne reads (prov.occupation) can skip
+-- the allArmies() scan. nil entry = unknown -> treated as "changed" (iterate) for correctness.
+local provinceOccSig = {}
 local cameraMode = "field"
 local onArmySelectedListeners = {}
 local recentRetryArmies = {}
@@ -1395,10 +1403,22 @@ function ArmyView.init()
 		-- Province changes (e.g. siege occupation progress) live on the PROVINCE record, not the
 		-- army, so without this the overhead capture bar would go stale. Mark the armies standing on
 		-- the changed province dirty so reconcileOne re-reads province.occupation for the bar.
-		provinceSub = ClientStateCache.onChangePrefix("provinces", function(_, path)
+		provinceSub = ClientStateCache.onChangePrefix("provinces", function(value, path)
 			local idStr = path and path:match("^provinces%.([^%.]+)")
 			local pid = idStr and tonumber(idStr)
 			if not pid then return end
+			-- perf: reconcileOne reads exactly ONE field off the province record -- prov.occupation
+			-- (byTag/required/progress, drive the occupy glyph + capture bar). Province deltas replace the
+			-- whole record every tick (pop/economy/etc), but unless occupation changed nothing about the
+			-- army visuals changed. Gate the allArmies() scan on an occupation signature: skip when equal.
+			if WorldConstants.UseArmyViewCoalesce then
+				local prov = (type(value) == "table" and value) or ClientStateCache.getProvince(pid)
+				local occ = type(prov) == "table" and prov.occupation or nil
+				-- Signature folds the three occupation fields reconcileOne actually consumes. "0" = no occ.
+				local sig = occ and (tostring(occ.byTag) .. "|" .. tostring(occ.required) .. "|" .. tostring(occ.progress)) or "0"
+				if provinceOccSig[pid] == sig then return end -- occupation unchanged -> army visuals unaffected
+				provinceOccSig[pid] = sig
+			end
 			for armyId, army in pairs(ClientStateCache.allArmies()) do
 				if army.provinceId == pid then dirtyArmies[armyId] = true end
 			end
@@ -1407,7 +1427,22 @@ function ArmyView.init()
 
 	if ClientStateCache.onChange then
 		snapshotSub = ClientStateCache.onChange("snapshot", function()
-			reconcileAll()
+			if not WorldConstants.UseArmyViewCoalesce then
+				reconcileAll() -- legacy: reconcile immediately on every snapshot
+				return
+			end
+			-- perf: collapse all snapshots that arrive within one frame into a SINGLE reconcileAll().
+			-- We only schedule the deferred pass when none is already pending; reconcileQueued stays true
+			-- until the deferred callback runs, so any further same-frame snapshots are absorbed. The
+			-- deferred callback runs later THIS frame (task.defer = resume on the current frame's defer
+			-- queue, never delayed across frames), reads the LATEST cache state, and reconciles once --
+			-- so the final post-latest-snapshot reconcile is guaranteed to run and is never dropped.
+			if reconcileQueued then return end
+			reconcileQueued = true
+			task.defer(function()
+				reconcileQueued = false
+				reconcileAll()
+			end)
 		end)
 	end
 
@@ -1547,6 +1582,10 @@ function ArmyView.destroy()
 	animState = {}
 	selectedArmyId = nil
 	selectedArmyIds = {}
+	-- perf: reset coalesce state so a fresh init() re-arms the deferred reconcile and re-learns
+	-- occupation signatures (a stale reconcileQueued=true would otherwise swallow the next snapshot).
+	reconcileQueued = false
+	provinceOccSig = {}
 end
 
 return ArmyView

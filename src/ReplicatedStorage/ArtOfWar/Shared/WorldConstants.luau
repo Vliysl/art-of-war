@@ -172,6 +172,10 @@ WorldConstants.ReinforceRegimentsPerTick = 0.5 -- regiments a settled army rebui
 -- perf: when true, MovementSystem/EntrenchmentSystem iterate ArmySystem's movingArmies()/idleArmies()
 -- membership indices instead of scanning allArmies() every tick (sparse-subset narrowing; behavior identical).
 WorldConstants.UseArmyMembershipIndex = true
+-- perf: when true, ArmyView coalesces snapshot-driven reconcileAll() passes to at most once per frame
+-- (task.defer) and skips its provinceSub allArmies() scan when the province's occupation signature is
+-- unchanged. Visually identical; OFF restores the immediate-per-snapshot / ungated-provinceSub behavior.
+WorldConstants.UseArmyViewCoalesce = true
 WorldConstants.ArmyOrganizationBattleLoss = 1.5
 WorldConstants.ArmyOrganizationCombatFloor = 0.3
 WorldConstants.ArmyDisbandManpowerRefund = 0.5
