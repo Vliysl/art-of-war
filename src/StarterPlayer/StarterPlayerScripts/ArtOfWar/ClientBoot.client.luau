@@ -165,6 +165,17 @@ do
 	end
 end
 
+-- Wire default UI sounds to EVERY ScreenGui (the HUD builds its own ScreenGuis outside UIRoot,
+-- so UIRoot.attachAll alone missed them -> no click/hover sounds).
+do
+	local uiFolder = aow:FindFirstChild("UI")
+	local usMod = uiFolder and uiFolder:FindFirstChild("UISound")
+	if usMod then
+		local ok, UISound = pcall(require, usMod)
+		if ok and UISound and UISound.start then pcall(UISound.start) end
+	end
+end
+
 task.defer(function()
 	if RequestFullState and ClientStateCache then
 		local ok, snapshot = pcall(function()

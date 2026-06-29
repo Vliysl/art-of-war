@@ -78,6 +78,20 @@ function Button.create(config)
 	btn.ZIndex = z + 4
 	btn.LayoutOrder = config.layoutOrder or 0
 
+	-- Default UI sounds (UISound.attachButton reads these attributes, set here before parenting):
+	-- destructive buttons play the delete SFX on click; prominent variants get a hover SFX.
+	-- Override per-button via config.clickSound / config.hoverSound (pass false to silence).
+	if config.clickSound ~= nil then
+		if config.clickSound then btn:SetAttribute("AoWClickSound", config.clickSound) end
+	elseif variant == "danger" then
+		btn:SetAttribute("AoWClickSound", "delete")
+	end
+	if config.hoverSound ~= nil then
+		if config.hoverSound then btn:SetAttribute("AoWHoverSound", config.hoverSound) end
+	elseif variant == "primary" or variant == "success" or variant == "danger" then
+		btn:SetAttribute("AoWHoverSound", "hover")
+	end
+
 	local bgZ = btn.ZIndex - 2
 	local bg = Instance.new("Frame")
 	bg.Name = "Bg"

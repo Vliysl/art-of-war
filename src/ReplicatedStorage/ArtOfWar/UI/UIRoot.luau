@@ -39,6 +39,7 @@ local function ensureGui()
 	local ok, UISound = pcall(require, script.Parent:WaitForChild("UISound"))
 	if ok and UISound and UISound.attachAll then
 		UISound.attachAll(screenGui)
+		if UISound.preload then UISound.preload() end
 	end
 
 	return screenGui
