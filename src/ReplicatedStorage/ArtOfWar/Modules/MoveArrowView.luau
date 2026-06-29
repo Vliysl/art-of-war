@@ -18,10 +18,10 @@ local ProvincePositions = require(Modules:WaitForChild("ProvincePositions"))
 
 local MoveArrowView = {}
 
-local LIFT = MoveArrowRender.DEFAULT_LIFT or 2
-local FILL_LIFT_EPS = 0.3
-local WIDTH = MoveArrowRender.DEFAULT_WIDTH or 7
-local THICK = 0.45
+local LIFT = MoveArrowRender.DEFAULT_LIFT or 0.22
+local FILL_LIFT_EPS = 0.033  -- scaled for 2048 map (was 0.3)
+local WIDTH = MoveArrowRender.DEFAULT_WIDTH or 0.77
+local THICK = 0.05  -- was 0.45
 local FILL_WIDTH = WIDTH * 0.72
 
 local COLOR_SHAFT = Color3.fromRGB(34, 32, 40)   -- dark body / unfilled track

@@ -10,21 +10,21 @@
 -- point (flat back at the origin, thick body, one clean point at the target = a 5-sided banner).
 local MoveArrowRender = {}
 
-local DEFAULT_WIDTH = 7
-local DEFAULT_THICK = 0.4
-local DEFAULT_LIFT = 2
-local HEAD_LEN = 11
+local DEFAULT_WIDTH = 0.77  -- scaled for 2048 map (was 7)
+local DEFAULT_THICK = 0.044 -- was 0.4
+local DEFAULT_LIFT = 0.22   -- was 2
+local HEAD_LEN = 1.21       -- was 11
 local HEAD_HALF_ANGLE = 32 -- degrees each chevron arm opens back from the travel direction
 
 -- buildArrow tuning
 local SMOOTH_ITERS = 2     -- Chaikin corner-cut passes (more = rounder bends)
-local RIBBON_SPACING = 14  -- studs between ribbon planks along the smoothed curve
+local RIBBON_SPACING = 1.54  -- studs between ribbon planks along the smoothed curve (scaled for 2048 map, was 14)
 local RIBBON_MAX_SEG = 60  -- hard cap on ribbon planks (long paths just space out further)
-local RIBBON_BORDER = 1.4  -- half-width of the dark outline that peeks out past the colour
-local BUILD_HEAD_LEN = 15 -- arrowhead length for buildArrow (shorter = stubbier, less awkward at bends)
+local RIBBON_BORDER = 0.15  -- half-width of the dark outline that peeks out past the colour (scaled, was 1.4)
+local BUILD_HEAD_LEN = 1.65 -- arrowhead length for buildArrow (scaled for 2048 map, was 15)
 local BUILD_HEAD_WIDTH_MULT = 1.0 -- banner: point base width == body width (uniform 5-sided banner)
 local OUTLINE_DARKEN = 0.62       -- how far the auto outline colour is lerped toward black
-local LOWER = Vector3.new(0, 0.06, 0) -- world-Y drop for the outline layer (sits just under the top)
+local LOWER = Vector3.new(0, 0.007, 0) -- world-Y drop for the outline layer (scaled for 2048 map, was 0.06)
 
 local function configPart(p, color, transparency, material)
 	p.Anchored = true

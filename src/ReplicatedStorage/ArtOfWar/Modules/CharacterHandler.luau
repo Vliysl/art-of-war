@@ -51,6 +51,7 @@ local function applyFieldPresentation(char)
 		hum.AutoRotate = true
 		hum.HealthDisplayDistance = 0
 		hum.NameDisplayDistance = 100
+		hum:SetStateEnabled(Enum.HumanoidStateType.Swimming, false) -- ocean is cosmetic terrain water; never swim (FieldFloor sits above the surface)
 	end
 	forEachBodyPart(char, function(p)
 		p.Transparency = p:GetAttribute("AoWBaseTransparency") or p.Transparency

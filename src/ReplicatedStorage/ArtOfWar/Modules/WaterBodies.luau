@@ -4,10 +4,11 @@ local WorldConstants = require(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitFo
 
 local WaterBodies = {}
 
-local LAT_SCALE  = 60
-local LAT_OFFSET = -700
-local LON_SCALE  = 52
-local LON_OFFSET = 590
+-- Projection rescaled for the 2048-wide map (was tuned to the 18665 map). geo ratio ~0.1089, recentered to origin.
+local LAT_SCALE  = 6.53    -- was 60
+local LAT_OFFSET = -76.33  -- was -700
+local LON_SCALE  = 5.66    -- was 52
+local LON_OFFSET = 64.52   -- was 590
 
 local function projX(lon)
 	return -lon * LON_SCALE + LON_OFFSET

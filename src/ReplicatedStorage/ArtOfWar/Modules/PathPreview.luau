@@ -19,9 +19,9 @@ local RunService = game:GetService("RunService")
 
 local PathPreview = {}
 
-local LINE_LIFT = 4
-local ARROW_WIDTH = 9
-local ARROW_THICK = 0.4
+local LINE_LIFT = 0.44   -- scaled for 2048 map (was 4)
+local ARROW_WIDTH = 0.99 -- was 9
+local ARROW_THICK = 0.044 -- was 0.4
 local PATH_COLOR_FRIENDLY = Color3.fromRGB(120, 220, 255)
 local PATH_COLOR_HOSTILE = Color3.fromRGB(220, 80, 80)
 local PATH_COLOR_BLOCKED = Color3.fromRGB(180, 90, 90)

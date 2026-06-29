@@ -44,7 +44,7 @@ local INFANTRY_UNIT_IDS = {
 }
 
 local MUSKETEER_TEMPLATE = nil
-local MUSKETEER_TARGET_HEIGHT = 16.8  -- world studs (model spans this much vertically after scaling; 40% larger than the original 12)
+local MUSKETEER_TARGET_HEIGHT = 1.85  -- world studs, scaled for 2048 map (was 16.8 @ 18665; x0.110)
 
 local function getMusketeerTemplate()
 	if MUSKETEER_TEMPLATE then return MUSKETEER_TEMPLATE end
@@ -61,7 +61,7 @@ local function modelTypeFor(unitTypeId)
 end
 
 
-local BASE_LIFT = 1
+local BASE_LIFT = 0.11  -- scaled for 2048 map (was 1)
 -- HOI4-style movement: the token WAITS at its origin while the move arrow fills
 -- (server-timed), then glides straight into the new tile on arrival. The glide is a flat
 -- slide (no vertical arc) at the terrain-derived height, so the unit never bounces and
@@ -71,15 +71,15 @@ local HOP_TIME = 0.35
 -- Reduced sizes — disc fits comfortably inside an ~86-stud province.
 -- The Base cylinder is laid flat: Cylinder shape's axis is along its X-axis.
 -- We bake CFrame.Angles(0,0,pi/2) into Base's offset so it lies flat.
-local BASE_SIZE   = Vector3.new(2, 28, 28)   -- 2 tall, 28 diameter
-local POLE_SIZE   = Vector3.new(0.8, 30, 0.8)
-local FLAG_SIZE   = Vector3.new(10, 6, 0.4)
+local BASE_SIZE   = Vector3.new(0.22, 3.07, 3.07)   -- scaled for 2048 map (was 2, 28, 28)
+local POLE_SIZE   = Vector3.new(0.088, 3.29, 0.088) -- was 0.8, 30, 0.8
+local FLAG_SIZE   = Vector3.new(1.1, 0.66, 0.044)   -- was 10, 6, 0.4
 
 -- Local-space offsets relative to a hidden Anchor part at (0,0,0)
 local BASE_OFFSET_Y = BASE_SIZE.X * 0.5         -- = 1
 local POLE_OFFSET_Y = BASE_SIZE.X + POLE_SIZE.Y * 0.5  -- = 17
-local FLAG_OFFSET   = Vector3.new(5, BASE_SIZE.X + POLE_SIZE.Y - 4, 0)  -- near top of pole, offset to side
-local BB_STUDS_OFFSET = Vector3.new(0, BASE_SIZE.X + POLE_SIZE.Y + 8, 0)
+local FLAG_OFFSET   = Vector3.new(0.55, BASE_SIZE.X + POLE_SIZE.Y - 0.44, 0)  -- near top of pole, offset to side (scaled: 5->0.55, -4->-0.44)
+local BB_STUDS_OFFSET = Vector3.new(0, BASE_SIZE.X + POLE_SIZE.Y + 0.88, 0)  -- scaled (+8 -> +0.88)
 
 -- Module state
 local armyParts = {}
@@ -293,8 +293,8 @@ local BANNER_SCALE = 0.85 -- constant on-screen label size (keeps aspect ratio);
 -- zoomed-out map. BANNER_DESIGN_W/H = base px; LABEL_REF_DISTANCE calibrates the constant size.
 local BANNER_DESIGN_W = 204
 local BANNER_DESIGN_H = 60
-local LABEL_REF_DISTANCE = 400 -- camera distance at which the label is BANNER_SCALE size (the size knob)
-local LABEL_HIDE_ZOOM = 11000
+local LABEL_REF_DISTANCE = 44 -- scaled for 2048 map (was 400 @ 18665); on-screen banner size knob (smaller = smaller banner)
+local LABEL_HIDE_ZOOM = 1208 -- scaled for 2048 map (was 11000); labels hide past this camera distance
 
 -- Overhead banner (Rise-of-Nations style), laid out as three adjacent elements:
 --   [ crest panel ]  [ dark count box ]   shovel
@@ -781,7 +781,7 @@ local function buildMusketeerModel(armyId, factionColor)
 	local head = model:FindFirstChild("Head") or model.PrimaryPart
 
 	-- Offset scaled with the 40%-larger model so the label keeps clearance above the taller head.
-	local bb = buildBannerGui(head, Vector3.new(0, 25, 0), factionColor)
+	local bb = buildBannerGui(head, Vector3.new(0, 2.74, 0), factionColor)  -- scaled for 2048 map (was 25)
 	bb.Parent = head
 
 	-- Selection highlight on the model

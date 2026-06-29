@@ -1,11 +1,12 @@
 local WorldConstants = {}
 
-WorldConstants.MapWidth = 18665
-WorldConstants.MapDepth = 7518
+-- Map scale: migrated 2026-06 from the 18665-wide map to the 2048-wide raw-coastline map (measured extents, centered on origin).
+WorldConstants.MapWidth = 2048
+WorldConstants.MapDepth = 837.82
 WorldConstants.MapHalfWidth = WorldConstants.MapWidth * 0.5
 WorldConstants.MapHalfDepth = WorldConstants.MapDepth * 0.5
-WorldConstants.MapCenterX = -27.0
-WorldConstants.MapCenterZ = 67.8
+WorldConstants.MapCenterX = 0
+WorldConstants.MapCenterZ = 0
 
 WorldConstants.ScenarioStartYear = 1750
 WorldConstants.ScenarioStartMonth = 1
@@ -154,7 +155,7 @@ WorldConstants.SuccessionDisputeClaimFloor = 40
 WorldConstants.SuccessionDisputeLegitimacyHit = 10
 WorldConstants.SuccessionDisputeStabilityHit = 1
 
-WorldConstants.AdjacencyThreshold = 300
+WorldConstants.AdjacencyThreshold = 33 -- scaled for 2048 map (was 300 @ 18665); baked adjacency is primary, this only gates the legacy/synth fallback
 WorldConstants.ArmyRecruitInfraRequirement = 2 -- DEPRECATED: no longer enforced (recruitment unlocked for all owned provinces)
 WorldConstants.ArmyRegimentManpowerCost = 1000
 WorldConstants.ArmyRegimentStrength = 1000
@@ -192,7 +193,7 @@ WorldConstants.NavalCombatTickInterval = 3
 WorldConstants.NavalMissionTickInterval = 3
 WorldConstants.NavalBuildTickInterval = 3
 WorldConstants.BuildingTickInterval = 3
-WorldConstants.NavalMovementSpeed = 120
+WorldConstants.NavalMovementSpeed = 13 -- scaled for 2048 map (was 120 @ 18665) to preserve naval travel times (stud-distance based)
 WorldConstants.NavalTravelMinSeconds = 10
 WorldConstants.NavalTravelMaxSeconds = 90
 WorldConstants.ShipyardInfraRequirement = 2
@@ -201,15 +202,15 @@ WorldConstants.FleetRecruitMaxPerCall = 5
 WorldConstants.MapModeField = "field"
 WorldConstants.MapModeCommand = "command"
 WorldConstants.MapModeDefault = "command"
-WorldConstants.FieldColliderTopY = 6
-WorldConstants.FieldColliderThickness = 4
-WorldConstants.FieldSpawnHeight = 45
-WorldConstants.FieldWalkSpeed = 140
-WorldConstants.FieldSprintSpeed = 600
-WorldConstants.FieldJumpHeight = 12
-WorldConstants.FieldBodyScale = 6
-WorldConstants.FieldHeadScale = 5
-WorldConstants.CommandPerchHeight = 100000
+WorldConstants.FieldColliderTopY = 0.3       -- new map land top = 0.25; flat field-floor sits just above (was 6 @ 18665)
+WorldConstants.FieldColliderThickness = 1
+WorldConstants.FieldSpawnHeight = 5          -- spawn just above the field floor (was 45)
+WorldConstants.FieldWalkSpeed = 16           -- characters no longer 6x-scaled; Roblox-default feel on the 2048 map (was 140)
+WorldConstants.FieldSprintSpeed = 32         -- was 600
+WorldConstants.FieldJumpHeight = 7.2         -- Roblox default (was 12)
+WorldConstants.FieldBodyScale = 1            -- characters no longer resized (was 6)
+WorldConstants.FieldHeadScale = 1            -- was 5
+WorldConstants.CommandPerchHeight = 100000   -- off-screen avatar park in command mode; scale-independent
 
 -- Economy (province-driven income engine)
 WorldConstants.TaxIncomePerThousand = 0.05 -- gold per day per 1000 population per devTier
