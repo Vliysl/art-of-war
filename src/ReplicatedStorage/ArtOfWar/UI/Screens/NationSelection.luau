@@ -22,6 +22,10 @@ local SectionDivider = require(Components.SectionDivider)
 
 local HudWiring = require(UI.HudWiring)
 
+local Modules = ArtOfWar.Modules
+local CameraController = require(Modules.CameraController)
+local ProvincePositions = require(Modules.ProvincePositions)
+
 local Data = ArtOfWar.Data
 local GovernmentTypes = require(Data.GovernmentTypes)
 local Ideologies = require(Data.Ideologies)
@@ -818,6 +822,45 @@ function NationSelection.create(ctx)
 		end
 	end
 
+	-- Pan the command camera to the selected country's CAPITAL, zoomed to frame its homeland (the
+	-- capital's continent / superRegion), so small realms zoom in and large or transcontinental ones
+	-- frame their home region instead of zooming out to the empty void.
+	local function focusCountryCamera(tag)
+		if not (cache and CameraController and CameraController.focusArea) then
+			return
+		end
+		local country = cache.getCountry and cache.getCountry(tag)
+		local capId = country and country.capitalProvinceId
+		local capitalPos = capId and ProvincePositions.centerOf(capId)
+		local capProv = capId and cache.getProvince and cache.getProvince(capId)
+		local capRegion = capProv and capProv.superRegionId
+		local minX, maxX, minZ, maxZ = math.huge, -math.huge, math.huge, -math.huge
+		local sumX, sumZ, count = 0, 0, 0
+		for pid, prov in pairs((cache.allProvinces and cache.allProvinces()) or {}) do
+			if type(prov) == "table" and prov.ownerTag == tag and (not capRegion or prov.superRegionId == capRegion) then
+				local pos = ProvincePositions.centerOf(pid)
+				if pos then
+					minX = math.min(minX, pos.X)
+					maxX = math.max(maxX, pos.X)
+					minZ = math.min(minZ, pos.Z)
+					maxZ = math.max(maxZ, pos.Z)
+					sumX += pos.X
+					sumZ += pos.Z
+					count += 1
+				end
+			end
+		end
+		local center = capitalPos
+		if not center and count > 0 then
+			center = Vector3.new(sumX / count, 0, sumZ / count)
+		end
+		if not center then
+			return
+		end
+		local spread = (count > 0) and math.max(maxX - minX, maxZ - minZ) or 0
+		CameraController.focusArea(center, spread)
+	end
+
 	function selectCountry(tag, source)
 		if destroyed then
 			return
@@ -844,6 +887,7 @@ function NationSelection.create(ctx)
 		renderDetail(vm)
 		refreshDetailVisibility()
 		updatePlay(vm)
+		focusCountryCamera(tag)
 	end
 
 	local function setFilter(bucket)

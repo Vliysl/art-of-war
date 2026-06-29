@@ -304,6 +304,18 @@ function CameraController.snapTo(pos, zoom)
 		currentZoom = snappedZ
 	end
 end
+-- Pan to centerPos and choose a zoom (eased) that frames a ground extent of `spread` studs. Used to
+-- focus a country's homeland on selection: zoom scales with the realm's size but is clamped to a
+-- comfortable focus range so a tiny country isn't uncomfortably close and a sprawling/transcontinental
+-- one never zooms out to the empty void. setPosition/setZoom apply the usual wrap/clamp bounds.
+function CameraController.focusArea(centerPos, spread)
+	if centerPos then
+		CameraController.setPosition(centerPos)
+	end
+	spread = math.max(0, spread or 0)
+	CameraController.setZoom(math.clamp(spread * 1.2 + 120, 250, 1400))
+end
+
 function CameraController.getConfig() return table.clone(Config) end
 
 function CameraController.destroy()
