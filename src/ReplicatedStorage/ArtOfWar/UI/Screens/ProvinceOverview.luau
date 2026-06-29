@@ -834,8 +834,10 @@ function ProvinceOverview.create(ctx)
 		subtitle = (prov.ownerName and (prov.ownerName .. "  \u{00B7}  ") or "") .. ("#" .. tostring(prov.id or "?")),
 		anchorPoint = Vector2.new(1, 1),
 		position = UDim2.new(1, -16, 1, -16),
-		size = UDim2.fromOffset(360, 0),
-		autoHeight = true,
+		-- Fixed height (not autoHeight) so the panel stays one size across Information/Recruitment/Buildings;
+		-- the ScreenKit body scrolls when a tab's content is taller. Screen-relative so it adapts + leaves
+		-- room for the HUD bars.
+		size = UDim2.new(0, 360, 1, -132),
 		tabs = owns and TABS or nil,
 		activeTab = owns and "information" or nil,
 		onTab = owns and function(key)

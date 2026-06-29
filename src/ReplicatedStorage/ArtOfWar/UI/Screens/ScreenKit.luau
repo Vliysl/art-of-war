@@ -127,6 +127,10 @@ function ScreenKit.open(ctx, opts)
 	body.AutomaticCanvasSize = Enum.AutomaticSize.Y
 	body.CanvasSize = UDim2.new()
 	body.ScrollingDirection = Enum.ScrollingDirection.Y
+	-- Clip overflow to the visible scroll area: a ScrollingFrame does NOT clip by default, so a
+	-- fixed-height panel's overflowing rows (e.g. the province Buildings list) would otherwise draw
+	-- past the panel edge. No-op for autoHeight panels (body == content height, nothing overflows).
+	body.ClipsDescendants = true
 	body.ZIndex = 2
 	body.Parent = root
 	local bPad = Instance.new("UIPadding")
