@@ -835,9 +835,9 @@ function ProvinceOverview.create(ctx)
 		anchorPoint = Vector2.new(1, 1),
 		position = UDim2.new(1, -16, 1, -16),
 		-- Fixed height (not autoHeight) so the panel stays one size across Information/Recruitment/Buildings;
-		-- the ScreenKit body scrolls when a tab's content is taller. Screen-relative so it adapts + leaves
-		-- room for the HUD bars.
-		size = UDim2.new(0, 360, 1, -132),
+		-- the ScreenKit body scrolls when a tab's content is taller. Matched to the unit panel's typical
+		-- auto-height (ArmyPanel content ~= 620px) so the two panels read as the same size. Tunable.
+		size = UDim2.fromOffset(360, 620),
 		tabs = owns and TABS or nil,
 		activeTab = owns and "information" or nil,
 		onTab = owns and function(key)
