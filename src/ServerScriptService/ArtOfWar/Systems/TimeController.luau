@@ -2,8 +2,11 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local TimeController = {}
 
+-- Engine rate multipliers (unchanged so sim balance / per-tier tick rates stay identical). The UI
+-- relabels these as rate/4 -> 0.25x / 0.5x / 1x / 2x / 4x, so the default of 4 is shown as "1x" and
+-- runs at the old "4x" pace -- i.e. 4x faster than the previous default of 1.
 local ALLOWED_SPEEDS = { 1, 2, 4, 8, 16 }
-local DEFAULT_SPEED = 1
+local DEFAULT_SPEED = 4
 
 local ctx
 local timeSync

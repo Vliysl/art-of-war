@@ -6,6 +6,9 @@ local Icons = DesignSystem.Icons
 
 local TopBar = {}
 
+-- Engine rate multipliers, shown to the player as rate/4 -> 0.25x, 0.5x, 1x, 2x, 4x. The default rate
+-- is 4 ("1x"), so the game runs at the old "4x" pace by default. These stay the REAL rates (sim balance
+-- and per-tier system tick rates are unchanged); only the displayed label is divided by 4 (see setTime).
 local SPEEDS = { 1, 2, 4, 8, 16 }
 
 function TopBar.create(config)
@@ -53,7 +56,7 @@ function TopBar.create(config)
 	pauseIcon.ZIndex = z + 2
 	pauseIcon.Parent = pauseBtn
 
-	-- Speed cycle (right): clicking steps 1->2->4->8->16->1.
+	-- Speed cycle (right): clicking steps through 0.25x -> 0.5x -> 1x -> 2x -> 4x (engine rates 1->2->4->8->16->1).
 	local speedBtn = Instance.new("TextButton")
 	speedBtn.Name = "Speed"
 	speedBtn.AnchorPoint = Vector2.new(1, 0.5)
@@ -67,7 +70,7 @@ function TopBar.create(config)
 	Typography.apply(speedBtn, "value")
 	speedBtn.Parent = root
 
-	local speed = 1
+	local speed = 4 -- default engine rate (displayed as "1x"); matches TimeController DEFAULT_SPEED
 	local paused = false
 
 	local function cycleSpeed()
@@ -125,7 +128,7 @@ function TopBar.create(config)
 			end
 			if type(packet.speed) == "number" then
 				speed = packet.speed
-				speedBtn.Text = tostring(packet.speed) .. "\u{00D7}"
+				speedBtn.Text = tostring(packet.speed / 4) .. "\u{00D7}" -- engine rate -> player label (rate / 4)
 			end
 			if packet.paused ~= nil then
 				paused = packet.paused == true
