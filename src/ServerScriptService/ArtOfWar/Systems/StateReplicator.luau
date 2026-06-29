@@ -1,6 +1,11 @@
 local StateReplicator = {}
 
 local BROADCAST_INTERVAL = 1.5
+-- perf: cache the full-state snapshot so concurrent joiners (RequestFullState)
+-- reuse one re-serialized world instead of each rebuilding it. Invalidated on
+-- every broadcast tick + bounded by a short TTL; a joiner may see state up to
+-- ~SNAPSHOT_TTL old, which the next delta corrects. Delta path is untouched.
+local SNAPSHOT_TTL = 2
 local COLLECTIONS = { "provinces", "countries", "markets", "tradeRoutes", "armies", "battles", "fleets", "wars", "peaceProposals", "tradeOrders", "pacts" }
 local GETTERS = {
 	provinces = "getProvince",
@@ -18,6 +23,10 @@ local GETTERS = {
 
 local ctx
 local stateSync
+
+-- perf: cached snapshot + the os.clock() time it was built (nil = stale)
+local cachedSnapshot = nil
+local cachedSnapshotAt = nil
 
 local function buildDeltaFrom(drained)
 	if not drained then return nil end
@@ -55,7 +64,7 @@ local function buildDeltaFrom(drained)
 	return packet
 end
 
-local function buildSnapshot()
+local function buildSnapshotUncached()
 	local snapshot = { revision = ctx.WorldState.getRevision(), fullSnapshot = true }
 	snapshot.provinces = ctx.WorldState.allProvinces()
 	snapshot.countries = ctx.WorldState.allCountries()
@@ -71,6 +80,20 @@ local function buildSnapshot()
 	return snapshot
 end
 
+-- perf: serve joiners a recently-built snapshot when one is fresh enough.
+-- The collection fields are live references to WorldState's store tables and the
+-- snapshot is read-only on the client, so sharing one object across concurrent
+-- joins is safe; only the captured `revision` may lag (<= SNAPSHOT_TTL).
+local function buildSnapshot()
+	local now = os.clock()
+	if cachedSnapshot and cachedSnapshotAt and (now - cachedSnapshotAt) < SNAPSHOT_TTL then
+		return cachedSnapshot
+	end
+	cachedSnapshot = buildSnapshotUncached()
+	cachedSnapshotAt = now
+	return cachedSnapshot
+end
+
 local function broadcast()
 	if not stateSync then return end
 	local drained = ctx.WorldState.drainDirty()
@@ -78,6 +101,10 @@ local function broadcast()
 	local packet = buildDeltaFrom(drained)
 	if not packet then return end
 	stateSync:FireAllClients(packet)
+	-- perf: world advanced this tick -> drop the cached snapshot so the next
+	-- joiner rebuilds against the just-broadcast revision (lazy rebuild).
+	cachedSnapshot = nil
+	cachedSnapshotAt = nil
 	ctx.EventBus.publish(ctx.Channels.StateReplicated, {
 		revision = packet.revision,
 	})

@@ -4,16 +4,43 @@ local ctx
 local byArea, byRegion, bySuperRegion, byOwner, byCulture, byReligion, byTradeGood
 local totals = { owner = {}, culture = {}, religion = {}, tradeGood = {} }
 local ownerOf = {}    -- S5: provinceId -> indexed owner (reverse of byOwner) for incremental updates
+-- perf: provinceId -> its index within byOwner[ownerOf[id]] so removal is O(1) swap-and-pop
+-- instead of an O(n) linear scan + table.remove shift. Kept in sync at every byOwner mutation
+-- site (rebuildOwnerIndex / updateOwnerFor / registerProvince).
+local ownerSlot = {}
+
+-- perf: append id to its owner bucket and record its slot index. Mirror of table.insert.
+local function ownerBucketPush(bucket, id)
+	local n = #bucket + 1
+	bucket[n] = id
+	ownerSlot[id] = n
+end
+
+-- perf: O(1) swap-and-pop removal of id from its owner bucket using ownerSlot. Order may
+-- change (the last element is moved into the gap) but membership is preserved exactly.
+local function ownerBucketRemove(bucket, id)
+	local i = ownerSlot[id]
+	if i == nil then return end
+	local n = #bucket
+	local last = bucket[n]
+	if last ~= id then
+		bucket[i] = last
+		ownerSlot[last] = i
+	end
+	bucket[n] = nil
+	ownerSlot[id] = nil
+end
 
 local function rebuildOwnerIndex()
 	byOwner = {}
 	table.clear(ownerOf)
+	table.clear(ownerSlot)
 	local counts = {}
 	for id, province in ctx.WorldState.allProvinces() do
 		local owner = province.ownerTag
 		local bucket = byOwner[owner] or {}
-		table.insert(bucket, id)
 		byOwner[owner] = bucket
+		ownerBucketPush(bucket, id)
 		ownerOf[id] = owner
 		counts[owner] = (counts[owner] or 0) + 1
 	end
@@ -21,7 +48,7 @@ local function rebuildOwnerIndex()
 end
 
 -- S5: incrementally move a single province between owner buckets on an ownership change,
--- instead of rescanning every province in the world. O(loser's province count) per flip.
+-- instead of rescanning every province in the world. perf: now O(1) per flip via ownerSlot.
 local function updateOwnerFor(provinceId)
 	local province = ctx.WorldState.getProvince(provinceId)
 	if not province then return end
@@ -29,15 +56,12 @@ local function updateOwnerFor(provinceId)
 	local oldOwner = ownerOf[provinceId]
 	if oldOwner == newOwner then return end
 	if oldOwner ~= nil and byOwner[oldOwner] then
-		local b = byOwner[oldOwner]
-		for i = #b, 1, -1 do
-			if b[i] == provinceId then table.remove(b, i) break end
-		end
+		ownerBucketRemove(byOwner[oldOwner], provinceId)
 		totals.owner[oldOwner] = math.max(0, (totals.owner[oldOwner] or 1) - 1)
 	end
 	local nb = byOwner[newOwner] or {}
-	table.insert(nb, provinceId)
 	byOwner[newOwner] = nb
+	ownerBucketPush(nb, provinceId)
 	totals.owner[newOwner] = (totals.owner[newOwner] or 0) + 1
 	ownerOf[provinceId] = newOwner
 end
@@ -106,7 +130,12 @@ local function registerProvince(id, record)
 	push(byArea, clone.areaId)
 	push(byRegion, clone.regionId)
 	push(bySuperRegion, clone.superRegionId)
-	push(byOwner, clone.ownerTag)
+	-- perf: route the owner bucket through ownerBucketPush so ownerSlot stays in sync
+	if clone.ownerTag ~= nil then
+		local oBucket = byOwner[clone.ownerTag] or {}
+		byOwner[clone.ownerTag] = oBucket
+		ownerBucketPush(oBucket, id)
+	end
 	push(byCulture, clone.culture)
 	push(byReligion, clone.religion)
 	push(byTradeGood, clone.tradeGood)

@@ -1000,6 +1000,13 @@ local function reconcileOne(armyId)
 	local pos = computePosition(army, state)
 	if not pos then return end
 
+	-- perf: the Label BillboardGui and its "Bg" container are built once per model and never
+	-- reparented/renamed, so resolve them ONCE here (model is finalized above) and reuse the refs
+	-- for the ~5 lookup sites below instead of repeating the FindFirstChild chain each reconcile.
+	local label = (model:FindFirstChild("Pole") and model.Pole:FindFirstChild("Label"))
+		or (model:FindFirstChild("Head") and model.Head:FindFirstChild("Label"))
+	local bg = label and label:FindFirstChild("Bg")
+
 	-- Recolor on owner change or first build
 	if newlyCreated or last.ownerTag ~= army.ownerTag then
 		local tint = TINT_BY_STATE[state]
@@ -1014,9 +1021,7 @@ local function reconcileOne(armyId)
 		if shako then shako.Color = applied end
 		-- Crest (works for both model types since Label is parented to Pole or Head): tint the plate
 		-- from the owner colour and stamp the 3-letter country tag.
-		local label = (model:FindFirstChild("Pole") and model.Pole:FindFirstChild("Label"))
-			or (model:FindFirstChild("Head") and model.Head:FindFirstChild("Label"))
-		local crest = label and label:FindFirstChild("Bg") and label.Bg:FindFirstChild("Crest")
+		local crest = bg and bg:FindFirstChild("Crest")
 		if crest then
 			-- Match the province-panel CountryBadge: HSV-darkened country colour.
 			local h, s, v = Color3.toHSV(color)
@@ -1043,9 +1048,6 @@ local function reconcileOne(armyId)
 	local stackExtra = stack and #stack.armyIds > 1 and (" +" .. (#stack.armyIds - 1)) or ""
 
 	if newlyCreated or last.count ~= count or last.stackExtra ~= stackExtra then
-		local label = (model:FindFirstChild("Pole") and model.Pole:FindFirstChild("Label"))
-			or (model:FindFirstChild("Head") and model.Head:FindFirstChild("Label"))
-		local bg = label and label:FindFirstChild("Bg")
 		local countLbl = bg and bg:FindFirstChild("CountLabel")
 		if countLbl then
 			local menText = abbrevMen(count * REGIMENT_STRENGTH)
@@ -1055,9 +1057,7 @@ local function reconcileOne(armyId)
 
 	-- State icon + tint + pulse + animation
 	if newlyCreated or last.state ~= state then
-		local label = (model:FindFirstChild("Pole") and model.Pole:FindFirstChild("Label"))
-			or (model:FindFirstChild("Head") and model.Head:FindFirstChild("Label"))
-		local icon = label and label:FindFirstChild("Bg") and label.Bg:FindFirstChild("StateIcon")
+		local icon = bg and bg:FindFirstChild("StateIcon")
 		if icon then icon.Text = STATE_ICON[state] or "" end
 		local tint = TINT_BY_STATE[state]
 		local applied = tint and color:Lerp(tint, 0.4) or color
@@ -1072,9 +1072,7 @@ local function reconcileOne(armyId)
 	-- On-map overhead extras: entrenchment as a shovel glyph + level, and the capture progress bar.
 	-- Cheap (a few writes); refreshed every reconcile so both track live deltas.
 	do
-		local vlabel = (model:FindFirstChild("Pole") and model.Pole:FindFirstChild("Label"))
-			or (model:FindFirstChild("Head") and model.Head:FindFirstChild("Label"))
-		local vbg = vlabel and vlabel:FindFirstChild("Bg")
+		local vbg = bg
 		if vbg then
 			-- Declutter: the morale/org/entrenchment/capture detail bars are hidden by default and reveal
 			-- ONLY when this unit is selected or in active combat -- so a screen full of banners stays
@@ -1156,8 +1154,6 @@ local function reconcileOne(armyId)
 	local hl = model:FindFirstChild("Selection")
 	if hl then hl.Enabled = (selectedArmyId == armyId) or (selectedArmyIds[armyId] == true) end
 
-	local label = (model:FindFirstChild("Pole") and model.Pole:FindFirstChild("Label"))
-		or (model:FindFirstChild("Head") and model.Head:FindFirstChild("Label"))
 	if label then label.Enabled = true end
 
 	if newlyCreated then
@@ -1440,7 +1436,8 @@ function ArmyView.init()
 		do
 			local cam = workspace.CurrentCamera
 			local zoom = CameraController.getZoom and CameraController.getZoom()
-			if cam and type(zoom) == "number" then
+			-- perf: nothing to size/enable when no tokens exist -- skip the whole pass.
+			if cam and type(zoom) == "number" and next(armyParts) ~= nil then
 				local camCF = cam.CFrame
 				local camMoved = camCF ~= lastLabelCamCF
 				lastLabelCamCF = camCF
@@ -1459,7 +1456,10 @@ function ArmyView.init()
 						end
 					end
 					if refs then
-						refs.bb.Enabled = visible -- cheap; every frame so it overrides reconcile's enable
+						-- perf: only write Enabled when it actually flips (avoids a property write + its
+						-- change/replication work every frame). Still runs each frame so it overrides
+						-- reconcile's unconditional enable while zoomed out.
+						if refs.bb.Enabled ~= visible then refs.bb.Enabled = visible end
 						if visible and (camMoved or isNew) then
 							local dist = math.max((camPos - model:GetPivot().Position).Magnitude, 1)
 							local f = BANNER_SCALE * LABEL_REF_DISTANCE / dist

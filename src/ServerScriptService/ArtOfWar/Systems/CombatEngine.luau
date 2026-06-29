@@ -60,18 +60,21 @@ local function slotSide(side, width, regStrength)
 	for _, f in ipairs(side.formations or {}) do
 		for _, u in ipairs(f.units or {}) do
 			local c = num(u.count, 0)
-			if c > 0 then table.insert(slots, { f = f, u = u, count = c }) end
+			if c > 0 then
+				-- perf: precompute sort value + tie-break keys once (was recomputed per comparator call)
+				local cw = math.max(1, num(u.combatWidth, 2))
+				table.insert(slots, {
+					f = f, u = u, count = c,
+					cv = (num(u.attack, 0) + num(u.defense, 0)) / cw,
+					fId = tostring(f.id), tId = tostring(u.typeId),
+				})
+			end
 		end
 	end
 	table.sort(slots, function(a, b)
-		local cwA = math.max(1, num(a.u.combatWidth, 2))
-		local cwB = math.max(1, num(b.u.combatWidth, 2))
-		local cvA = (num(a.u.attack, 0) + num(a.u.defense, 0)) / cwA
-		local cvB = (num(b.u.attack, 0) + num(b.u.defense, 0)) / cwB
-		if cvA ~= cvB then return cvA > cvB end
-		local ia, ib = tostring(a.f.id), tostring(b.f.id)
-		if ia ~= ib then return ia < ib end
-		return tostring(a.u.typeId) < tostring(b.u.typeId)
+		if a.cv ~= b.cv then return a.cv > b.cv end
+		if a.fId ~= b.fId then return a.fId < b.fId end
+		return a.tId < b.tId
 	end)
 	local remaining = width
 	for _, s in ipairs(slots) do

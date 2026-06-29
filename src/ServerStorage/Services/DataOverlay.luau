@@ -894,31 +894,6 @@ function DataOverlay.applyTo(bundle)
 		end
 	end
 
-	if bundle.provinces then
-		for id, rec in pairs(cache.data[KIND_PROVINCES]) do
-			local nid = tonumber(id) or id
-			if isTombstone(rec) then
-				if allowDelete[KIND_PROVINCES] then
-					bundle.provinces[nid] = nil
-				end
-			else
-				local incoming = rec
-				if type(rec) == "table" then
-					local owner = rec.ownerTag
-					if rec.controllerTag == nil or rec.cores == nil then
-						incoming = table.clone(rec)
-						if incoming.controllerTag == nil then
-							incoming.controllerTag = owner
-						end
-						if incoming.cores == nil then
-							incoming.cores = (owner and owner ~= "NONE") and { owner } or {}
-						end
-					end
-				end
-				bundle.provinces[nid] = rawMerge(sourceProvinces[nid], incoming)
-			end
-		end
-	end
 	if bundle.eu4Map then
 		for id, part in pairs(cache.data[KIND_EU4MAP]) do
 			local nid = tonumber(id) or id
@@ -987,10 +962,32 @@ function DataOverlay.applyTo(bundle)
 		end
 	end
 
+	-- perf: merge + ref-validate provinces in a SINGLE walk (was two passes over cache.data).
+	-- This block is intentionally placed AFTER the country/culture/religion/etc. merges so that
+	-- validateRefs sees the same fully-merged bundle.* ref tables it did when validation was a
+	-- separate trailing pass — result is identical, the provinces table is just walked once.
 	if bundle.provinces then
 		for id, rec in pairs(cache.data[KIND_PROVINCES]) do
-			if not isTombstone(rec) then
-				local nid = tonumber(id) or id
+			local nid = tonumber(id) or id
+			if isTombstone(rec) then
+				if allowDelete[KIND_PROVINCES] then
+					bundle.provinces[nid] = nil
+				end
+			else
+				local incoming = rec
+				if type(rec) == "table" then
+					local owner = rec.ownerTag
+					if rec.controllerTag == nil or rec.cores == nil then
+						incoming = table.clone(rec)
+						if incoming.controllerTag == nil then
+							incoming.controllerTag = owner
+						end
+						if incoming.cores == nil then
+							incoming.cores = (owner and owner ~= "NONE") and { owner } or {}
+						end
+					end
+				end
+				bundle.provinces[nid] = rawMerge(sourceProvinces[nid], incoming)
 				validateRefs(
 					bundle.provinces[nid],
 					sourceProvinces[nid],

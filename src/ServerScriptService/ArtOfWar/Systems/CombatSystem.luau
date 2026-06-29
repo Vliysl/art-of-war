@@ -2,6 +2,15 @@ local CombatSystem = {}
 
 local ctx
 
+-- perf: provinceId -> battleId index so getBattleAt is O(1) instead of an
+-- O(battles) linear scan on every army arrival. Maintained from the canonical
+-- battle lifecycle channels (BattleStarted/BattleResolved published by
+-- BattleManager.startBattle/endBattle -- the ONLY battle create/end sites; a
+-- battle's provinceId is immutable, so joinBattle/tickBattle updates never move
+-- it). The index stores ids and getBattleAt resolves the live record, so a
+-- missing/stale entry degrades to nil exactly like the old scan.
+local battleIdByProvince = {}
+
 local function tickBattles()
 	if not ctx.BattleManager then return end
 	-- Snapshot ids to avoid mutation-during-iteration
@@ -16,8 +25,13 @@ local function tickBattles()
 end
 
 local function getBattleAt(provinceId)
-	for _, b in ctx.WorldState.allBattles() do
-		if b.provinceId == provinceId then return b end
+	-- perf: O(1) index lookup (see battleIdByProvince). Resolve to the live record
+	-- and self-heal a stale entry so behaviour matches the old full scan exactly.
+	local id = battleIdByProvince[provinceId]
+	if id then
+		local b = ctx.WorldState.getBattle(id)
+		if b and b.provinceId == provinceId then return b end
+		battleIdByProvince[provinceId] = nil
 	end
 	return nil
 end
@@ -113,6 +127,26 @@ function CombatSystem.register(context)
 	}
 	context.CombatSystem = api
 	for k, v in pairs(api) do CombatSystem[k] = v end
+
+	-- perf: maintain the provinceId->battleId index from the canonical battle
+	-- lifecycle channels. These fire AFTER WorldState.setBattle (EventBus drains
+	-- synchronously), so the index is consistent with the store by the time any
+	-- getBattleAt caller (onArmyArrival) runs. BattleStarted/BattleResolved are
+	-- the only battle create/end sites; provinceId never changes thereafter.
+	context.EventBus.subscribe(context.Channels.BattleStarted, function(payload)
+		if payload and payload.provinceId and payload.battleId then
+			battleIdByProvince[payload.provinceId] = payload.battleId
+		end
+	end)
+	context.EventBus.subscribe(context.Channels.BattleResolved, function(payload)
+		if payload and payload.provinceId then
+			-- Only clear if this resolved battle is the one we have indexed, so a
+			-- later same-province battle (already reindexed by BattleStarted) is kept.
+			if not payload.battleId or battleIdByProvince[payload.provinceId] == payload.battleId then
+				battleIdByProvince[payload.provinceId] = nil
+			end
+		end
+	end)
 
 	context.TickScheduler.register({
 		id = "CombatSystem",

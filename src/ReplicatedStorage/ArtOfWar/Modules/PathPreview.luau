@@ -37,8 +37,12 @@ local lanes = {} -- [key] = { key, folder, lines, lastFrom, lastTo, inFlight, se
 -- army, so a preview can never be left orphaned by a missed teardown event.
 local desiredTo = nil
 local reconcileConn = nil
+local selectionConn = nil
 local reconcileAccum = 0
-local RECONCILE_INTERVAL = 0.1
+-- perf: backstop orphan sweep runs at 5Hz (was 10Hz) — it only DESTROYS invalid lanes, never creates
+-- them, and normal teardown still flows synchronously through showMany/clear. Selection changes
+-- reconcile immediately (selectionConn) so responsiveness is unchanged despite the slower poll.
+local RECONCILE_INTERVAL = 0.2
 
 local function ensurePreviewFolder()
 	mapFolder = workspace:FindFirstChild("ArtOfWarMap")
@@ -221,6 +225,13 @@ function PathPreview.init()
 			reconcileLanes()
 		end)
 	end
+	-- perf: sweep orphaned lanes the instant the selection changes so the slower poll above adds no
+	-- visible latency (deselect/move-issued tears the lane down immediately, not up to 0.2s later).
+	if not selectionConn and ArmyView.onArmySelected then
+		selectionConn = ArmyView.onArmySelected(function()
+			reconcileLanes()
+		end)
+	end
 end
 
 -- Show one preview per request to the hovered destination. requests = { {id=key, from=provinceId}, ... }
@@ -258,6 +269,7 @@ end
 
 function PathPreview.destroy()
 	if reconcileConn then reconcileConn:Disconnect(); reconcileConn = nil end
+	if selectionConn then selectionConn(); selectionConn = nil end -- perf: unsubscribe selection hook
 	PathPreview.clear()
 	if previewFolder and previewFolder.Parent then previewFolder:Destroy() end
 	previewFolder = nil

@@ -21,23 +21,59 @@ local function clampUnrest(v)
 	return math.clamp(v, ctx.WorldConstants.UnrestMin, ctx.WorldConstants.UnrestMax)
 end
 
+-- perf: per-tick memo of tag -> max raw war-exhaustion, built ONCE per unrest tick (one pass over
+-- wars) so the country loop doesn't rescan all wars per country (was O(countries x wars)). Set by
+-- buildWarExhaustionByTag() at the top of tick(); nil outside a tick (public-API path falls back to
+-- the full scan). Per-tick only — no cross-tick cache, so no invalidation risk.
+local warExhaustionByTag
+
+-- One pass over active (non-rebel) wars, accumulating per-tag max raw exhaustion. Mirrors the
+-- exact filter/accumulate of the old per-country scan so per-tag values are identical.
+local function buildWarExhaustionByTag()
+	local byTag = {}
+	if ctx.WorldState.allWars then
+		for _, war in ctx.WorldState.allWars() do
+			if war.status == "active"
+				and war.attackerTag and war.attackerTag:sub(1, 4) ~= "REB_"
+				and war.defenderTag and war.defenderTag:sub(1, 4) ~= "REB_"
+			then
+				local atk = war.attackerExhaustion or 0
+				if atk > (byTag[war.attackerTag] or 0) then
+					byTag[war.attackerTag] = atk
+				end
+				local def = war.defenderExhaustion or 0
+				if def > (byTag[war.defenderTag] or 0) then
+					byTag[war.defenderTag] = def
+				end
+			end
+		end
+	end
+	return byTag
+end
+
 -- Max exhaustion this country carries across its active (non-rebel) wars, normalized 0..1.
 -- Rebel ("REB_") wars are excluded so a rebellion's own war-exhaustion can't feed back into the
 -- unrest that spawned it (runaway-loop guard).
 local function warExhaustion01(tag)
-	if not ctx.WorldState.allWars then
-		return 0
-	end
-	local maxEx = 0
-	for _, war in ctx.WorldState.allWars() do
-		if war.status == "active"
-			and war.attackerTag and war.attackerTag:sub(1, 4) ~= "REB_"
-			and war.defenderTag and war.defenderTag:sub(1, 4) ~= "REB_"
-		then
-			if war.attackerTag == tag then
-				maxEx = math.max(maxEx, war.attackerExhaustion or 0)
-			elseif war.defenderTag == tag then
-				maxEx = math.max(maxEx, war.defenderExhaustion or 0)
+	-- perf: read the per-tick memo when in a tick; otherwise (public-API path) full-scan as before.
+	local maxEx
+	if warExhaustionByTag then
+		maxEx = warExhaustionByTag[tag] or 0
+	else
+		if not ctx.WorldState.allWars then
+			return 0
+		end
+		maxEx = 0
+		for _, war in ctx.WorldState.allWars() do
+			if war.status == "active"
+				and war.attackerTag and war.attackerTag:sub(1, 4) ~= "REB_"
+				and war.defenderTag and war.defenderTag:sub(1, 4) ~= "REB_"
+			then
+				if war.attackerTag == tag then
+					maxEx = math.max(maxEx, war.attackerExhaustion or 0)
+				elseif war.defenderTag == tag then
+					maxEx = math.max(maxEx, war.defenderExhaustion or 0)
+				end
 			end
 		end
 	end
@@ -116,6 +152,9 @@ local function tick()
 	local relevant = ctx.PlayerAuthority and ctx.PlayerAuthority.relevantSet and ctx.PlayerAuthority.relevantSet() or nil
 	local wc = ctx.WorldConstants
 	local day = currentDay()
+	-- perf: build the war-exhaustion memo once for this tick; cleared after the loop so the
+	-- public-API targetUnrest() path keeps full-scanning (it has no per-tick memo).
+	warExhaustionByTag = buildWarExhaustionByTag()
 	for tag, country in ctx.WorldState.allCountries() do
 		if relevant and not relevant[tag] then
 			continue
@@ -149,6 +188,7 @@ local function tick()
 			end
 		end
 	end
+	warExhaustionByTag = nil -- perf: drop the per-tick memo so the public-API path full-scans
 end
 
 function UnrestSystem.register(context)

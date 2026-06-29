@@ -219,8 +219,9 @@ function ProvinceDetailPanel.create(parent, onClose, callbacks)
 	callbacks = callbacks or {}
 
 	-- Live recruit-progress bars. Each entry: { fill, timeLbl, queuedAt, completesAt }.
-	-- A single RenderStepped loop re-reads SimClock each frame so bars advance smoothly
+	-- A single Heartbeat loop (0.2s accumulator) re-reads SimClock so bars advance smoothly
 	-- between the 1.5s state broadcasts and stay correct at any game speed (or paused).
+	local panel  -- perf: forward-declared so the live-tick loop can gate on panel.Visible
 	local liveTickets = {}
 	local liveTickConn = nil
 
@@ -228,11 +229,13 @@ function ProvinceDetailPanel.create(parent, onClose, callbacks)
 		liveTickets = {}
 	end
 
-	local function refreshLiveTicket(entry, simNow)
+	local function refreshLiveTicket(entry, simNow, updateText)
 		local span = math.max(0.0001, (entry.completesAt or 0) - (entry.queuedAt or 0))
 		local progress = math.clamp((simNow - (entry.queuedAt or 0)) / span, 0, 1)
 		entry.fill.Size = UDim2.fromScale(progress, 1)
-		if entry.timeLbl then
+		-- perf: text changes are quantized to ~0.5s by the caller (updateText), the
+		-- bar fill itself refreshes on the faster ~0.2s cadence.
+		if updateText ~= false and entry.timeLbl then
 			local secsPerTick = WorldConstants.SecondsPerSimTick or 1.5
 			local remainingSim = math.max(0, (entry.completesAt or 0) - simNow)
 			local realSecs = remainingSim * secsPerTick / math.max(0.0001, SimClock.getSpeed() or 1)
@@ -248,21 +251,35 @@ function ProvinceDetailPanel.create(parent, onClose, callbacks)
 		end
 	end
 
+	-- perf: a progress bar doesn't need 60Hz. Drive fills from a ~0.2s Heartbeat
+	-- accumulator (was every RenderStepped frame) and quantize the time text to
+	-- ~0.5s. Skip entirely while the panel is hidden — the values are purely
+	-- derived from SimClock, so a coarser cadence is visually equivalent.
+	local BAR_INTERVAL = 0.2
+	local TEXT_INTERVAL = 0.5
+	local barAccum = 0
+	local textAccum = 0
 	local function ensureLiveTickLoop()
 		if liveTickConn then return end
-		liveTickConn = RunService.RenderStepped:Connect(function()
-			if #liveTickets == 0 then return end
+		liveTickConn = RunService.Heartbeat:Connect(function(dt)
+			if not panel.Visible or #liveTickets == 0 then return end
+			barAccum += dt
+			if barAccum < BAR_INTERVAL then return end
+			barAccum = 0
+			textAccum += dt
+			local doText = textAccum >= TEXT_INTERVAL
+			if doText then textAccum = 0 end
 			local simNow = SimClock.now()
 			if not simNow then return end
 			for _, entry in ipairs(liveTickets) do
 				if entry.fill and entry.fill.Parent then
-					refreshLiveTicket(entry, simNow)
+					refreshLiveTicket(entry, simNow, doText)
 				end
 			end
 		end)
 	end
 
-	local panel = UIBuilder.panel(parent, {
+	panel = UIBuilder.panel(parent, {
 		Name = "ProvinceDetailPanel",
 		Size = UDim2.fromOffset(PANEL_W, PANEL_H),
 		Position = UDim2.new(1, -14, 0, UIStyle.Size.TopBarH + 14),

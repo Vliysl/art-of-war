@@ -29,8 +29,14 @@ local COLOR_FILL = Color3.fromRGB(245, 205, 70)   -- yellow "charging" fill
 
 local mapFolder, provincesFolder, arrowsFolder
 local conn
+local armiesSub, snapshotSub
 local arrows = {}    -- [armyId] = { sig = string, statics = { Part, ... }, fill = Part }
 local centerCache = {}
+-- perf: index of armyIds that currently have an active server movement, maintained from the
+-- "armies" replication deltas (the only place army.movement is created/cleared). The per-frame
+-- loop iterates this tiny set instead of scanning ALL armies (allArmies()) at 60Hz. Ownership is
+-- still re-checked per-frame against the live cache, so behaviour is identical to the full scan.
+local movers = {}    -- [armyId] = true
 
 local function ensureFolders()
 	if arrowsFolder and arrowsFolder.Parent then return true end
@@ -156,14 +162,46 @@ local function updateArrow(armyId, army, now)
 	end
 end
 
+-- perf: rebuild the movers index from scratch (used on full snapshots, which replace cache.armies
+-- wholesale instead of firing per-army deltas).
+local function rebuildMovers()
+	table.clear(movers)
+	for armyId, army in pairs(ClientStateCache.allArmies()) do
+		if army.movement then movers[armyId] = true end
+	end
+end
+
+-- perf: keep the movers index in lockstep with one army's replicated state. army.movement is only
+-- ever created/cleared via an "armies" delta (or removal -> record == nil), so this is the complete
+-- invalidation surface for the index.
+local function syncMover(record, path)
+	-- Army ids are string keys (e.g. "army_FRA_1"); use the raw match so the index key is byte-equal
+	-- to the cache key (no numeric coercion).
+	local armyId = path:match("^armies%.(.+)$")
+	if armyId == nil then return end
+	if type(record) == "table" and record.movement then
+		movers[armyId] = true
+	else
+		movers[armyId] = nil
+	end
+end
+
 function MoveArrowView.init()
 	if conn then return end
+	rebuildMovers()
+	-- Maintain the movers index off the existing replication stream (no per-frame allArmies scan).
+	armiesSub = ClientStateCache.onChangePrefix("armies", syncMover)
+	snapshotSub = ClientStateCache.onChange("snapshot", rebuildMovers)
 	conn = RunService.RenderStepped:Connect(function()
+		-- perf: nothing to draw and nothing to tear down -> skip the whole frame.
+		if next(movers) == nil and next(arrows) == nil then return end
 		if not ensureFolders() then return end
 		local now = SimClock.now()
 		local active = {}
-		for armyId, army in pairs(ClientStateCache.allArmies()) do
-			if army.movement and isLocallyOwned(army.ownerTag) then
+		-- Iterate only armies known to have a movement, not the entire army table.
+		for armyId in pairs(movers) do
+			local army = ClientStateCache.getArmy(armyId)
+			if army and army.movement and isLocallyOwned(army.ownerTag) then
 				active[armyId] = true
 				updateArrow(armyId, army, now)
 			end
@@ -182,6 +220,10 @@ end
 
 function MoveArrowView.destroy()
 	if conn then conn:Disconnect(); conn = nil end
+	-- perf: drop the movers-index subscriptions so they stop firing after teardown.
+	if armiesSub then armiesSub(); armiesSub = nil end
+	if snapshotSub then snapshotSub(); snapshotSub = nil end
+	table.clear(movers)
 	for armyId in pairs(arrows) do destroyArrow(armyId) end
 	if arrowsFolder and arrowsFolder.Parent then arrowsFolder:Destroy() end
 	arrowsFolder = nil
