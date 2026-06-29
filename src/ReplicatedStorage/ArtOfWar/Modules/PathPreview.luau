@@ -6,9 +6,17 @@
 -- traversability beginMovePath uses) and just renders it. Province world positions are resolved by
 -- the stable part NAME via ProvincePositions (never the runtime province_id attribute).
 --
--- Multi-select: one preview "lane" per distinct ORIGIN province (so a multi-selection shows one route
--- per origin, matching how each committed move gets its own MoveArrowView arrow). Each lane has its own
--- single-flight guard + coalescing + watchdog, so a slow/hung reply for one lane can't wedge the others.
+-- DECLARATIVE RECONCILER (mirrors MoveArrowView): the desired state is data -- desiredTo (the last
+-- valid hovered destination) plus the live army selection. A single idempotent reconcile() is the ONLY
+-- thing that creates/destroys lanes and dispatches route requests; it is safe to call from the hover
+-- entry points, the selection hook, every replicated army delta, and a slow Heartbeat backstop. Every
+-- async continuation is guarded by an identity + generation check (lanes[key] == lane and lane.gen ==
+-- gen), so a torn-down lane can never render or resurrect itself -- which is what makes orphaned
+-- previews structurally impossible. Multi-select shows one "lane" per distinct ORIGIN province.
+--
+-- Hover policy: a transient hover over no province (border / sea tile / unmapped wilderness) does NOT
+-- clear -- the last valid route is kept until a new valid target, a deselect, or a committed move. A
+-- short-TTL route cache makes re-hovering a recent destination instant (no server round-trip).
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MoveArrowRender = require(script.Parent:WaitForChild("MoveArrowRender"))
@@ -27,22 +35,27 @@ local PATH_COLOR_HOSTILE = Color3.fromRGB(220, 80, 80)
 local PATH_COLOR_BLOCKED = Color3.fromRGB(180, 90, 90)
 local INVOKE_TIMEOUT = 5 -- seconds before a lane's in-flight guard is force-released
 local MAX_LANES = 12 -- bound the number of simultaneous hover requests during a big multi-select
+local RECONCILE_INTERVAL = 0.5 -- backstop only; selection/army-delta events carry the latency-sensitive cases
+local ROUTE_TTL = 4 -- seconds a cached (from,to) route stays fresh (instant re-hover, no round-trip)
 
 local mapFolder = nil
 local previewFolder = nil
 local remoteFn = nil
-local lanes = {} -- [key] = { key, folder, lines, lastFrom, lastTo, inFlight, seq, pendingFrom, pendingTo }
--- Reconcile backstop (see reconcileLanes): desiredTo is the province currently being hover-previewed
--- (set by showMany, cleared by clear). The loop drops any lane that no longer maps to a live selected
--- army, so a preview can never be left orphaned by a missed teardown event.
+-- [key] = { key, folder, lines, shownFrom, shownTo, reqFrom, reqTo, inFlight, gen }
+-- key = origin province id. shownFrom/shownTo = what is actually rendered. reqFrom/reqTo = the last
+-- target dispatched (success OR failure), so a reconcile triggered by an unrelated army delta does not
+-- re-fire the same request. gen = the single cancel token bumped on every dispatch/cache-hit/destroy.
+local lanes = {}
+-- desiredTo is the province currently being hover-previewed (set by showMany, cleared by clear). The
+-- desired ORIGINS are derived live from the selection inside reconcile(), so disband / move / deselect
+-- self-heal automatically with no missable teardown event.
 local desiredTo = nil
 local reconcileConn = nil
 local selectionConn = nil
+local armiesSub = nil
+local snapshotSub = nil
 local reconcileAccum = 0
--- perf: backstop orphan sweep runs at 5Hz (was 10Hz) — it only DESTROYS invalid lanes, never creates
--- them, and normal teardown still flows synchronously through showMany/clear. Selection changes
--- reconcile immediately (selectionConn) so responsiveness is unchanged despite the slower poll.
-local RECONCILE_INTERVAL = 0.2
+local routeCache = {} -- [cacheKey] = { nodes, color, expires }
 
 local function ensurePreviewFolder()
 	mapFolder = workspace:FindFirstChild("ArtOfWarMap")
@@ -83,6 +96,13 @@ local function clearLaneLines(lane)
 	lane.lines = {}
 end
 
+-- Color from the server reply (friendly / hostile / blocked). Shared by the live and cache render paths.
+local function colorFor(res)
+	if res.blocked then return PATH_COLOR_BLOCKED end
+	if res.hostile then return PATH_COLOR_HOSTILE end
+	return PATH_COLOR_FRIENDLY
+end
+
 -- Render a route (list of province ids) as the chunky ground arrow into this lane's folder. Positions
 -- come from ProvincePositions (part-name keyed), so they are correct from the first frame.
 local function renderLane(lane, nodes, color)
@@ -109,109 +129,130 @@ local function renderLane(lane, nodes, color)
 	end
 end
 
+local function cacheKey(fromId, toId)
+	return tostring(fromId) .. ">" .. tostring(toId)
+end
+
+local function cacheGet(fromId, toId)
+	local k = cacheKey(fromId, toId)
+	local entry = routeCache[k]
+	if not entry then return nil end
+	if os.clock() >= entry.expires then
+		routeCache[k] = nil
+		return nil
+	end
+	return entry
+end
+
+local function cachePut(fromId, toId, nodes, color)
+	routeCache[cacheKey(fromId, toId)] = { nodes = nodes, color = color, expires = os.clock() + ROUTE_TTL }
+end
+
 local function getLane(key)
 	local lane = lanes[key]
 	if not lane then
-		lane = { key = key, folder = nil, lines = {}, lastFrom = nil, lastTo = nil, inFlight = false, seq = 0 }
+		lane = {
+			key = key, folder = nil, lines = {},
+			shownFrom = nil, shownTo = nil, reqFrom = nil, reqTo = nil,
+			inFlight = false, gen = 0,
+		}
 		lanes[key] = lane
 	end
 	return lane
 end
 
+-- Fully neutralize a lane. Bumping gen invalidates any in-flight reply (its identity+gen guard fails),
+-- and clearing req/shown means a later reconcile re-evaluates from scratch. Because the lane is removed
+-- from `lanes`, no continuation can ever touch it again -> no orphan is possible.
 local function destroyLane(key)
 	local lane = lanes[key]
 	if not lane then return end
-	lane.seq += 1 -- invalidate any in-flight reply for this lane
+	lane.gen += 1
+	lane.inFlight = false
+	lane.shownFrom, lane.shownTo = nil, nil
+	lane.reqFrom, lane.reqTo = nil, nil
 	clearLaneLines(lane)
 	if lane.folder and lane.folder.Parent then lane.folder:Destroy() end
 	lanes[key] = nil
 end
 
--- Run exactly one server request for a lane. lane.inFlight is held until this settles (reply OR
--- watchdog), so a hung reply can never permanently wedge the lane. Only the lane's latest seq draws.
+-- Run one server request for a lane. gen is the cancel token: the watchdog and the reply BOTH re-check
+-- that this lane is still the live one (lanes[key] == lane) and still this generation (lane.gen == gen)
+-- before touching anything. There is no settle()/pending re-dispatch path, so a reply can never
+-- resurrect a torn-down lane.
 local function dispatchLane(lane, fromId, toId)
 	local remote = ensureRemote()
-	if not remote then
-		clearLaneLines(lane)
-		return
-	end
+	if not remote then return end
+	lane.gen += 1
+	local gen, key = lane.gen, lane.key
 	lane.inFlight = true
-	lane.seq += 1
-	local seq = lane.seq
-	local settled = false
-	local function settle()
-		if settled then return end -- reply and watchdog race; first wins
-		settled = true
-		lane.inFlight = false
-		if lane.pendingTo then -- a newer target arrived while this was in flight
-			local f, t = lane.pendingFrom, lane.pendingTo
-			lane.pendingFrom, lane.pendingTo = nil, nil
-			dispatchLane(lane, f, t)
-		end
-	end
+	lane.reqFrom, lane.reqTo = fromId, toId
 	task.delay(INVOKE_TIMEOUT, function()
-		if not settled then
-			if seq == lane.seq then lane.lastFrom, lane.lastTo = nil, nil end
-			settle()
+		if lanes[key] == lane and lane.gen == gen then
+			lane.inFlight = false -- release the guard; a hung reply will be dropped by its gen check
 		end
 	end)
 	task.spawn(function()
 		local ok, res = pcall(function()
 			return remote:InvokeServer(fromId, toId)
 		end)
-		if seq == lane.seq then -- not superseded by a newer hover / clear for this lane
-			if ok and type(res) == "table" and res.ok == true and res.nodes and #res.nodes >= 2 then
-				local color = res.blocked and PATH_COLOR_BLOCKED
-					or (res.hostile and PATH_COLOR_HOSTILE or PATH_COLOR_FRIENDLY)
-				renderLane(lane, res.nodes, color)
-			else
-				clearLaneLines(lane)
-				lane.lastFrom, lane.lastTo = nil, nil -- let the next hover retry a failed target
-			end
+		if lanes[key] ~= lane or lane.gen ~= gen then return end -- superseded or torn down: drop silently
+		lane.inFlight = false
+		if ok and type(res) == "table" and res.ok == true and res.nodes and #res.nodes >= 2 then
+			local color = colorFor(res)
+			renderLane(lane, res.nodes, color)
+			lane.shownFrom, lane.shownTo = fromId, toId
+			cachePut(fromId, toId, res.nodes, color)
 		end
-		settle()
+		-- failure (no path / error): keep the last valid arrow on screen; reqFrom/reqTo stay set so a
+		-- reconcile from an unrelated army delta does not re-spam this dead target.
 	end)
 end
 
-local function showLane(key, fromId, toId)
+-- Ensure this lane is showing the route fromId->toId. No-op if it is already shown or already the
+-- in-flight/last-attempted target. Cache hits render synchronously (instant re-hover, no round-trip).
+local function ensureLane(key, fromId, toId)
+	if not fromId or not toId or fromId == toId then return end
 	local lane = getLane(key)
-	if not fromId or not toId or fromId == toId then
-		lane.seq += 1
-		lane.lastFrom, lane.lastTo, lane.pendingFrom, lane.pendingTo = nil, nil, nil, nil
-		clearLaneLines(lane)
-		return
-	end
-	if fromId == lane.lastFrom and toId == lane.lastTo then
-		return -- already showing / requesting this exact route
-	end
-	lane.lastFrom, lane.lastTo = fromId, toId
-	if lane.inFlight then
-		lane.pendingFrom, lane.pendingTo = fromId, toId
+	if lane.shownFrom == fromId and lane.shownTo == toId then return end
+	if lane.reqFrom == fromId and lane.reqTo == toId then return end
+	local hit = cacheGet(fromId, toId)
+	if hit then
+		lane.gen += 1 -- supersede any in-flight reply for an older target
+		lane.inFlight = false
+		lane.reqFrom, lane.reqTo = fromId, toId
+		renderLane(lane, hit.nodes, hit.color)
+		lane.shownFrom, lane.shownTo = fromId, toId
 		return
 	end
 	dispatchLane(lane, fromId, toId)
 end
 
--- Robust orphan sweep, independent of any teardown event. A preview lane is legitimate ONLY while a
--- destination is being hovered (desiredTo) AND its origin province still hosts a currently-selected,
--- alive, not-yet-moving army. Any other state (deselect, army moved/destroyed/merged, hover ended,
--- a move was issued) leaves the lane invalid and it is destroyed within one tick. This is the real fix:
--- single-event teardown is missable (e.g. the stationary-hover gate never re-fires updatePathPreview),
--- but the reconcile cannot be missed. Mirrors MoveArrowView's per-frame reconcile.
-local function reconcileLanes()
-	if not next(lanes) then return end
+-- The single mutation entry point. Desired = { one lane per distinct origin of a live, selected,
+-- non-moving army, routed to desiredTo }. Drops every lane not in that set and ensures every lane that
+-- is. Idempotent and cheap; safe to call from any event. A disbanded army (getArmy == nil) or a moving
+-- army (army.movement) contributes no valid origin, so its lane is dropped the same frame.
+local function reconcile()
+	if desiredTo == nil and next(lanes) == nil then return end
 	local valid = {}
-	if desiredTo ~= nil then
-		local sel = (ArmyView.getSelectedArmyIds and ArmyView.getSelectedArmyIds()) or {}
+	if desiredTo ~= nil and ArmyView.getSelectedArmyIds then
+		local sel = ArmyView.getSelectedArmyIds() or {}
+		local n = 0
 		for _, armyId in ipairs(sel) do
+			if n >= MAX_LANES then break end
 			local army = ClientStateCache.getArmy(armyId)
-			if army and not army.movement and army.provinceId ~= nil then
+			if army and not army.movement and army.provinceId ~= nil
+				and army.provinceId ~= desiredTo and not valid[army.provinceId] then
 				valid[army.provinceId] = true
+				n += 1
 			end
 		end
 	end
 	for key in pairs(lanes) do
 		if not valid[key] then destroyLane(key) end
+	end
+	for key in pairs(valid) do
+		ensureLane(key, key, desiredTo)
 	end
 end
 
@@ -222,58 +263,52 @@ function PathPreview.init()
 			reconcileAccum += dt
 			if reconcileAccum < RECONCILE_INTERVAL then return end
 			reconcileAccum = 0
-			reconcileLanes()
+			reconcile()
 		end)
 	end
-	-- perf: sweep orphaned lanes the instant the selection changes so the slower poll above adds no
-	-- visible latency (deselect/move-issued tears the lane down immediately, not up to 0.2s later).
+	-- State-driven teardown (mirrors MoveArrowView): selection changes and replicated army deltas
+	-- (disband fires armies.<id> = nil; a move sets army.movement) reconcile immediately, so a stale
+	-- preview is gone within a frame rather than up to one backstop interval later.
 	if not selectionConn and ArmyView.onArmySelected then
-		selectionConn = ArmyView.onArmySelected(function()
-			reconcileLanes()
-		end)
+		selectionConn = ArmyView.onArmySelected(function() reconcile() end)
+	end
+	if not armiesSub and ClientStateCache.onChangePrefix then
+		armiesSub = ClientStateCache.onChangePrefix("armies", function() reconcile() end)
+	end
+	if not snapshotSub and ClientStateCache.onChange then
+		snapshotSub = ClientStateCache.onChange("snapshot", function() reconcile() end)
 	end
 end
 
 -- Show one preview per request to the hovered destination. requests = { {id=key, from=provinceId}, ... }
--- (callers pass one entry per distinct origin province). Lanes not present in `requests` are dropped.
-function PathPreview.showMany(requests, toProvinceId)
-	requests = requests or {}
-	desiredTo = toProvinceId -- the reconcile backstop compares lanes against this + the live selection
-	local active = {}
-	local n = 0
-	for _, r in ipairs(requests) do
-		if n >= MAX_LANES then break end
-		if r.id ~= nil and r.from ~= nil then
-			n += 1
-			active[r.id] = true
-			showLane(r.id, r.from, toProvinceId)
-		end
-	end
-	for key in pairs(lanes) do
-		if not active[key] then destroyLane(key) end
-	end
+-- is accepted for call-site compatibility, but reconcile() authoritatively recomputes the origins from
+-- the live selection -- that is what keeps the preview correct through disband/move/deselect.
+function PathPreview.showMany(_requests, toProvinceId)
+	desiredTo = toProvinceId
+	reconcile()
 end
 
 -- Back-compat single-route API (used by the legacy UIController). ClientStateCache/ownerTag are
 -- accepted for call-site compatibility but unused -- the server resolves owner/traversability.
 function PathPreview.show(fromProvinceId, toProvinceId, _ClientStateCache, _ownerTag)
-	PathPreview.showMany({ { id = "_single", from = fromProvinceId } }, toProvinceId)
+	PathPreview.showMany({ { id = fromProvinceId, from = fromProvinceId } }, toProvinceId)
 end
 
 function PathPreview.clear()
 	desiredTo = nil
-	for key in pairs(lanes) do
-		destroyLane(key)
-	end
+	reconcile()
 end
 
 function PathPreview.destroy()
 	if reconcileConn then reconcileConn:Disconnect(); reconcileConn = nil end
-	if selectionConn then selectionConn(); selectionConn = nil end -- perf: unsubscribe selection hook
+	if selectionConn then selectionConn(); selectionConn = nil end
+	if armiesSub then armiesSub(); armiesSub = nil end
+	if snapshotSub then snapshotSub(); snapshotSub = nil end
 	PathPreview.clear()
 	if previewFolder and previewFolder.Parent then previewFolder:Destroy() end
 	previewFolder = nil
 	remoteFn = nil
+	table.clear(routeCache)
 end
 
 return PathPreview

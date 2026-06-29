@@ -630,26 +630,30 @@ function HudWiring.start(modules)
 			return
 		end
 		local sel = selectedArmies()
-		local toId = part and part:GetAttribute("province_id")
-		if sel and #sel > 0 and toId then
-			-- One preview per distinct ORIGIN province (armies stacked on the same tile share a route),
-			-- so multi-select shows every selected unit's path, not just the first.
-			local seen, requests = {}, {}
-			for _, armyId in ipairs(sel) do
-				local army = ClientStateCache.getArmy(armyId)
-				local fromId = army and army.provinceId
-				if fromId and not seen[fromId] then
-					seen[fromId] = true
-					requests[#requests + 1] = { id = fromId, from = fromId }
-				end
-			end
-			if #requests > 0 then
-				pcall(PathPreview.showMany, requests, toId)
-				return
+		if not sel or #sel == 0 then
+			-- Nothing selected -> nothing to preview. (Deselect/move-issued also clear explicitly elsewhere.)
+			if PathPreview.clear then PathPreview.clear() end
+			return
+		end
+		-- Resolve the destination via the SAME robust resolver the click/move path uses (the raw
+		-- province_id attribute is only stamped on ~45% of land parts). A nil id means a transient
+		-- hover-nil / sea tile / unmapped wilderness -> KEEP the last valid preview (do not blank it
+		-- while sweeping the cursor across tiles). "What you can preview" thus equals "what you can move to".
+		local _, toId = provinceFromPart(part)
+		if not toId then return end
+		-- One preview per distinct ORIGIN province (armies stacked on the same tile share a route),
+		-- so multi-select shows every selected unit's path, not just the first.
+		local seen, requests = {}, {}
+		for _, armyId in ipairs(sel) do
+			local army = ClientStateCache.getArmy(armyId)
+			local fromId = army and army.provinceId
+			if fromId and not seen[fromId] then
+				seen[fromId] = true
+				requests[#requests + 1] = { id = fromId, from = fromId }
 			end
 		end
-		if PathPreview.clear then
-			PathPreview.clear()
+		if #requests > 0 then
+			pcall(PathPreview.showMany, requests, toId)
 		end
 	end
 
