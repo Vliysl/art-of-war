@@ -851,6 +851,14 @@ local function buildModel(armyId, factionColor, dominantUnitId)
 	return model
 end
 
+-- Per-camera-mode token transparency. Command map shows tokens at a soft 0.25; field mode shows them
+-- fully (0). Both are < 1, so CanQuery stays true. Used by BOTH setCameraMode and the creation block so
+-- they can never diverge -- the bug was setCameraMode forcing command -> 1 (invisible) on a mode switch
+-- while creation used 0.25, so models vanished after a command->field->command round-trip.
+local function modeTransparency(mode)
+	return mode == "command" and 0.25 or 0
+end
+
 local function applyTransparency(model, target)
 	if not model then return end
 	-- Banner-pin parts
@@ -873,7 +881,7 @@ end
 local function setCameraMode(mode)
 	cameraMode = mode
 	for _, model in pairs(armyParts) do
-		applyTransparency(model, mode == "command" and 1 or 0)
+		applyTransparency(model, modeTransparency(mode))
 	end
 end
 
@@ -1165,7 +1173,7 @@ local function reconcileOne(armyId)
 	if label then label.Enabled = true end
 
 	if newlyCreated then
-		local target = cameraMode == "command" and 0.25 or 0
+		local target = modeTransparency(cameraMode)
 		local canQuery = target < 1
 		for _, partName in ipairs({"Base", "Pole", "Flag"}) do
 			local p = model:FindFirstChild(partName)

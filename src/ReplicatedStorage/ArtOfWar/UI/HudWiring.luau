@@ -870,8 +870,8 @@ function HudWiring.start(modules)
 		end)
 	end
 
-	-- X deselects the current army stack (X is otherwise unbound in the live HUD). gameProcessed
-	-- guards typing in TextBoxes so we never steal it from input fields.
+	-- X deselects the current army stack or, if none is selected, the selected province (X is otherwise
+	-- unbound in the live HUD). gameProcessed guards typing in TextBoxes so we never steal it from inputs.
 	UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		if gameProcessed then
 			return
@@ -880,15 +880,20 @@ function HudWiring.start(modules)
 			return
 		end
 		local sel = selectedArmies()
-		if not sel or #sel == 0 then
+		if sel and #sel > 0 then
+			if ArmyView and ArmyView.deselect then
+				ArmyView.deselect()
+			end
+			Hud.closeContext()
+			if PathPreview and PathPreview.clear then
+				PathPreview.clear()
+			end
 			return
 		end
-		if ArmyView and ArmyView.deselect then
-			ArmyView.deselect()
-		end
-		Hud.closeContext()
-		if PathPreview and PathPreview.clear then
-			PathPreview.clear()
+		-- No army selected: X also deselects a selected PROVINCE. clearSelection() fires the select
+		-- listener with nil, whose handler closes the context panel (parallels the empty-map click).
+		if ProvinceInteraction and ProvinceInteraction.getSelected and ProvinceInteraction.getSelected() then
+			ProvinceInteraction.clearSelection()
 		end
 	end)
 

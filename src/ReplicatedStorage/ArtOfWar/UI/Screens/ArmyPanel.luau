@@ -1229,8 +1229,8 @@ function ArmyPanel.create(ctx)
 		shell = "panel_medium_shell",
 		title = titleStr,
 		subtitle = subtitleStr,
-		anchorPoint = Vector2.new(1, 0),
-		position = UDim2.new(1, -16, 0, 16),
+		anchorPoint = Vector2.new(1, 1),
+		position = UDim2.new(1, -16, 1, -16),
 		size = UDim2.fromOffset(360, 0),
 		autoHeight = true,
 	})

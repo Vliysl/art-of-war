@@ -832,9 +832,10 @@ function ProvinceOverview.create(ctx)
 		shell = "panel_medium_shell",
 		title = prov.name or "Province",
 		subtitle = (prov.ownerName and (prov.ownerName .. "  \u{00B7}  ") or "") .. ("#" .. tostring(prov.id or "?")),
-		anchorPoint = Vector2.new(1, 0),
-		position = UDim2.new(1, -16, 0, 16),
-		size = UDim2.new(0, 380, 1, -132),
+		anchorPoint = Vector2.new(1, 1),
+		position = UDim2.new(1, -16, 1, -16),
+		size = UDim2.fromOffset(360, 0),
+		autoHeight = true,
 		tabs = owns and TABS or nil,
 		activeTab = owns and "information" or nil,
 		onTab = owns and function(key)

@@ -13,6 +13,7 @@ local aow = ReplicatedStorage:WaitForChild("ArtOfWar")
 local ClientStateCache = require(aow:WaitForChild("Modules"):WaitForChild("ClientStateCache"))
 local WorldConstants = require(aow:WaitForChild("Shared"):WaitForChild("WorldConstants"))
 local Countries = require(aow:WaitForChild("Data"):WaitForChild("Countries"))
+local ProvincePositions = require(aow:WaitForChild("Modules"):WaitForChild("ProvincePositions"))
 
 local PLATE_BG  = Color3.fromRGB(18, 12, 8)
 local HAIRLINE  = Color3.fromRGB(60, 40, 22)
@@ -25,8 +26,9 @@ local GOOD      = Color3.fromRGB(75, 183, 52)   -- local player winning
 local BAD       = Color3.fromRGB(190, 36, 26)   -- local player losing
 local NEUTRAL   = Color3.fromRGB(218, 168, 84)  -- gold (uninvolved / even)
 
-local LIFT = 52
+local LIFT = 1.2 -- scaled for the 2048 map (was 52, a pre-migration value that floated markers off-screen)
 local REQUIRED = WorldConstants.OccupationProgressRequired or 12
+local RING_SEGMENTS = 30 -- radial capture-gauge resolution (segments lit up to current progress)
 
 local markersFolder, mapFolder, provincesFolder
 local battleMarkers = {}
@@ -34,7 +36,6 @@ local siegeMarkers = {}
 local dirtyBattles = {}
 local dirtySieges = {}
 local pendingRetry = {}
-local provinceCenterCache = {}
 local heartbeatConn
 local battleSub, provinceSub, snapshotSub
 local started = false
@@ -54,28 +55,12 @@ local function ensureFolders()
 	return true
 end
 
-local function locateProvincePart(provinceId)
-	if not provincesFolder then
-		mapFolder = workspace:FindFirstChild("ArtOfWarMap")
-		provincesFolder = mapFolder and mapFolder:FindFirstChild("Provinces")
-	end
-	if not provincesFolder then return nil end
-	for _, part in provincesFolder:GetChildren() do
-		if part:IsA("BasePart") and part:GetAttribute("province_id") == provinceId then
-			return part
-		end
-	end
-	return nil
-end
-
+-- Resolve a province's top-centre world position by the STABLE part NAME (via ProvincePositions),
+-- NOT the runtime province_id attribute. The attribute is stamped on only ~45% of land parts and is
+-- the old serial id for ~6s after load -- the old attribute-scan resolver is why these markers never
+-- appeared after the 2048-map migration. ProvincePositions caches by name and self-heals on re-parent.
 local function provinceCenter(provinceId)
-	local cached = provinceCenterCache[provinceId]
-	if cached then return cached end
-	local part = locateProvincePart(provinceId)
-	if not part then return nil end
-	local center = Vector3.new(part.Position.X, part.Position.Y + part.Size.Y * 0.5 + LIFT, part.Position.Z)
-	provinceCenterCache[provinceId] = center
-	return center
+	return ProvincePositions.centerOf(provinceId, LIFT)
 end
 
 local function ownerColor(tag)
@@ -117,13 +102,6 @@ local function firstOwner(armyIds)
 		if army and army.ownerTag then return army.ownerTag end
 	end
 	return nil
-end
-
-local function hasBattleAt(provinceId)
-	for _, battle in pairs(ClientStateCache.allBattles()) do
-		if battle and battle.provinceId == provinceId then return true end
-	end
-	return false
 end
 
 local function localTag()
@@ -277,43 +255,78 @@ local function buildBattleMarker(center)
 		rightCount = rightCount, fill = fill, sig = nil, atkWorld = nil, defWorld = nil }
 end
 
-local function buildSiegeMarker(center)
+-- A world-space RADIAL capture gauge: a ring of segments (lit up to the current progress) around a
+-- circular plate that shows the percentage and the occupier. Asset-free (segments are tiny rounded
+-- Frames placed by angle), so it reads as a clean circular progress ring at any zoom.
+local function buildCaptureRing(center)
 	local anchor = makeAnchor(center)
-	local _, bg = makePlate(anchor, 152, 46)
+	local SIZE = 58
+	local C = SIZE * 0.5
+	local R = 24 -- segment ring radius (px)
 
-	txt(bg, {
-		Text = "SIEGE", TextColor3 = MUTED, TextSize = 9, Font = Enum.Font.GothamSemibold,
-		Size = UDim2.new(1, -12, 0, 11), Position = UDim2.fromOffset(8, 2),
-		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center,
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "CaptureRing"
+	bb.Size = UDim2.fromOffset(SIZE, SIZE)
+	bb.AlwaysOnTop = true
+	bb.LightInfluence = 0
+	bb.MaxDistance = 0
+	bb.StudsOffset = Vector3.new(0, 1.2, 0)
+	bb.Parent = anchor
+
+	local ring = Instance.new("Frame")
+	ring.Name = "Ring"
+	ring.Size = UDim2.fromScale(1, 1)
+	ring.BackgroundTransparency = 1
+	ring.Parent = bb
+
+	local segments = {}
+	for i = 1, RING_SEGMENTS do
+		local ang = math.rad((i - 1) / RING_SEGMENTS * 360 - 90) -- start at 12 o'clock, sweep clockwise
+		local seg = Instance.new("Frame")
+		seg.AnchorPoint = Vector2.new(0.5, 0.5)
+		seg.Position = UDim2.fromOffset(C + R * math.cos(ang), C + R * math.sin(ang))
+		seg.Size = UDim2.fromOffset(3, 7)
+		seg.Rotation = math.deg(ang) + 90 -- align the segment's long axis along the radius
+		seg.BackgroundColor3 = TRACK
+		seg.BorderSizePixel = 0
+		seg.Parent = ring
+		local sc = Instance.new("UICorner")
+		sc.CornerRadius = UDim.new(0, 1)
+		sc.Parent = seg
+		segments[i] = seg
+	end
+
+	local plate = Instance.new("Frame")
+	plate.Name = "Plate"
+	plate.AnchorPoint = Vector2.new(0.5, 0.5)
+	plate.Position = UDim2.fromScale(0.5, 0.5)
+	plate.Size = UDim2.fromOffset(40, 40)
+	plate.BackgroundColor3 = PLATE_BG
+	plate.BackgroundTransparency = 0.1
+	plate.BorderSizePixel = 0
+	plate.Parent = bb
+	local pc = Instance.new("UICorner")
+	pc.CornerRadius = UDim.new(0.5, 0)
+	pc.Parent = plate
+	local ps = Instance.new("UIStroke")
+	ps.Color = HAIRLINE
+	ps.Thickness = 1
+	ps.Transparency = 0.3
+	ps.Parent = plate
+
+	local pct = txt(plate, {
+		Text = "0%", TextSize = 16,
+		Size = UDim2.fromScale(1, 0.6), Position = UDim2.fromScale(0.5, 0.3), AnchorPoint = Vector2.new(0.5, 0.5),
+		TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center,
 	})
-	local name = txt(bg, {
-		Text = "—", TextSize = 14,
-		Size = UDim2.new(0.62, -8, 0, 16), Position = UDim2.fromOffset(8, 13),
-		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center,
+	local tag = txt(plate, {
+		Text = "\u{2014}", TextColor3 = MUTED, TextSize = 10,
+		Size = UDim2.fromScale(1, 0.3), Position = UDim2.fromScale(0.5, 0.76), AnchorPoint = Vector2.new(0.5, 0.5),
+		TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center,
 		TextTruncate = Enum.TextTruncate.AtEnd,
 	})
-	local frac = txt(bg, {
-		Text = "0 / " .. REQUIRED, TextColor3 = MUTED, TextSize = 13,
-		Size = UDim2.new(0.4, -8, 0, 16), Position = UDim2.new(1, -8, 0, 13),
-		AnchorPoint = Vector2.new(1, 0),
-		TextXAlignment = Enum.TextXAlignment.Right, TextYAlignment = Enum.TextYAlignment.Center,
-	})
 
-	local track = Instance.new("Frame")
-	track.Size = UDim2.new(1, -16, 0, 9)
-	track.Position = UDim2.fromOffset(8, 33)
-	track.BackgroundColor3 = TRACK
-	track.BorderSizePixel = 0
-	track.Parent = bg
-
-	local fill = Instance.new("Frame")
-	fill.AnchorPoint = Vector2.new(0, 0)
-	fill.Position = UDim2.fromScale(0, 0)
-	fill.Size = UDim2.fromScale(0, 1)
-	fill.BorderSizePixel = 0
-	fill.Parent = track
-
-	return { kind = "siege", anchor = anchor, name = name, frac = frac, fill = fill, sig = nil }
+	return { kind = "siege", anchor = anchor, segments = segments, pct = pct, tag = tag, sig = nil }
 end
 
 local function destroyMarker(marker)
@@ -349,7 +362,7 @@ local function updateBattle(marker, battle)
 	marker.fill.BackgroundColor3 = col
 end
 
-local function updateSiege(marker, occ)
+local function updateCaptureRing(marker, occ)
 	local byTag = occ.byTag
 	local progress = occ.progress or 0
 	-- Prefer the replicated authoritative required value; fall back to the constant only if absent.
@@ -358,12 +371,15 @@ local function updateSiege(marker, occ)
 	if marker.sig == sig then return end
 	marker.sig = sig
 
-	marker.name.Text = ownerName(byTag)
-	marker.name.TextColor3 = ownerColor(byTag)
-	marker.frac.Text = string.format("%d / %d", math.floor(progress + 0.5), required)
-	local f = math.clamp(required > 0 and (progress / required) or 0, 0, 1)
-	marker.fill.Size = UDim2.fromScale(f, 1)
-	marker.fill.BackgroundColor3 = ownerColor(byTag)
+	local p = math.clamp(required > 0 and (progress / required) or 0, 0, 1)
+	local col = ownerColor(byTag)
+	local lit = math.floor(p * #marker.segments + 0.5)
+	for i, seg in ipairs(marker.segments) do
+		seg.BackgroundColor3 = (i <= lit) and col or TRACK
+	end
+	marker.pct.Text = string.format("%d%%", math.floor(p * 100 + 0.5))
+	marker.tag.Text = ownerName(byTag)
+	marker.tag.TextColor3 = col
 end
 
 local function scheduleRetry(kind, id)
@@ -397,7 +413,7 @@ local function reconcileBattle(battleId)
 	marker.atkWorld = atkCenter or defCenter
 	marker.defWorld = defCenter
 	updateBattle(marker, battle)
-	-- A battle suspends siege accrual on its province; hide any siege meter there.
+	-- Refresh the capture ring on this tile too (it stays visible through the battle, holding its %).
 	dirtySieges[battle.provinceId] = true
 end
 
@@ -405,7 +421,8 @@ local function reconcileSiege(provinceId)
 	local prov = ClientStateCache.getProvince and ClientStateCache.getProvince(provinceId)
 	local occ = prov and prov.occupation
 	local marker = siegeMarkers[provinceId]
-	if occ and hasBattleAt(provinceId) then occ = nil end
+	-- The capture ring stays visible even while a battle is on the tile: the server freezes occupation
+	-- progress during a battle, so the ring simply holds its current % (requested behaviour).
 	if not occ then
 		if marker then destroyMarker(marker); siegeMarkers[provinceId] = nil end
 		return
@@ -414,10 +431,11 @@ local function reconcileSiege(provinceId)
 	local center = provinceCenter(provinceId)
 	if not center then scheduleRetry("siege", provinceId); return end
 	if not marker then
-		marker = buildSiegeMarker(center)
+		marker = buildCaptureRing(center)
 		siegeMarkers[provinceId] = marker
 	end
-	updateSiege(marker, occ)
+	if marker.anchor and marker.anchor.Parent then marker.anchor.Position = center end
+	updateCaptureRing(marker, occ)
 end
 
 local function fullRescan()
@@ -492,7 +510,6 @@ function CombatView.destroy()
 	dirtyBattles = {}
 	dirtySieges = {}
 	pendingRetry = {}
-	provinceCenterCache = {}
 	if markersFolder and markersFolder.Parent then markersFolder:Destroy() end
 	markersFolder = nil
 	started = false
