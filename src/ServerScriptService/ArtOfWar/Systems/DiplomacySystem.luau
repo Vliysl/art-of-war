@@ -5,6 +5,13 @@ local nextWarSeq = 0
 local nextProposalSeq = 0
 local nextPactSeq = 0
 
+-- Forward declarations: the player-consent gate inside endWar() calls offerPeaceToHuman, which calls
+-- proposePeace / isClaimedTag -- all defined further down. Declared here so endWar can reference them;
+-- they are ASSIGNED at their definition sites below (note `function isClaimedTag` / `function
+-- proposePeace`, NOT `local function`, so they fill these upvalues).
+local isClaimedTag
+local proposePeace
+
 local function generateWarId(a, b)
 	nextWarSeq += 1
 	return string.format("war_%s_%s_%d", a, b, nextWarSeq)
@@ -501,9 +508,85 @@ local function returnTrespassers(tagA, tagB)
 	end
 end
 
-local function endWar(warId, terms)
+-- A war with a human belligerent is NEVER concluded automatically -- the player must approve any peace
+-- via the modal. These helpers + the endWar gate enforce that; AI-vs-AI peace is unaffected.
+local function warHasHuman(war)
+	-- humanBelligerent persists across a player disconnect. isClaimedTag only sees CONNECTED players,
+	-- so without this flag a player who disconnects mid-war could be auto-peaced/annexed while away
+	-- (the sim keeps resolving the war). The flag is stamped by stampHumanWars (each Diplomacy tick,
+	-- while a belligerent is connected) and is never cleared.
+	return war ~= nil and (war.humanBelligerent == true or isClaimedTag(war.attackerTag) or isClaimedTag(war.defenderTag))
+end
+
+-- Persist "this war involves a human" onto any active war that currently has a connected belligerent,
+-- so the consent gate survives that player disconnecting. Bounded scan (active wars only); runs on the
+-- Diplomacy tick. AI-vs-AI wars never get the flag, so they still auto-resolve.
+local function stampHumanWars()
+	for id, war in ctx.WorldState.allWars() do
+		if war.status == "active" and not war.humanBelligerent
+			and (isClaimedTag(war.attackerTag) or isClaimedTag(war.defenderTag)) then
+			war.humanBelligerent = true
+			ctx.WorldState.setWar(id, war)
+		end
+	end
+end
+
+local function hasPendingProposalForWar(warId, toTag)
+	for _, p in ctx.WorldState.allPeaceProposals() do
+		if p and p.status == "pending" and p.warId == warId and p.toTag == toTag then
+			return true
+		end
+	end
+	return false
+end
+
+-- Convert an auto-peace that touches a human into a pending proposal they must accept/reject. The AI
+-- offers its winning terms if it is the dictating winner, otherwise a white peace. If the HUMAN is the
+-- one dictating terms (they are winning) we do NOT auto-conclude -- they keep control and end the war
+-- through the normal flow. PvP (both human) is never auto-resolved.
+local function offerPeaceToHuman(war, terms)
+	local aHuman = isClaimedTag(war.attackerTag)
+	local dHuman = isClaimedTag(war.defenderTag)
+	if aHuman and dHuman then return end
+	-- Flagged human-involved (warHasHuman) but NEITHER side is currently connected: the human is offline.
+	-- HOLD the war (do not conclude, do not offer) -- proposePeace to an offline tag is treated as AI and
+	-- would auto-accept, concluding the war behind the disconnected player's back. The war waits for them.
+	if not aHuman and not dHuman then return end
+	local human = aHuman and war.attackerTag or war.defenderTag
+	local ai = aHuman and war.defenderTag or war.attackerTag
+	local termType = terms and terms.type or "white_peace"
+	local winner = terms and terms.proposerTag
+	if (termType == "annex_occupied" or termType == "vassalize") and winner == human then
+		return
+	end
+	if hasPendingProposalForWar(war.id, human) then return end
+	-- Cooldown so a repeatedly-tripped forced peace (winning battle after battle at max war score) does
+	-- not re-pop the modal on every event after the player rejects an offer.
+	local cd = ctx.WorldConstants.PeaceProposalLifetimeSeconds or 60
+	if war.autoPeaceOfferAt and (now() - war.autoPeaceOfferAt) < cd then return end
+	war.autoPeaceOfferAt = now()
+	ctx.WorldState.setWar(war.id, war)
+	local offerTerms
+	if (termType == "annex_occupied" or termType == "vassalize") and winner == ai then
+		offerTerms = { type = termType }
+	else
+		offerTerms = { type = "white_peace" }
+	end
+	proposePeace(ai, human, offerTerms)
+end
+
+local function endWar(warId, terms, opts)
 	local war = ctx.WorldState.getWar(warId)
 	if not war or war.status ~= "active" then return false, "war_not_active" end
+
+	-- Player-consent gate (see helpers above): unless this is an explicit player decision
+	-- (opts.consented -- set by acceptPeace, or by the AI accepting the player's OWN offer), a war with
+	-- a human belligerent is converted into a pending peace proposal instead of being concluded here, so
+	-- the AI can never force or accept peace on the player's behalf.
+	if not (opts and opts.consented) and warHasHuman(war) then
+		offerPeaceToHuman(war, terms)
+		return false, "requires_player_consent"
+	end
 
 	-- 1) End active battles between belligerents (suppresses controller flips)
 	endActiveBattlesBetween(war.attackerTag, war.defenderTag)
@@ -556,7 +639,7 @@ local function endWar(warId, terms)
 	return true
 end
 
-local function isClaimedTag(tag)
+function isClaimedTag(tag) -- fills the forward-declared upvalue (do NOT add `local`)
 	return ctx.PlayerAuthority ~= nil and ctx.PlayerAuthority.playerFor ~= nil and ctx.PlayerAuthority.playerFor(tag) ~= nil
 end
 
@@ -738,7 +821,7 @@ local function accrueMonthlyAndResolve(currentMonthIndex, months)
 	end
 end
 
-local function proposePeace(fromTag, toTag, terms)
+function proposePeace(fromTag, toTag, terms) -- fills the forward-declared upvalue (do NOT add local)
 	if not fromTag or not toTag then return false, nil, "missing_tag" end
 	local war = findActiveWar(fromTag, toTag)
 	if not war then return false, nil, "no_war" end
@@ -790,7 +873,9 @@ local function proposePeace(fromTag, toTag, terms)
 		if aiWouldAccept(war, fromTag, toTag, terms) then
 			proposal.status = "accepted"
 			ctx.WorldState.setPeaceProposal(id, proposal)
-			endWar(war.id, terms)
+			-- The recipient is an AI (this branch only runs when not isClaimedTag(toTag)); the offer was
+			-- made BY fromTag (a player proposing, or AI-vs-AI), so concluding here is consensual.
+			endWar(war.id, terms, { consented = true })
 		else
 			proposal.status = "rejected"
 			ctx.WorldState.setPeaceProposal(id, proposal)
@@ -815,7 +900,7 @@ local function acceptPeace(proposalId, byTag)
 	if proposal.toTag ~= byTag then return false, "not_recipient" end
 	proposal.status = "accepted"
 	ctx.WorldState.setPeaceProposal(proposalId, proposal)
-	endWar(proposal.warId, proposal.terms)
+	endWar(proposal.warId, proposal.terms, { consented = true }) -- explicit player decision (AcceptPeace)
 	return true
 end
 
@@ -1104,8 +1189,12 @@ end
 -- now-empty nation (CapitalSystem/EconomySystem react to ProvinceOwnershipChanged automatically).
 local function annexSubject(overlordTag, subjectTag)
 	if overlordOf(subjectTag) ~= overlordTag then return false, "not_your_subject" end
+	-- A human-controlled nation can never be annexed away (that would end their wars + delete their
+	-- country with no consent). Overlord annexation is an AI-subject-only mechanic.
+	if isClaimedTag(subjectTag) then return false, "cannot_annex_player" end
 	for _, war in getActiveWarsFor(subjectTag) do
-		endWar(war.id, { type = "white_peace", forced = true, reason = "annexed" })
+		-- subjectTag is AI here; the subject is being absorbed, so its wars must end (consented).
+		endWar(war.id, { type = "white_peace", forced = true, reason = "annexed" }, { consented = true })
 	end
 	for id, province in ctx.WorldState.allProvinces() do
 		if province.ownerTag == subjectTag then
@@ -1482,6 +1571,7 @@ function DiplomacySystem.register(context)
 		update = function(sysCtx)
 			tickProposals()
 			tickPacts()
+			stampHumanWars()
 			local gd = (sysCtx and sysCtx.gameDate) or (context.TickScheduler.getGameDate and context.TickScheduler.getGameDate())
 			if gd then
 				local mi = gd.year * 12 + (gd.month - 1)

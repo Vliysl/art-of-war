@@ -13,6 +13,9 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MoveArrowRender = require(script.Parent:WaitForChild("MoveArrowRender"))
 local ProvincePositions = require(script.Parent:WaitForChild("ProvincePositions"))
+local ClientStateCache = require(script.Parent:WaitForChild("ClientStateCache"))
+local ArmyView = require(script.Parent:WaitForChild("ArmyView"))
+local RunService = game:GetService("RunService")
 
 local PathPreview = {}
 
@@ -29,6 +32,13 @@ local mapFolder = nil
 local previewFolder = nil
 local remoteFn = nil
 local lanes = {} -- [key] = { key, folder, lines, lastFrom, lastTo, inFlight, seq, pendingFrom, pendingTo }
+-- Reconcile backstop (see reconcileLanes): desiredTo is the province currently being hover-previewed
+-- (set by showMany, cleared by clear). The loop drops any lane that no longer maps to a live selected
+-- army, so a preview can never be left orphaned by a missed teardown event.
+local desiredTo = nil
+local reconcileConn = nil
+local reconcileAccum = 0
+local RECONCILE_INTERVAL = 0.1
 
 local function ensurePreviewFolder()
 	mapFolder = workspace:FindFirstChild("ArtOfWarMap")
@@ -178,14 +188,46 @@ local function showLane(key, fromId, toId)
 	dispatchLane(lane, fromId, toId)
 end
 
+-- Robust orphan sweep, independent of any teardown event. A preview lane is legitimate ONLY while a
+-- destination is being hovered (desiredTo) AND its origin province still hosts a currently-selected,
+-- alive, not-yet-moving army. Any other state (deselect, army moved/destroyed/merged, hover ended,
+-- a move was issued) leaves the lane invalid and it is destroyed within one tick. This is the real fix:
+-- single-event teardown is missable (e.g. the stationary-hover gate never re-fires updatePathPreview),
+-- but the reconcile cannot be missed. Mirrors MoveArrowView's per-frame reconcile.
+local function reconcileLanes()
+	if not next(lanes) then return end
+	local valid = {}
+	if desiredTo ~= nil then
+		local sel = (ArmyView.getSelectedArmyIds and ArmyView.getSelectedArmyIds()) or {}
+		for _, armyId in ipairs(sel) do
+			local army = ClientStateCache.getArmy(armyId)
+			if army and not army.movement and army.provinceId ~= nil then
+				valid[army.provinceId] = true
+			end
+		end
+	end
+	for key in pairs(lanes) do
+		if not valid[key] then destroyLane(key) end
+	end
+end
+
 function PathPreview.init()
 	ensurePreviewFolder()
+	if not reconcileConn then
+		reconcileConn = RunService.Heartbeat:Connect(function(dt)
+			reconcileAccum += dt
+			if reconcileAccum < RECONCILE_INTERVAL then return end
+			reconcileAccum = 0
+			reconcileLanes()
+		end)
+	end
 end
 
 -- Show one preview per request to the hovered destination. requests = { {id=key, from=provinceId}, ... }
 -- (callers pass one entry per distinct origin province). Lanes not present in `requests` are dropped.
 function PathPreview.showMany(requests, toProvinceId)
 	requests = requests or {}
+	desiredTo = toProvinceId -- the reconcile backstop compares lanes against this + the live selection
 	local active = {}
 	local n = 0
 	for _, r in ipairs(requests) do
@@ -208,12 +250,14 @@ function PathPreview.show(fromProvinceId, toProvinceId, _ClientStateCache, _owne
 end
 
 function PathPreview.clear()
+	desiredTo = nil
 	for key in pairs(lanes) do
 		destroyLane(key)
 	end
 end
 
 function PathPreview.destroy()
+	if reconcileConn then reconcileConn:Disconnect(); reconcileConn = nil end
 	PathPreview.clear()
 	if previewFolder and previewFolder.Parent then previewFolder:Destroy() end
 	previewFolder = nil

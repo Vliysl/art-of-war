@@ -88,6 +88,7 @@ return {
 		historicalRivals = { "GBR", "HAB" },
 		historicalFriends = { "SPA" },
 		color = { 33, 72, 180 },
+		flagAssetId = "rbxassetid://76821307863837",
 	},
 	GBR = {
 		tag = "GBR",
@@ -103,6 +104,7 @@ return {
 		historicalRivals = { "FRA", "SPA" },
 		historicalFriends = { "POR" },
 		color = { 190, 40, 45 },
+		flagAssetId = "rbxassetid://7837639946",
 	},
 	HAB = {
 		tag = "HAB",

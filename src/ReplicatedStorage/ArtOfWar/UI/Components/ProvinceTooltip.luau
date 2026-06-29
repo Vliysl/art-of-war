@@ -28,7 +28,7 @@ end
 
 function ProvinceTooltip.create(parent)
 	-- A tooltip is a small utility surface, not an ornate window: build it from a themed frame with
-	-- real rounded corners (UICorner) + a hairline border (UIStroke) instead of a 9-slice asset. The
+	-- sharp corners + a hairline border (UIStroke) instead of a 9-slice asset. The
 	-- old `tooltip_shell` image is a speech-bubble callout with a downward pointer tail, so slicing it
 	-- stretched the tail into a band and the body's bottom corners never lined up -> "bottom cut off".
 	local root = Instance.new("Frame")
@@ -41,10 +41,6 @@ function ProvinceTooltip.create(parent)
 	root.Visible = false
 	root.ZIndex = 80
 	root:SetAttribute("AoWInputSink", false)
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 8)
-	corner.Parent = root
 
 	local stroke = Instance.new("UIStroke")
 	stroke.Color = Colors.BorderStrong

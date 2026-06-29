@@ -606,7 +606,7 @@ function NationSelection.create(ctx)
 
 		local name = Instance.new("TextLabel")
 		name.Name = "CountryName"
-		name.Position = UDim2.fromOffset(72, 11)
+		name.Position = UDim2.fromOffset(78, 11)
 		name.Size = UDim2.new(1, -150, 0, 22)
 		name.BackgroundTransparency = 1
 		name.Text = vm.name
@@ -619,7 +619,7 @@ function NationSelection.create(ctx)
 
 		local sub = Instance.new("TextLabel")
 		sub.Name = "Sub"
-		sub.Position = UDim2.fromOffset(72, 33)
+		sub.Position = UDim2.fromOffset(78, 33)
 		sub.Size = UDim2.new(1, -150, 0, 16)
 		sub.BackgroundTransparency = 1
 		sub.Text = vm.government .. "  \u{00B7}  " .. vm.ideology
@@ -729,7 +729,7 @@ function NationSelection.create(ctx)
 
 		local headerRow = Instance.new("Frame")
 		headerRow.Name = "CardHeader"
-		headerRow.Size = UDim2.new(1, 0, 0, 42)
+		headerRow.Size = UDim2.new(1, 0, 0, 48)
 		headerRow.BackgroundTransparency = 1
 		headerRow.LayoutOrder = 2
 		headerRow.ZIndex = 3

@@ -24,7 +24,7 @@ end
 function Tooltip.create(config)
 	config = config or {}
 
-	-- Build the surface from a themed Frame (rounded corners + hairline border) instead of the
+	-- Build the surface from a themed Frame (sharp corners + a hairline border) instead of the
 	-- `tooltip_shell` 9-slice: that asset is a speech-bubble callout with a downward pointer tail, so
 	-- slicing it stretched the tail into a band and clipped the body's bottom row (mirrors the same fix
 	-- already made in ProvinceTooltip).
@@ -37,10 +37,6 @@ function Tooltip.create(config)
 	root.BorderSizePixel = 0
 	root.ZIndex = config.zIndex or 80
 	root:SetAttribute("AoWInputSink", false)
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 8)
-	corner.Parent = root
 
 	local stroke = Instance.new("UIStroke")
 	stroke.Color = Colors.BorderStrong

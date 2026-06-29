@@ -175,6 +175,12 @@ local function getOwnerColor(ownerTag)
 	return FACTION_FALLBACK
 end
 
+local CountriesData = require(script.Parent.Parent.Data.Countries)
+local function getOwnerFlag(ownerTag)
+	local cd = CountriesData[ownerTag]
+	return (cd and cd.flagAssetId) or ""
+end
+
 local function dominantUnit(army)
 	if not army or not army.composition then return nil, 0 end
 	local bestId, bestCount = nil, 0
@@ -1015,8 +1021,15 @@ local function reconcileOne(armyId)
 			-- Match the province-panel CountryBadge: HSV-darkened country colour.
 			local h, s, v = Color3.toHSV(color)
 			crest.BackgroundColor3 = Color3.fromHSV(h, math.min(s, 0.6), math.min(v, 0.35))
+			local crestFlag = getOwnerFlag(army.ownerTag)
 			local tagLbl = crest:FindFirstChild("CrestTag")
-			if tagLbl then tagLbl.Text = string.upper(tostring(army.ownerTag or "")) end
+			if tagLbl then
+				tagLbl.Text = string.upper(tostring(army.ownerTag or ""))
+				-- A decal replaces the 3-letter tag.
+				tagLbl.Visible = (crestFlag == "")
+			end
+			local imgLbl = crest:FindFirstChild("CrestImage")
+			if imgLbl then imgLbl.Image = crestFlag end
 		end
 	end
 
@@ -1104,7 +1117,9 @@ local function reconcileOne(armyId)
 			local capTrack = vbg:FindFirstChild("CaptureTrack")
 			local capFill = capTrack and capTrack:FindFirstChild("CaptureFill")
 			if capTrack then
-				capTrack.Visible = occupying and showDetails
+				-- Capture progress is ALWAYS shown while this army is occupying (not gated behind selection),
+				-- so the player can always see how far along a tile capture is.
+				capTrack.Visible = occupying
 				if capFill and occupying then
 					capFill.Size = UDim2.fromScale(math.clamp((occ.progress or 0) / occ.required, 0, 1), 1)
 				end

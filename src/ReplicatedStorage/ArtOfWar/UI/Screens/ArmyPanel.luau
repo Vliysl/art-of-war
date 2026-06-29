@@ -1252,12 +1252,12 @@ function ArmyPanel.create(ctx)
 			local title = handle.header:FindFirstChild("Title")
 			local sub = handle.header:FindFirstChild("Subtitle")
 			if title then
-				title.Position = UDim2.fromOffset(44, 0)
-				title.Size = UDim2.new(1, -36 - 44, 0, 28)
+				title.Position = UDim2.fromOffset(52, 0)
+				title.Size = UDim2.new(1, -36 - 52, 0, 28)
 			end
 			if sub then
-				sub.Position = UDim2.fromOffset(44, 28)
-				sub.Size = UDim2.new(1, -36 - 44, 0, 16)
+				sub.Position = UDim2.fromOffset(52, 28)
+				sub.Size = UDim2.new(1, -36 - 52, 0, 16)
 			end
 		end
 	end

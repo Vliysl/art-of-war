@@ -585,6 +585,9 @@ function HudWiring.start(modules)
 
 	local ArmyView = modules.ArmyView
 	local PathPreview = modules.PathPreview
+	-- Start PathPreview's reconcile backstop (the stuck-arrow fix). The live boot path never called
+	-- init() before -- only the dead UIController did -- which left the orphan-lane sweep inert.
+	if PathPreview and PathPreview.init then PathPreview.init() end
 	local WaterBodies = modules.WaterBodies
 	local tooltip = ProvinceTooltip.create(Hud.getLayer("Tooltips"))
 

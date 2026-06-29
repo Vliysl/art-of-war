@@ -352,14 +352,16 @@ end
 local function updateSiege(marker, occ)
 	local byTag = occ.byTag
 	local progress = occ.progress or 0
-	local sig = string.format("%s,%.2f", tostring(byTag), progress)
+	-- Prefer the replicated authoritative required value; fall back to the constant only if absent.
+	local required = (occ.required and occ.required > 0) and occ.required or REQUIRED
+	local sig = string.format("%s,%.2f,%d", tostring(byTag), progress, required)
 	if marker.sig == sig then return end
 	marker.sig = sig
 
 	marker.name.Text = ownerName(byTag)
 	marker.name.TextColor3 = ownerColor(byTag)
-	marker.frac.Text = string.format("%d / %d", math.floor(progress + 0.5), REQUIRED)
-	local f = math.clamp(REQUIRED > 0 and (progress / REQUIRED) or 0, 0, 1)
+	marker.frac.Text = string.format("%d / %d", math.floor(progress + 0.5), required)
+	local f = math.clamp(required > 0 and (progress / required) or 0, 0, 1)
 	marker.fill.Size = UDim2.fromScale(f, 1)
 	marker.fill.BackgroundColor3 = ownerColor(byTag)
 end

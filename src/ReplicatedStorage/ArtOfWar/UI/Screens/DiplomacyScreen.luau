@@ -348,7 +348,7 @@ function DiplomacyScreen.create(ctx)
 		local rel = relationStatus(cache, mineTag, tag)
 		local row = Instance.new("TextButton")
 		row.Name = "Nation"
-		row.Size = UDim2.new(1, 0, 0, 44)
+		row.Size = UDim2.new(1, 0, 0, 56)
 		row.BackgroundColor3 = Colors.SurfaceElevated
 		row.BackgroundTransparency = 1
 		row.BorderSizePixel = 0
@@ -379,7 +379,7 @@ function DiplomacyScreen.create(ctx)
 		badge.Position = UDim2.new(0, 8, 0.5, 0)
 
 		local nameLbl = Instance.new("TextLabel")
-		nameLbl.Position = UDim2.fromOffset(54, 0)
+		nameLbl.Position = UDim2.fromOffset(60, 0)
 		nameLbl.Size = UDim2.new(1, -200, 1, 0)
 		nameLbl.BackgroundTransparency = 1
 		nameLbl.Text = nameOf(cache, tag)
@@ -502,11 +502,12 @@ function DiplomacyScreen.create(ctx)
 		header.LayoutOrder = ord()
 		header.Parent = body
 
+		-- Crest sits in a slim gold-framed square (the crest itself supplies the colour/decal).
 		local flag = Instance.new("Frame")
-		flag.Size = UDim2.fromOffset(104, 68)
+		flag.Size = UDim2.fromOffset(48, 48)
 		flag.AnchorPoint = Vector2.new(0, 0.5)
 		flag.Position = UDim2.fromScale(0, 0.5)
-		flag.BackgroundColor3 = col or Colors.SurfaceElevated
+		flag.BackgroundTransparency = 1
 		flag.BorderSizePixel = 0
 		flag.Parent = header
 		local fcorner = Instance.new("UICorner")
@@ -520,7 +521,7 @@ function DiplomacyScreen.create(ctx)
 		crest.Position = UDim2.fromScale(0.5, 0.5)
 
 		local nameLbl = Instance.new("TextLabel")
-		nameLbl.Position = UDim2.fromOffset(116, 12)
+		nameLbl.Position = UDim2.fromOffset(60, 12)
 		nameLbl.Size = UDim2.new(1, -180, 0, 28)
 		nameLbl.BackgroundTransparency = 1
 		nameLbl.Text = nameOf(cache, tag)
@@ -531,7 +532,7 @@ function DiplomacyScreen.create(ctx)
 		nameLbl.Parent = header
 
 		local pill = Instance.new("TextLabel")
-		pill.Position = UDim2.fromOffset(116, 42)
+		pill.Position = UDim2.fromOffset(60, 42)
 		pill.Size = UDim2.new(1, -180, 0, 18)
 		pill.BackgroundTransparency = 1
 		pill.Text = RELATION[rel].label

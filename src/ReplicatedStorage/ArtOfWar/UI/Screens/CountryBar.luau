@@ -49,11 +49,20 @@ end
 -- Builds one stat pill and returns handles to its mutable labels. The value/delta text is set later
 -- (and on every change) via CountryBar.update -> setResources, so the bar never needs to be rebuilt.
 local function statPill(parent, iconKey, order, withDelta, tooltipLayer)
-	local pill = Shells.create("stat_pill_shell", {
-		Size = UDim2.fromOffset(PILL_W, 36),
-		LayoutOrder = order,
-	})
+	-- Sharp procedural pill (Frame + UIStroke), not the rounded `stat_pill_shell` 9-slice -- matches the
+	-- owner's sharp-corner preference for the rest of the UI.
+	local pill = Instance.new("Frame")
+	pill.Name = "StatPill"
+	pill.Size = UDim2.fromOffset(PILL_W, 36)
+	pill.LayoutOrder = order
+	pill.BackgroundColor3 = Colors.SurfaceElevated
+	pill.BorderSizePixel = 0
 	pill.Parent = parent
+	local pillStroke = Instance.new("UIStroke")
+	pillStroke.Color = Colors.BorderStrong
+	pillStroke.Thickness = 1
+	pillStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	pillStroke.Parent = pill
 
 	local icon = Icons.create(iconKey, 14, Colors.TextSecondary)
 	icon.AnchorPoint = Vector2.new(0, 0.5)
@@ -160,18 +169,34 @@ function CountryBar.create(config)
 	pad.PaddingBottom = UDim.new(0, Spacing.space2)
 	pad.Parent = content
 
+	-- The crest recess is baked into the bar background image, so there is no recess instance to parent
+	-- into. `CrestRecess` IS that recess as a real element: a transparent square positioned over the
+	-- baked recess. The crest is then a CHILD of it, filling it edge-to-edge (fromScale 1,1) -- so the
+	-- crest's size/position is driven entirely by this one container (tune the container, not the crest).
+	local recess = Instance.new("Frame")
+	recess.Name = "CrestRecess"
+	-- Measured directly from the bg art (rbxassetid://101174527323084) against a bar-unit grid: the
+	-- recess opening (inside the gold bezel) is ~x[15,87] y[15,82] of the 900x96 bar -> offset (15,15)
+	-- size 72x67, vertically centred. The crest (child) fills this 1:1.
+	recess.AnchorPoint = Vector2.new(0, 0)
+	recess.Position = UDim2.fromOffset(15, 15)
+	recess.Size = UDim2.fromOffset(72, 67)
+	recess.BackgroundTransparency = 1
+	recess.Parent = bg
+
 	local flag = CountryBadge.create({ code = config.code or "XXX", countryColor = config.color, size = "lg" })
-	flag.AnchorPoint = Vector2.new(0, 0)
-	flag.Position = UDim2.fromOffset(0, 0)
-	flag.Parent = content
+	flag.AnchorPoint = Vector2.new(0.5, 0.5)
+	flag.Position = UDim2.fromScale(0.5, 0.5)
+	flag.Size = UDim2.fromScale(1, 1)
+	flag.Parent = recess
 
 	local nameLabel = text(content, config.name or "Unknown", "displayMd", Colors.TextPrimary, {
-		Position = UDim2.fromOffset(84, 0),
+		Position = UDim2.fromOffset(94, 0),
 		Size = UDim2.fromOffset(NAME_W, 24),
 	})
 	local cult = config.culture and ("  \u{00B7}  " .. config.culture) or ""
 	local govLabel = text(content, (config.government or "") .. cult, "bodySm", Colors.TextSecondary, {
-		Position = UDim2.fromOffset(84, 26),
+		Position = UDim2.fromOffset(94, 26),
 		Size = UDim2.fromOffset(NAME_W, 16),
 	})
 
@@ -214,8 +239,8 @@ function CountryBar.create(config)
 	local menuRow = Instance.new("Frame")
 	menuRow.Name = "MenuRow"
 	menuRow.AnchorPoint = Vector2.new(0, 1)
-	menuRow.Position = UDim2.new(0, 84, 1, 0)
-	menuRow.Size = UDim2.new(1, -84, 0, 22)
+	menuRow.Position = UDim2.new(0, 94, 1, 0)
+	menuRow.Size = UDim2.new(1, -94, 0, 22)
 	menuRow.BackgroundTransparency = 1
 	menuRow.Parent = content
 	local ml = Instance.new("UIListLayout")
@@ -294,9 +319,10 @@ function CountryBar.create(config)
 			currentCode = cfg.code
 			flag:Destroy()
 			flag = CountryBadge.create({ code = cfg.code, countryColor = cfg.color, size = "lg" })
-			flag.AnchorPoint = Vector2.new(0, 0)
-			flag.Position = UDim2.fromOffset(0, 0)
-			flag.Parent = content
+			flag.AnchorPoint = Vector2.new(0.5, 0.5)
+			flag.Position = UDim2.fromScale(0.5, 0.5)
+			flag.Size = UDim2.fromScale(1, 1)
+			flag.Parent = recess
 		end
 		setResources(cfg.resources)
 	end
