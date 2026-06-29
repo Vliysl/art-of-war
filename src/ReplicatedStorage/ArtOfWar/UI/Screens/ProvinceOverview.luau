@@ -202,25 +202,8 @@ local function squareButton(parent, variant, glyph, width, sizeKey, onClick, gly
 	btn:GetPropertyChangedSignal("Active"):Connect(syncGlyph)
 	syncGlyph()
 
-	-- Composite the rotated diamond + glyph into a CanvasGroup so an ancestor ScrollingFrame's clip
-	-- actually clips them. Rotated GuiObjects escape ancestor ClipsDescendants, so without this the
-	-- diamond border pokes above/below the panel when the buildings/recruitment list scrolls. A
-	-- CanvasGroup bakes its rotated children to an axis-aligned texture the scroll body clips normally;
-	-- the small margin keeps the diamond's points from being sub-pixel-clipped by the group bounds.
-	local clip = Instance.new("CanvasGroup")
-	clip.Name = "DiamondClip"
-	clip.AnchorPoint = Vector2.new(0.5, 0.5)
-	clip.Position = UDim2.fromScale(0.5, 0.5)
-	clip.Size = UDim2.new(1, 8, 1, 8)
-	clip.BackgroundTransparency = 1
-	clip.BorderSizePixel = 0
-	clip.ZIndex = btn.ZIndex + 1
-	clip.Parent = btn
-	if bg then
-		bg.Parent = clip
-	end
-	holder.Parent = clip
-
+	-- Note: the rotated diamond escapes a ScrollingFrame's clip, but the ScreenKit scroll body wraps its
+	-- content in a CanvasGroup which clips it correctly -- so no per-button clipping is needed here.
 	return btn
 end
 

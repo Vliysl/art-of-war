@@ -116,10 +116,25 @@ function ScreenKit.open(ctx, opts)
 		tabHandle.root.Size = UDim2.new(0, 0, 1, 0)
 	end
 
+	-- Wrap the scroll body in a CanvasGroup. A plain ScrollingFrame's ClipsDescendants does NOT clip
+	-- ROTATED descendants (a long-standing Roblox limitation), so rotated UI -- e.g. the diamond +/x
+	-- action buttons -- would render past the panel edge when the list scrolled. A CanvasGroup composites
+	-- its descendants to a flat, axis-aligned texture clipped to its bounds, so scrolled-out content
+	-- (rotated or not) is clipped here. The group is sized to the VISIBLE body (not the scroll canvas),
+	-- so the texture stays small regardless of how long the list is.
+	local bodyClip = Instance.new("CanvasGroup")
+	bodyClip.Name = "BodyClip"
+	bodyClip.Position = UDim2.fromOffset(0, headerHeight)
+	bodyClip.Size = UDim2.new(1, 0, 1, -headerHeight)
+	bodyClip.BackgroundTransparency = 1
+	bodyClip.BorderSizePixel = 0
+	bodyClip.ZIndex = 2
+	bodyClip.Parent = root
+
 	local body = Instance.new("ScrollingFrame")
 	body.Name = "Body"
-	body.Position = UDim2.fromOffset(0, headerHeight)
-	body.Size = UDim2.new(1, 0, 1, -headerHeight)
+	body.Position = UDim2.fromOffset(0, 0)
+	body.Size = UDim2.fromScale(1, 1)
 	body.BackgroundTransparency = 1
 	body.BorderSizePixel = 0
 	body.ScrollBarThickness = 4
@@ -127,12 +142,9 @@ function ScreenKit.open(ctx, opts)
 	body.AutomaticCanvasSize = Enum.AutomaticSize.Y
 	body.CanvasSize = UDim2.new()
 	body.ScrollingDirection = Enum.ScrollingDirection.Y
-	-- Clip overflow to the visible scroll area: a ScrollingFrame does NOT clip by default, so a
-	-- fixed-height panel's overflowing rows (e.g. the province Buildings list) would otherwise draw
-	-- past the panel edge. No-op for autoHeight panels (body == content height, nothing overflows).
 	body.ClipsDescendants = true
 	body.ZIndex = 2
-	body.Parent = root
+	body.Parent = bodyClip
 	local bPad = Instance.new("UIPadding")
 	bPad.PaddingTop = UDim.new(0, Spacing.space2)
 	bPad.PaddingBottom = UDim.new(0, Spacing.space5)
