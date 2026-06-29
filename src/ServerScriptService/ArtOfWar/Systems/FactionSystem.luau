@@ -36,6 +36,7 @@ local function initFactions(country)
 		country.factions[factionId] = {
 			id = factionId,
 			clout = target,
+			loyalty = ctx.WorldConstants.EstateLoyaltyBase,
 			tier = tierOf(target),
 			lastDelta = 0,
 		}
@@ -89,6 +90,149 @@ local function applyDelta(tag, factionId, amount, reason)
 			tag = tag, previous = prevLegit, current = country.legitimacy,
 		})
 	end
+	return true
+end
+
+-- ── Estate loyalty + privileges + Crown Authority ───────────────────────────
+
+local function clampLoyalty(v)
+	local wc = ctx.WorldConstants
+	return math.clamp(v or wc.EstateLoyaltyBase, wc.EstateLoyaltyMin, wc.EstateLoyaltyMax)
+end
+
+-- Crown Authority cap = base + Σ(privilege.authorityCap) (each <= 0), floored.
+-- Also clamps current authority down if the cap dropped beneath it.
+local function recomputeAuthorityCap(country)
+	local wc = ctx.WorldConstants
+	local cap = wc.CrownAuthorityCapBase
+	if country.estatePrivileges then
+		local privs = ctx.Bundle and ctx.Bundle.privileges
+		for privId in country.estatePrivileges do
+			local def = privs and privs[privId]
+			if def and def.authorityCap then cap += def.authorityCap end
+		end
+	end
+	cap = math.max(wc.CrownAuthorityCapMin, cap)
+	country.crownAuthorityCap = cap
+	if country.crownAuthority and country.crownAuthority > cap then
+		country.crownAuthority = cap
+	end
+	return cap
+end
+
+local function targetLoyalty(country, factionId)
+	local wc = ctx.WorldConstants
+	local def = ctx.Bundle and ctx.Bundle.factions and ctx.Bundle.factions[factionId]
+	local base = wc.EstateLoyaltyBase
+	if def then
+		local ideo = (def.ideologyAffinity and def.ideologyAffinity[country.ideology]) or 0
+		local gov = (def.governmentAffinity and def.governmentAffinity[country.governmentForm]) or 0
+		base += (ideo + gov) * 100
+	end
+	if country.estatePrivileges then
+		for _, info in country.estatePrivileges do
+			if info.estateId == factionId then base += 10 end
+		end
+	end
+	return clampLoyalty(base)
+end
+
+local function driftLoyalty(country)
+	if not country.factions then return false end
+	local step = ctx.WorldConstants.EstateLoyaltyDriftPerTick
+	local changed = false
+	for factionId, rec in country.factions do
+		local cur = rec.loyalty or ctx.WorldConstants.EstateLoyaltyBase
+		local gap = targetLoyalty(country, factionId) - cur
+		if math.abs(gap) > 0.05 then
+			rec.loyalty = clampLoyalty(cur + math.clamp(gap, -step, step))
+			changed = true
+		end
+	end
+	return changed
+end
+
+-- Apply a loyalty delta to one estate (used by the event system).
+local function addLoyalty(tag, factionId, delta, reason)
+	local country = ctx.WorldState.getCountry(tag)
+	if not country or not country.factions or not country.factions[factionId] then return false end
+	local rec = country.factions[factionId]
+	rec.loyalty = clampLoyalty((rec.loyalty or ctx.WorldConstants.EstateLoyaltyBase) + (delta or 0))
+	ctx.WorldState.setCountry(tag, country)
+	ctx.EventBus.publish(ctx.Channels.EstateLoyaltyChanged, {
+		tag = tag, estateId = factionId, loyalty = rec.loyalty, reason = reason,
+	})
+	return true
+end
+
+local function grantPrivilege(tag, privilegeId)
+	local country = ctx.WorldState.getCountry(tag)
+	if not country then return false, "unknown_country" end
+	local privs = ctx.Bundle and ctx.Bundle.privileges
+	local def = privs and privs[privilegeId]
+	if not def then return false, "unknown_privilege" end
+	country.estatePrivileges = country.estatePrivileges or {}
+	if country.estatePrivileges[privilegeId] then return false, "already_granted" end
+	if def.ideologyGate and def.ideologyGate ~= "any" and country.ideology ~= def.ideologyGate then return false, "ideology_gate" end
+	if def.govGate and country.governmentForm ~= def.govGate then return false, "gov_gate" end
+	local estateId = def.estateId
+	country.estatePrivileges[privilegeId] = { grantedAt = ctx.TickScheduler.getSimTime(), estateId = estateId }
+	local rec = country.factions and country.factions[estateId]
+	if rec then
+		rec.loyalty = clampLoyalty((rec.loyalty or ctx.WorldConstants.EstateLoyaltyBase) + (def.loyaltyGain or 0))
+		rec.clout = math.clamp((rec.clout or 0) + (def.influenceGain or 0), ctx.WorldConstants.FactionCloutMin, ctx.WorldConstants.FactionCloutMax)
+		normalizeClouts(country.factions)
+		for _, r in country.factions do r.tier = tierOf(r.clout) end
+	end
+	recomputeAuthorityCap(country)
+	country.legitimacy = computeLegitimacy(country)
+	ctx.WorldState.setCountry(tag, country)
+	ctx.EventBus.publish(ctx.Channels.EstatePrivilegeGranted, { tag = tag, privilegeId = privilegeId, estateId = estateId })
+	ctx.EventBus.publish(ctx.Channels.EstateLoyaltyChanged, { tag = tag, estateId = estateId, loyalty = rec and rec.loyalty })
+	ctx.EventBus.publish(ctx.Channels.CountryAuthorityChanged, { tag = tag, total = country.crownAuthority, cap = country.crownAuthorityCap, source = "grant_privilege" })
+	return true
+end
+
+local function revokePrivilege(tag, privilegeId)
+	local country = ctx.WorldState.getCountry(tag)
+	if not country or not country.estatePrivileges or not country.estatePrivileges[privilegeId] then return false, "not_granted" end
+	local info = country.estatePrivileges[privilegeId]
+	local privs = ctx.Bundle and ctx.Bundle.privileges
+	local def = privs and privs[privilegeId]
+	local estateId = (def and def.estateId) or info.estateId
+	country.estatePrivileges[privilegeId] = nil
+	local rec = estateId and country.factions and country.factions[estateId]
+	if rec and def then
+		rec.loyalty = clampLoyalty((rec.loyalty or ctx.WorldConstants.EstateLoyaltyBase) - (def.loyaltyGain or 0))
+		rec.clout = math.clamp((rec.clout or 0) - (def.influenceGain or 0), ctx.WorldConstants.FactionCloutMin, ctx.WorldConstants.FactionCloutMax)
+		normalizeClouts(country.factions)
+		for _, r in country.factions do r.tier = tierOf(r.clout) end
+	end
+	recomputeAuthorityCap(country)
+	country.legitimacy = computeLegitimacy(country)
+	ctx.WorldState.setCountry(tag, country)
+	ctx.EventBus.publish(ctx.Channels.EstatePrivilegeRevoked, { tag = tag, privilegeId = privilegeId, estateId = estateId })
+	if estateId then ctx.EventBus.publish(ctx.Channels.EstateLoyaltyChanged, { tag = tag, estateId = estateId, loyalty = rec and rec.loyalty }) end
+	ctx.EventBus.publish(ctx.Channels.CountryAuthorityChanged, { tag = tag, total = country.crownAuthority, cap = country.crownAuthorityCap, source = "revoke_privilege" })
+	return true
+end
+
+local function seizePower(tag, estateId)
+	local country = ctx.WorldState.getCountry(tag)
+	if not country or not country.factions or not country.factions[estateId] then return false, "unknown_estate" end
+	local wc = ctx.WorldConstants
+	local rec = country.factions[estateId]
+	rec.loyalty = clampLoyalty((rec.loyalty or wc.EstateLoyaltyBase) - wc.EstateSeizeLoyaltyHit)
+	rec.clout = math.clamp((rec.clout or 0) - wc.EstateSeizeInfluenceShift, wc.FactionCloutMin, wc.FactionCloutMax)
+	normalizeClouts(country.factions)
+	for _, r in country.factions do r.tier = tierOf(r.clout) end
+	local cap = country.crownAuthorityCap or wc.CrownAuthorityCapBase
+	country.crownAuthority = math.clamp((country.crownAuthority or wc.CrownAuthorityBase) + wc.EstateSeizeAuthorityGain, wc.CrownAuthorityMin, cap)
+	country.legitimacy = computeLegitimacy(country)
+	ctx.WorldState.setCountry(tag, country)
+	ctx.EventBus.publish(ctx.Channels.EstatePowerSeized, { tag = tag, estateId = estateId })
+	ctx.EventBus.publish(ctx.Channels.EstateLoyaltyChanged, { tag = tag, estateId = estateId, loyalty = rec.loyalty })
+	ctx.EventBus.publish(ctx.Channels.CountryAuthorityChanged, { tag = tag, total = country.crownAuthority, cap = cap, source = "seize_power" })
 	return true
 end
 
@@ -174,10 +318,11 @@ local function tickFactions()
 		if country.factions then
 			local prevLegit = country.legitimacy or 50
 			local changed = driftFactions(country)
+			local loyChanged = driftLoyalty(country)
 			local newLegit = computeLegitimacy(country)
 			-- S1 guard: only write + replicate when factions actually moved or legitimacy
 			-- changed (was an unconditional write for every country every faction tick).
-			if changed or math.abs(newLegit - prevLegit) > 1e-6 then
+			if changed or loyChanged or math.abs(newLegit - prevLegit) > 1e-6 then
 				country.legitimacy = newLegit
 				ctx.WorldState.setCountry(tag, country)
 				if math.abs(newLegit - prevLegit) > 0.5 then
@@ -227,6 +372,9 @@ function FactionSystem.register(context)
 	for tag, country in context.WorldState.allCountries() do
 		initFactions(country)
 		country.legitimacy = computeLegitimacy(country)
+		country.crownAuthority = country.crownAuthority or context.WorldConstants.CrownAuthorityBase
+		recomputeAuthorityCap(country)
+		country.unrest = country.unrest or 0
 		context.WorldState.setCountry(tag, country)
 	end
 	bindEvents()
@@ -236,6 +384,12 @@ function FactionSystem.register(context)
 		computeLegitimacy = computeLegitimacy,
 		tierOf = tierOf,
 		factionLawShift = factionLawShift,
+		-- Estate overhaul API
+		grantPrivilege = grantPrivilege,
+		revokePrivilege = revokePrivilege,
+		seizePower = seizePower,
+		addLoyalty = addLoyalty,
+		recomputeAuthorityCap = recomputeAuthorityCap,
 		getClout = function(tag, factionId)
 			local c = context.WorldState.getCountry(tag)
 			return c and c.factions and c.factions[factionId] and c.factions[factionId].clout or 0
@@ -245,6 +399,10 @@ function FactionSystem.register(context)
 			return c and c.factions or {}
 		end,
 	}
+	context.FactionSystem.getEstates = context.FactionSystem.getFactions
+	-- The estate overhaul renames the concept; expose EstateSystem as the canonical
+	-- handle while keeping FactionSystem for existing consumers (e.g. LawSystem).
+	context.EstateSystem = context.FactionSystem
 	context.TickScheduler.register({
 		id = "FactionSystem",
 		priority = 19,

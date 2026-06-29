@@ -246,6 +246,20 @@ local function onPeaceProposalExpired(data)
 	-- Quiet event - no toast; UI will reflect from state
 end
 
+local function onRulerDied(data)
+	if not data or not data.tag then return end
+	local r = data.ruler
+	local who = r and (((r.title or "Ruler") .. " " .. (r.firstName or "")):gsub("%s+$", "")) or "The ruler"
+	broadcast(makePayload("warn", "The Crown Passes", who .. " has died.", "self", data.tag, "ruler.died", { ttl = 10 }))
+end
+
+local function onSuccessionResolved(data)
+	if not data or not data.tag then return end
+	local who = data.rulerName or "A new ruler"
+	local body = data.regency and (who .. " ascends under a regency.") or (who .. " now holds power.")
+	broadcast(makePayload("info", "Succession", body, "self", data.tag, "succession", { ttl = 10 }))
+end
+
 
 local SUBSCRIPTIONS = {
 	WarDeclared             = onWarDeclared,
@@ -269,6 +283,8 @@ local SUBSCRIPTIONS = {
 	ShipRecruited           = onShipRecruited,
 	NavalBattleStarted      = onNavalBattleStarted,
 	NavalBattleResolved     = onNavalBattleResolved,
+	RulerDied               = onRulerDied,
+	SuccessionResolved      = onSuccessionResolved,
 }
 
 function NotificationBroadcaster.setRemote(r)

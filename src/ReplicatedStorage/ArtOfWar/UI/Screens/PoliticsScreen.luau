@@ -7,14 +7,12 @@ local Colors = DesignSystem.Colors
 
 local PoliticsScreen = {}
 
+-- Three tabs: Court (ruler + meters + council), Estates, Reforms (government + ideology + policies).
+-- Doctrines moved to the Military screen; the 3-phase Laws system was retired.
 local TABS = {
-	{ key = "overview", label = "Overview" },
-	{ key = "government", label = "Government" },
+	{ key = "overview", label = "Court" },
 	{ key = "estates", label = "Estates" },
-	{ key = "leaders", label = "Leaders" },
-	{ key = "policies", label = "Policies" },
-	{ key = "laws", label = "Laws" },
-	{ key = "doctrines", label = "Doctrines" },
+	{ key = "reforms", label = "Reforms" },
 }
 
 local function val(v)
@@ -90,6 +88,71 @@ function PoliticsScreen.create(ctx)
 	local function govName(c)
 		local gov = registries.GovernmentTypes and c and registries.GovernmentTypes[c.governmentForm]
 		return gov and gov.displayName or (c and c.governmentForm)
+	end
+
+	-- Authority meter label adapts to government archetype (Crown / Republican / Chiefly).
+	local function authorityLabel(c)
+		local ga = registries.GovernmentArchetypes
+		if ga and ga.labelsFor and c then
+			local labels = ga.labelsFor(c.governmentForm)
+			if labels and labels.authority then return labels.authority end
+		end
+		return "Crown Authority"
+	end
+
+	local function rulerWord(c)
+		local ga = registries.GovernmentArchetypes
+		local labels = ga and ga.labelsFor and ga.labelsFor(c and c.governmentForm)
+		return (labels and labels.leaderWord) or "Ruler"
+	end
+
+	-- The ruler card sits at the top of the Court (overview) tab. Negative layoutOrders keep it
+	-- above the "Authority" section (order 1) without renumbering the meters.
+	local function renderRulerCard(body, c)
+		ScreenKit.section(body, rulerWord(c), -20)
+		local r = c and c.ruler
+		if not r then
+			ScreenKit.note(body, "The throne stands vacant.", -19)
+			return
+		end
+		ScreenKit.stat(body, {
+			icon = "Star",
+			label = (r.title or "Ruler") .. (r.isRegent and "  (Regent)" or ""),
+			value = string.format("%s %s", r.firstName or "", r.lastName or ""),
+			layoutOrder = -18,
+		})
+		ScreenKit.stat(body, { label = "Age", value = tostring(r.age or "\u{2014}"), mono = true, layoutOrder = -17 })
+		ScreenKit.stat(body, {
+			label = "ADM / DIP / MIL",
+			value = string.format("%d / %d / %d", r.adm or 0, r.dip or 0, r.mil or 0),
+			mono = true,
+			layoutOrder = -16,
+		})
+		local names = {}
+		for _, tid in (r.traits or {}) do
+			local t = registries.LeaderTraits and registries.LeaderTraits[tid]
+			names[#names + 1] = (t and t.displayName) or tid
+		end
+		if #names > 0 then
+			ScreenKit.note(body, table.concat(names, "  \u{00B7}  "), -15)
+		end
+		if c.heir then
+			ScreenKit.stat(body, {
+				label = "Heir",
+				value = string.format("%s %s (claim %d)", c.heir.firstName or "", c.heir.lastName or "", c.heir.legitimacyClaim or 0),
+				layoutOrder = -14,
+			})
+		else
+			local ga = registries.GovernmentArchetypes
+			local kind = ga and ga.get and ga.get(c.governmentForm).successionKind
+			if kind == "republican_term" then
+				ScreenKit.note(body, "The head of state serves a fixed term.", -14)
+			elseif kind == "elective" then
+				ScreenKit.note(body, "Succession is decided by election.", -14)
+			elseif kind == "tribal_strongest" then
+				ScreenKit.note(body, "The strongest claimant inherits.", -14)
+			end
+		end
 	end
 
 	local function openIdeologyPicker()
@@ -281,27 +344,44 @@ function PoliticsScreen.create(ctx)
 
 	local renderers = {
 		overview = function(body, c)
+			renderRulerCard(body, c)
 			ScreenKit.section(body, "Authority", 1)
+			local authCap = (c and c.crownAuthorityCap) or 100
+			ScreenKit.stat(body, {
+				icon = "PowerProj",
+				label = authorityLabel(c),
+				value = round(c and c.crownAuthority) .. " / " .. round(authCap),
+				progress = { value = c and c.crownAuthority or 0, max = authCap, color = "amber" },
+				layoutOrder = 2,
+			})
 			ScreenKit.stat(body, {
 				icon = "Legitimacy",
 				label = "Legitimacy",
 				value = round(c and c.legitimacy) .. "%",
 				progress = { value = c and c.legitimacy or 0, max = 100, color = "green" },
-				layoutOrder = 2,
+				layoutOrder = 3,
 			})
 			ScreenKit.stat(body, {
 				icon = "Stability",
 				label = "Stability",
 				value = signed(c and c.stability),
 				valueColor = (c and c.stability ~= nil) and (c.stability < 0 and "negative" or "positive") or nil,
-				layoutOrder = 3,
+				layoutOrder = 4,
+			})
+			local unrest = (c and c.unrest) or 0
+			ScreenKit.stat(body, {
+				label = "Unrest",
+				value = round(unrest) .. "%",
+				valueColor = unrest >= 50 and "negative" or (unrest >= 25 and "warning" or "positive"),
+				progress = { value = unrest, max = 100, color = unrest >= 50 and "red" or "amber" },
+				layoutOrder = 5,
 			})
 			ScreenKit.stat(body, {
 				icon = "PowerProj",
 				label = "Political Power",
 				value = val(c and c.politicalPower),
 				mono = true,
-				layoutOrder = 4,
+				layoutOrder = 6,
 			})
 			if c and c.prestige ~= nil then
 				ScreenKit.stat(body, {
@@ -309,8 +389,46 @@ function PoliticsScreen.create(ctx)
 					label = "Prestige",
 					value = signed(c.prestige),
 					valueColor = c.prestige < 0 and "negative" or "positive",
-					layoutOrder = 5,
+					layoutOrder = 7,
 				})
+			end
+
+			-- Council (ministers) — folded into the Court (was its own Leaders tab)
+			local slots = registries.LeaderSlots
+			if slots then
+				ScreenKit.section(body, "Council", 30)
+				local ordered = {}
+				for id, def in slots do
+					ordered[#ordered + 1] = { id = id, def = def }
+				end
+				table.sort(ordered, function(a, b)
+					return (a.def.order or 0) < (b.def.order or 0)
+				end)
+				local leaders = (c and c.leaders) or {}
+				local candidates = (c and c.leaderCandidates) or {}
+				local order = 30
+				for _, entry in ordered do
+					local leader = leaders[entry.id]
+					if entry.def.unlockedByDefault == false and not leader then
+						continue
+					end
+					order += 1
+					local row = ScreenKit.stat(body, {
+						label = entry.def.displayName or entry.id,
+						value = leader and (((leader.firstName or "") .. " " .. (leader.lastName or "")):gsub("%s+$", "")) or "Vacant",
+						valueColor = (not leader) and "negative" or nil,
+						layoutOrder = order,
+					})
+					if leader then
+						local b = Button.create({ parent = row, variant = "ghost", text = "Dismiss", width = 92, size = "sm", onClick = function() ctx.fire("DismissLeader", entry.id) end })
+						b.AnchorPoint = Vector2.new(1, 0.5)
+						b.Position = UDim2.fromScale(1, 0.5)
+					elseif count(candidates[entry.id]) > 0 then
+						local b = Button.create({ parent = row, variant = "secondary", text = "Appoint", width = 92, size = "sm", onClick = function() ctx.fire("AppointLeader", entry.id, 1) end })
+						b.AnchorPoint = Vector2.new(1, 0.5)
+						b.Position = UDim2.fromScale(1, 0.5)
+					end
+				end
 			end
 		end,
 		government = function(body, c)
@@ -408,32 +526,102 @@ function PoliticsScreen.create(ctx)
 			end
 		end,
 		estates = function(body, c)
-			ScreenKit.section(body, "Factions", 1)
 			local factions = c and c.factions
 			local ordered = {}
 			if type(factions) == "table" then
 				for key, record in factions do
 					local id = record.id or key
-					ordered[#ordered + 1] = { id = id, record = record }
+					if id ~= "crown" then
+						ordered[#ordered + 1] = { id = id, record = record }
+					end
 				end
 			end
 			if #ordered == 0 then
-				ScreenKit.note(body, "No active factions in the realm.", 2)
+				ScreenKit.note(body, "No estates in the realm.", 1)
 				return
 			end
 			table.sort(ordered, function(a, b)
 				return (a.record.clout or 0) > (b.record.clout or 0)
 			end)
-			for i, entry in ordered do
+
+			-- index privileges by estate
+			local privByEstate = {}
+			for pid, pdef in (registries.Privileges or {}) do
+				local list = privByEstate[pdef.estateId]
+				if not list then list = {}; privByEstate[pdef.estateId] = list end
+				list[#list + 1] = { id = pid, def = pdef }
+			end
+			local granted = (c and c.estatePrivileges) or {}
+
+			local order = 0
+			for _, entry in ordered do
 				local def = registries.Factions and registries.Factions[entry.id]
-				local clout = entry.record.clout or 0
-				local tier = entry.record.tier or "influential"
+				local rec = entry.record
+				local clout = rec.clout or 0
+				local loyalty = rec.loyalty or 50
+				local tier = rec.tier or "influential"
+
+				order += 1
+				ScreenKit.section(body, def and def.displayName or entry.id, order)
+				order += 1
 				ScreenKit.stat(body, {
-					label = def and def.displayName or entry.id,
+					label = "Influence",
 					value = tier:upper(),
 					valueColor = tierColor(tier),
 					progress = { value = clout * 100, max = 100, color = "amber" },
-					layoutOrder = 1 + i,
+					layoutOrder = order,
+				})
+				order += 1
+				ScreenKit.stat(body, {
+					label = "Loyalty",
+					value = round(loyalty) .. "%",
+					valueColor = loyalty >= 60 and "positive" or (loyalty < 35 and "negative" or nil),
+					progress = { value = loyalty, max = 100, color = loyalty < 35 and "red" or "green" },
+					layoutOrder = order,
+				})
+
+				local privList = privByEstate[entry.id] or {}
+				table.sort(privList, function(a, b)
+					return (a.def.displayName or a.id) < (b.def.displayName or b.id)
+				end)
+				for _, p in ipairs(privList) do
+					order += 1
+					local isGranted = granted[p.id] ~= nil
+					local capCost = p.def.authorityCap or 0
+					local row = ScreenKit.stat(body, {
+						label = p.def.displayName or p.id,
+						value = isGranted and "GRANTED" or (capCost ~= 0 and (tostring(capCost) .. " auth") or ""),
+						valueColor = isGranted and "positive" or "warning",
+						layoutOrder = order,
+					})
+					local btn = Button.create({
+						parent = row,
+						variant = isGranted and "danger" or "secondary",
+						text = isGranted and "Revoke" or "Grant",
+						width = 92,
+						size = "sm",
+						onClick = function()
+							if isGranted then
+								ctx.fire("RevokePrivilege", p.id)
+							else
+								ctx.fire("GrantPrivilege", p.id)
+							end
+						end,
+					})
+					btn.AnchorPoint = Vector2.new(1, 0.5)
+					btn.Position = UDim2.fromScale(1, 0.5)
+				end
+
+				order += 1
+				local seizeRow = ScreenKit.buttonRow(body, order)
+				Button.create({
+					parent = seizeRow,
+					variant = "secondary",
+					text = "Seize Power",
+					size = "sm",
+					onClick = function()
+						ctx.fire("SeizePower", entry.id)
+					end,
 				})
 			end
 		end,
@@ -519,7 +707,7 @@ function PoliticsScreen.create(ctx)
 				end
 			end
 		end,
-		policies = function(body, c)
+		policies = function(body, c, baseOrder)
 			local policies = registries.Policies
 			if not policies then
 				ScreenKit.note(body, "Policy data unavailable.", 1)
@@ -546,7 +734,7 @@ function PoliticsScreen.create(ctx)
 				end
 				return (a.def.displayName or a.id) < (b.def.displayName or b.id)
 			end)
-			local order = 0
+			local order = baseOrder or 0
 			for _, entry in ordered do
 				order += 1
 				ScreenKit.section(body, entry.def.displayName or entry.id, order)
@@ -713,6 +901,14 @@ function PoliticsScreen.create(ctx)
 		currentTab = tab
 		handle.clearBody()
 		local c = country()
+		-- Reforms = the old Government tab + the old Policies tab, merged. Policies render with an order
+		-- offset so they sit below the government/transition section instead of interleaving with it.
+		if tab == "reforms" then
+			renderers.government(handle.body, c)
+			ScreenKit.section(handle.body, "Edicts & Reforms", 99)
+			renderers.policies(handle.body, c, 100)
+			return
+		end
 		local fn = renderers[tab] or renderers.overview
 		fn(handle.body, c)
 	end
@@ -740,6 +936,32 @@ function PoliticsScreen.create(ctx)
 			parts[#parts + 1] = "stab:" .. tostring(c.stability)
 			parts[#parts + 1] = "pp:" .. tostring(c.politicalPower)
 			parts[#parts + 1] = "prest:" .. tostring(c.prestige)
+			parts[#parts + 1] = "auth:" .. round(c.crownAuthority or 0) .. "/" .. round(c.crownAuthorityCap or 100)
+			parts[#parts + 1] = "unrest:" .. round(c.unrest or 0)
+			local r = c.ruler
+			parts[#parts + 1] = "ruler:" .. (r and (tostring(r.id) .. "/" .. tostring(r.age) .. "/" .. (r.isRegent and "R" or "")) or "none")
+			parts[#parts + 1] = "heir:" .. (c.heir and tostring(c.heir.id) or "none")
+			local led = {}
+			for id, l in (c.leaders or {}) do led[#led + 1] = tostring(id) .. ":" .. tostring(l.id) end
+			for id, pool in (c.leaderCandidates or {}) do led[#led + 1] = "cand:" .. tostring(id) .. "=" .. count(pool) end
+			table.sort(led)
+			parts[#parts + 1] = "led:" .. table.concat(led, ",")
+		elseif tabKey == "reforms" then
+			parts[#parts + 1] = "gov:" .. tostring(c.governmentForm)
+			parts[#parts + 1] = "ideo:" .. tostring(c.ideology)
+			parts[#parts + 1] = "pp:" .. ppBucket
+			local tr = c.transition
+			parts[#parts + 1] = type(tr) == "table"
+					and string.format("tr:%s>%s@%s", tostring(tr.from), tostring(tr.to), tostring(tr.completesAtDay))
+				or "tr:none"
+			local active = {}
+			if type(c.activePolicies) == "table" then
+				for id in c.activePolicies do
+					active[#active + 1] = tostring(id)
+				end
+				table.sort(active)
+			end
+			parts[#parts + 1] = "pol:" .. table.concat(active, ",")
 		elseif tabKey == "government" then
 			parts[#parts + 1] = "gov:" .. tostring(c.governmentForm)
 			parts[#parts + 1] = "ideo:" .. tostring(c.ideology)
@@ -765,6 +987,23 @@ function PoliticsScreen.create(ctx)
 				table.sort(f)
 			end
 			parts[#parts + 1] = "fac:" .. table.concat(f, ",")
+			local loy = {}
+			if type(c.factions) == "table" then
+				for key, record in c.factions do
+					loy[#loy + 1] = tostring(record.id or key) .. "=" .. tostring(math.floor(record.loyalty or 50))
+				end
+				table.sort(loy)
+			end
+			parts[#parts + 1] = "loy:" .. table.concat(loy, ",")
+			local pr = {}
+			if type(c.estatePrivileges) == "table" then
+				for pid in c.estatePrivileges do
+					pr[#pr + 1] = tostring(pid)
+				end
+				table.sort(pr)
+			end
+			parts[#parts + 1] = "priv:" .. table.concat(pr, ",")
+			parts[#parts + 1] = "auth:" .. round(c.crownAuthority or 0)
 		elseif tabKey == "leaders" then
 			local l = {}
 			local leaders = c.leaders or {}

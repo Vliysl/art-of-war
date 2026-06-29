@@ -510,6 +510,157 @@ function Hud.openDiplomaticOffer(pact)
 	return screen.create(mergedCtx({ parent = layers.Modals, data = pact, onClose = function() end }))
 end
 
+-- ── Political event alert (RoN-style) ───────────────────────────────────────
+-- An event first appears as a small "!" chip above the bottom bar. Clicking it pops
+-- out the full EventCard window (draggable, non-blocking). Closing that window collapses
+-- back to the chip; choosing an option (or a server-side deadline auto-resolve) clears both.
+local eventAlert = nil -- { event, chip, window }
+local buildEventChip, openEventWindow
+
+local function destroyEventChip()
+	if eventAlert and eventAlert.chip then
+		eventAlert.chip:Destroy()
+		eventAlert.chip = nil
+	end
+end
+
+local function destroyEventWindow()
+	if eventAlert and eventAlert.window then
+		if eventAlert.window.destroy then
+			pcall(eventAlert.window.destroy)
+		end
+		eventAlert.window = nil
+	end
+end
+
+function buildEventChip()
+	if not eventAlert or eventAlert.chip then
+		return
+	end
+	-- Small SQUARE chip in the game's procedural button style: sharp corners (no UICorner),
+	-- surface fill + 1px border + subtle vertical gradient, amber accent to read as an alert.
+	local SIZE = 44
+	local chip = Instance.new("TextButton")
+	chip.Name = "EventAlert"
+	chip.AnchorPoint = Vector2.new(0, 1)
+	chip.Position = UDim2.new(0, 16, 1, -(16 + 96 + 10)) -- just above the 96px country bar
+	chip.Size = UDim2.fromOffset(SIZE, SIZE)
+	chip.BackgroundTransparency = 1
+	chip.AutoButtonColor = false
+	chip.Text = ""
+	chip.ZIndex = 41
+	chip:SetAttribute("AoWInputSink", true)
+	chip.Parent = layers.Hud
+
+	local bg = Instance.new("Frame")
+	bg.Name = "Bg"
+	bg.Size = UDim2.fromScale(1, 1)
+	bg.BackgroundColor3 = Colors.SurfaceElevated
+	bg.BorderSizePixel = 0
+	bg.ZIndex = chip.ZIndex
+	bg.Parent = chip
+	local grad = Instance.new("UIGradient")
+	grad.Rotation = 90
+	grad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(225, 225, 225)),
+	})
+	grad.Parent = bg
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Colors.Warning
+	stroke.Thickness = 1.5
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = bg
+
+	local bang = Instance.new("TextLabel")
+	bang.Name = "Bang"
+	bang.AnchorPoint = Vector2.new(0.5, 0.5)
+	bang.Position = UDim2.fromScale(0.5, 0.5)
+	bang.Size = UDim2.fromScale(1, 1)
+	bang.BackgroundTransparency = 1
+	bang.Text = "!"
+	bang.TextColor3 = Colors.Warning
+	bang.Font = Enum.Font.GothamBold
+	bang.TextSize = 26
+	bang.ZIndex = chip.ZIndex + 1
+	bang.Parent = chip
+
+	-- gentle border pulse so the alert catches the eye
+	pcall(function()
+		game:GetService("TweenService")
+			:Create(stroke, TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Transparency = 0.55 })
+			:Play()
+	end)
+
+	chip.MouseEnter:Connect(function()
+		bg.BackgroundColor3 = Colors.SurfaceOverlay
+	end)
+	chip.MouseLeave:Connect(function()
+		bg.BackgroundColor3 = Colors.SurfaceElevated
+	end)
+	chip.MouseButton1Click:Connect(function()
+		openEventWindow()
+	end)
+	eventAlert.chip = chip
+end
+
+function openEventWindow()
+	if not eventAlert then
+		return
+	end
+	destroyEventChip()
+	if eventAlert.window then
+		return
+	end
+	local mod = Screens:FindFirstChild("EventCard")
+	if not mod then
+		return
+	end
+	local ok, screen = pcall(require, mod)
+	if not ok or type(screen) ~= "table" or not screen.create then
+		warn("[AoW Hud] EventCard failed: " .. tostring(screen))
+		return
+	end
+	local ev = eventAlert.event
+	eventAlert.window = screen.create(mergedCtx({
+		parent = layers.Notifications, -- non-blocking layer → no scrim, map stays interactive
+		data = {
+			title = ev.title,
+			body = ev.body,
+			options = ev.options,
+			onChoose = function(optionId)
+				if ev.onChoose then
+					ev.onChoose(optionId)
+				end
+			end,
+			onMinimize = function()
+				if eventAlert then
+					eventAlert.window = nil
+					buildEventChip() -- collapse back to the "!" alert
+				end
+			end,
+		},
+	}))
+end
+
+function Hud.showEventAlert(event)
+	if not started then
+		return
+	end
+	if eventAlert and eventAlert.event and eventAlert.event.eventId == event.eventId then
+		return -- already alerting this event
+	end
+	Hud.hideEventAlert()
+	eventAlert = { event = event }
+	buildEventChip()
+end
+
+function Hud.hideEventAlert()
+	destroyEventWindow()
+	destroyEventChip()
+	eventAlert = nil
+end
+
 function Hud.isStarted()
 	return started
 end

@@ -43,6 +43,20 @@ local function tickPower(tickCtx)
 				tag = tag, delta = next - prev, total = next, cap = cap, source = "generation",
 			})
 		end
+
+		-- Crown Authority: passive drift toward the cap (cap is owned by EstateSystem and
+		-- lowered by granted privileges). Change-guarded just like PP above.
+		local wc = ctx.WorldConstants
+		local aCap = country.crownAuthorityCap or wc.CrownAuthorityCapBase
+		local aPrev = country.crownAuthority or wc.CrownAuthorityBase
+		local aNext = math.clamp(aPrev + wc.CrownAuthorityRegenPerTick, wc.CrownAuthorityMin, aCap)
+		if aNext ~= aPrev then
+			country.crownAuthority = aNext
+			ctx.WorldState.setCountry(tag, country)
+			ctx.EventBus.publish(ctx.Channels.CountryAuthorityChanged, {
+				tag = tag, total = aNext, cap = aCap, source = "regen",
+			})
+		end
 	end
 end
 
@@ -75,6 +89,34 @@ local function credit(tag, amount, reason)
 	return true
 end
 
+local function spendAuthority(tag, amount, reason)
+	if type(amount) ~= "number" or amount <= 0 then return false end
+	local country = ctx.WorldState.getCountry(tag)
+	if not country then return false end
+	local a = country.crownAuthority or ctx.WorldConstants.CrownAuthorityBase
+	if a < amount then return false end
+	country.crownAuthority = a - amount
+	ctx.WorldState.setCountry(tag, country)
+	ctx.EventBus.publish(ctx.Channels.CountryAuthorityChanged, {
+		tag = tag, total = country.crownAuthority, cap = country.crownAuthorityCap, source = reason or "spend",
+	})
+	return true
+end
+
+local function creditAuthority(tag, amount, reason)
+	if type(amount) ~= "number" or amount <= 0 then return false end
+	local country = ctx.WorldState.getCountry(tag)
+	if not country then return false end
+	local cap = country.crownAuthorityCap or ctx.WorldConstants.CrownAuthorityCapBase
+	local prev = country.crownAuthority or ctx.WorldConstants.CrownAuthorityBase
+	country.crownAuthority = math.clamp(prev + amount, ctx.WorldConstants.CrownAuthorityMin, cap)
+	ctx.WorldState.setCountry(tag, country)
+	ctx.EventBus.publish(ctx.Channels.CountryAuthorityChanged, {
+		tag = tag, total = country.crownAuthority, cap = cap, source = reason or "credit",
+	})
+	return true
+end
+
 local function snapshot(tag)
 	local country = ctx.WorldState.getCountry(tag)
 	if not country then return nil end
@@ -90,6 +132,8 @@ function PoliticalPower.register(context)
 	context.PoliticalPower = {
 		spend = spend,
 		credit = credit,
+		spendAuthority = spendAuthority,
+		creditAuthority = creditAuthority,
 		snapshot = snapshot,
 	}
 	context.TickScheduler.register({

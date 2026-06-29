@@ -530,6 +530,39 @@ function HudWiring.start(modules)
 		end
 	end)
 
+	-- Pop the political event card when the claimed country has an activeEvent (and close it
+	-- when the event is resolved/auto-resolved server-side). Mirrors the peace/trade/pact hooks.
+	local activeEventKey = nil
+	ClientStateCache.onChangePrefix("countries", function()
+		if not claimedTag then
+			return
+		end
+		local c = ClientStateCache.getCountry(claimedTag)
+		local ev = c and c.activeEvent
+		if ev and ev.eventId then
+			local key = tostring(ev.eventId) .. "@" .. tostring(ev.firedDay)
+			if key ~= activeEventKey then
+				activeEventKey = key
+				local capturedId = ev.eventId
+				Hud.showEventAlert({
+					eventId = capturedId,
+					title = ev.title,
+					body = ev.body,
+					options = ev.options,
+					onChoose = function(optionId)
+						fire("ResolveEvent", capturedId, optionId)
+					end,
+				})
+			end
+		elseif activeEventKey ~= nil then
+			-- Only tear down an alert THIS watcher opened (a server-driven event that has now
+			-- resolved). Client-side test alerts (Settings -> Test Mode) set no server activeEvent,
+			-- so without this guard the next countries delta would hide them after a single tick.
+			activeEventKey = nil
+			Hud.hideEventAlert()
+		end
+	end)
+
 	local timeSync = Remotes and Remotes:FindFirstChild("TimeSync")
 	if timeSync then
 		timeSync.OnClientEvent:Connect(function(packet)

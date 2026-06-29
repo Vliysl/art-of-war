@@ -235,6 +235,12 @@ function LeaderSystem.register(context)
 			local c = context.WorldState.getCountry(tag)
 			return c and c.leaders and c.leaders[slotId] or nil
 		end,
+		-- Phase 3: expose generation primitives so RulerSystem reuses one generator (no duplication).
+		generateName = generateName,
+		buildTraitPool = buildTraitPool,
+		pickTrait = pickTrait,
+		allocId = allocId,
+		rng = rng,
 	}
 	for k, v in pairs(context.LeaderSystem) do LeaderSystem[k] = v end
 end

@@ -19,6 +19,9 @@ export type ModifierDomain = string
 export type LeaderSlotId = string
 export type LeaderTraitId = string
 export type LeaderId = string
+export type PrivilegeId = string
+export type EventId = string
+export type RebellionId = string
 
 export type Date = {
 	year: number,
@@ -103,6 +106,18 @@ export type CountryRecord = {
 	expenseBreakdown: { [string]: number }?,
 	dailyConsumption: { [TradeGoodId]: number }?,
 	truces: { [CountryTag]: number }?,
+	-- Politics overhaul ("Authority & the Estates") — all optional, system-seeded, save-compatible
+	crownAuthority: number?,                                                    -- 0..cap, current Authority (Crown/Republican/Chiefly)
+	crownAuthorityCap: number?,                                                 -- 100 + Σ privilege.authorityCap (<=0 each)
+	unrest: number?,                                                            -- 0..100 country-level danger meter
+	estatePrivileges: { [PrivilegeId]: { grantedAt: number, estateId: FactionId } }?,
+	ruler: RulerRecord?,
+	heir: RulerRecord?,
+	succession: SuccessionRecord?,
+	activeEvent: CountryEventRecord?,
+	eventCooldowns: { [EventId]: number }?,
+	eventClock: { nextCheckDay: number?, lastFiredDay: number? }?,
+	rebellions: { [RebellionId]: RebellionRecord }?,
 }
 
 export type LawCheckpoint = {
@@ -120,6 +135,112 @@ export type LawPassRecord = {
 	ppSpent: number,
 	state: "in_progress" | "passed" | "failed" | "cancelled",
 	checkpoints: { LawCheckpoint },
+}
+
+-- ── Politics overhaul types ────────────────────────────────────────────────
+
+export type GovernmentArchetype = "monarchy" | "republic" | "tribal"
+export type SuccessionKind = "hereditary" | "elective" | "republican_term" | "tribal_strongest"
+
+export type RulerRecord = {
+	id: LeaderId,
+	firstName: string,
+	lastName: string,
+	title: string,
+	age: number,
+	bornDay: number,
+	adm: number,                 -- 0..6 ruler stats
+	dip: number,
+	mil: number,
+	traits: { LeaderTraitId },
+	legitimacyClaim: number,     -- 0..100, personal claim strength
+	isRegent: boolean?,
+	portraitId: number,
+}
+
+export type SuccessionRecord = {
+	kind: SuccessionKind,
+	candidates: { RulerRecord }?,
+	deadlineDay: number?,
+	reason: string?,             -- "death" | "term_end" | "disputed" | ...
+}
+
+export type EventEffects = {
+	authority: number?,
+	legitimacy: number?,
+	stability: number?,
+	unrest: number?,
+	politicalPower: number?,
+	treasury: number?,
+	estateLoyalty: { [FactionId]: number }?,
+	estateInfluence: { [FactionId]: number }?,
+	grantPrivilege: PrivilegeId?,
+	revokePrivilege: PrivilegeId?,
+	enactPolicy: PolicyId?,
+	setIdeology: IdeologyId?,
+	beginTransition: GovernmentTypeId?,
+	spawnRebellion: string?,     -- rebellion kind
+	chainEvent: EventId?,
+}
+
+export type CountryEventOption = {
+	id: string,
+	label: string,
+	tooltip: string?,
+	effects: EventEffects?,
+	aiWeight: number?,
+	isDefault: boolean?,         -- chosen on deadline auto-resolve / safest fallback
+}
+
+export type CountryEventRecord = {
+	eventId: EventId,
+	firedDay: number,
+	deadlineDay: number?,
+	context: { [string]: any }?,
+	options: { CountryEventOption },
+}
+
+export type RebellionRecord = {
+	id: RebellionId,
+	kind: string,                -- "peasant" | "noble" | "pretender" | "mob" | "clan" | ...
+	estateId: FactionId?,
+	armyIds: { ArmyId },
+	startedDay: number,
+	demands: EventEffects?,
+	targetIdeology: IdeologyId?,
+	targetGovernment: GovernmentTypeId?,
+}
+
+export type PrivilegeDef = {
+	id: PrivilegeId,
+	displayName: string,
+	estateId: FactionId,
+	grantBonus: { [ModifierDomain]: number },
+	influenceGain: number,
+	authorityCap: number,        -- negative: how much it lowers max Authority
+	loyaltyGain: number,
+	ideologyGate: IdeologyId?,
+	govGate: GovernmentTypeId?,
+	archetypeGate: GovernmentArchetype?,
+	description: string?,
+}
+
+export type GovernmentArchetypeDef = {
+	archetype: GovernmentArchetype,
+	successionKind: SuccessionKind,
+}
+
+export type PoliticalEventDef = {
+	id: EventId,
+	title: string,
+	body: string,
+	category: string?,
+	trigger: { [string]: any }?,
+	govArchetype: GovernmentArchetype?,
+	cooldownDays: number?,
+	weight: number?,
+	deadlineDays: number?,
+	options: { CountryEventOption },
 }
 
 export type LeaderSlotDef = {
@@ -164,7 +285,8 @@ export type FactionDef = {
 
 export type FactionRecord = {
 	id: FactionId,
-	clout: number,
+	clout: number,            -- "Influence": share of national power (existing field name kept)
+	loyalty: number?,         -- 0..100, how content the estate is with the crown/council/chief
 	tier: "marginalized" | "influential" | "powerful",
 	lastDelta: number?,
 }

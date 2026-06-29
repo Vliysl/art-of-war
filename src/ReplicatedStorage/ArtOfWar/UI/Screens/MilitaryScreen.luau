@@ -1,10 +1,12 @@
 local ScreenKit = require(script.Parent.ScreenKit)
+local Button = require(script.Parent.Parent.Components.Button)
 
 local MilitaryScreen = {}
 
 local TABS = {
 	{ key = "army", label = "Army" },
 	{ key = "navy", label = "Navy" },
+	{ key = "doctrines", label = "Doctrines" },
 }
 
 local function val(v)
@@ -12,6 +14,24 @@ local function val(v)
 		return "\u{2014}"
 	end
 	return tostring(v)
+end
+
+-- Compact "domain +X  ·  domain2 +Y" line for a modifiers table (doctrine effects preview).
+local function modifierLine(modifiers)
+	if type(modifiers) ~= "table" then
+		return nil
+	end
+	local parts = {}
+	for k, v in modifiers do
+		if type(v) == "number" and v ~= 0 then
+			parts[#parts + 1] = string.format("%s %s%g", k, v > 0 and "+" or "", v)
+		end
+	end
+	table.sort(parts)
+	if #parts == 0 then
+		return nil
+	end
+	return table.concat(parts, "  \u{2022}  ")
 end
 
 local function titleCase(text)
@@ -214,6 +234,73 @@ function MilitaryScreen.create(ctx)
 				ScreenKit.note(body, "No fleets at sea.", 6)
 			end
 		end,
+		doctrines = function(body)
+			local c = ctx.cache.getCountry(ctx.tag)
+			local slots = registries.DoctrineSlots
+			local doctrines = registries.Doctrines
+			if not slots or not doctrines then
+				ScreenKit.note(body, "Doctrine data unavailable.", 1)
+				return
+			end
+			local ordered = {}
+			for id, def in slots do
+				ordered[#ordered + 1] = { id = id, def = def }
+			end
+			table.sort(ordered, function(a, b)
+				return (a.def.order or 0) < (b.def.order or 0)
+			end)
+			local active = (c and c.doctrines) or {}
+			local order = 0
+			for _, slot in ordered do
+				order += 1
+				ScreenKit.section(body, string.format("%s  \u{00B7}  Tier %s", slot.def.displayName or slot.id, val(slot.def.tier)), order)
+				local options = {}
+				for id, def in doctrines do
+					if def.slot == slot.id then
+						options[#options + 1] = { id = id, def = def }
+					end
+				end
+				table.sort(options, function(a, b)
+					return (a.def.displayName or a.id) < (b.def.displayName or b.id)
+				end)
+				if #options == 0 then
+					order += 1
+					ScreenKit.note(body, "No doctrines for this slot.", order)
+				end
+				for _, opt in options do
+					local isActive = active[slot.id] == opt.id
+					order += 1
+					ScreenKit.stat(body, {
+						icon = "Star",
+						label = opt.def.displayName or opt.id,
+						value = isActive and "ACTIVE" or "",
+						valueColor = isActive and "positive" or nil,
+						layoutOrder = order,
+					})
+					if opt.def.description then
+						order += 1
+						ScreenKit.note(body, opt.def.description, order)
+					end
+					local mods = modifierLine(opt.def.modifiers)
+					if mods then
+						order += 1
+						ScreenKit.note(body, mods, order)
+					end
+					if not isActive then
+						order += 1
+						local row = ScreenKit.buttonRow(body, order)
+						Button.create({
+							parent = row,
+							variant = "secondary",
+							text = "Adopt",
+							onClick = function()
+								ctx.fire("SetDoctrine", opt.id)
+							end,
+						})
+					end
+				end
+			end
+		end,
 	}
 
 	local activeTab = "army"
@@ -247,6 +334,16 @@ function MilitaryScreen.create(ctx)
 			parts[#parts + 1] = "n:" .. #fleets
 			parts[#parts + 1] = "s:" .. shipTotal
 			parts[#parts + 1] = "f:" .. table.concat(items, ",")
+		elseif tabKey == "doctrines" then
+			local cc = ctx.cache.getCountry(ctx.tag)
+			local d = {}
+			if cc and type(cc.doctrines) == "table" then
+				for slot, opt in cc.doctrines do
+					d[#d + 1] = tostring(slot) .. "=" .. tostring(opt)
+				end
+				table.sort(d)
+			end
+			parts[#parts + 1] = "doc:" .. table.concat(d, ",")
 		else
 			if not country then
 				parts[#parts + 1] = "noclaim"

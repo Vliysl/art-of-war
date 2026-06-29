@@ -456,6 +456,26 @@ InputValidator.register("RepealPolicy", {
 InputValidator.register("CancelLaw", {
 	rate = { count = 2, window = 30 },
 })
+-- Politics overhaul ("Authority & the Estates")
+InputValidator.register("GrantPrivilege", {
+	schema = { { name = "privilegeId", type = "policyId" } },
+	rate = { count = 6, window = 15 },
+})
+InputValidator.register("RevokePrivilege", {
+	schema = { { name = "privilegeId", type = "policyId" } },
+	rate = { count = 6, window = 15 },
+})
+InputValidator.register("SeizePower", {
+	schema = { { name = "estateId", type = "policyId" } },
+	rate = { count = 4, window = 15 },
+})
+InputValidator.register("ResolveEvent", {
+	schema = {
+		{ name = "eventId", type = "policyId" },
+		{ name = "optionId", type = "policyId" },
+	},
+	rate = { count = 6, window = 10 },
+})
 InputValidator.register("AppointLeader", {
 	schema = {
 		{ name = "slot", type = "policyId" },
@@ -830,11 +850,8 @@ bindEvent("EnactPolicy", function(player, policyId)
 	if not auth then return end
 	local tag = auth.tagFor(player)
 	if not tag then return end
-	local lawSys = loadedSystems.LawSystem
-	if lawSys then
-		lawSys.startLawProcess(tag, policyId)
-		return
-	end
+	-- Phase 4: the 3-phase LawSystem is retired — policies enact instantly, with estate reactions
+	-- firing via the CountryPolicyEnacted subscription.
 	local polSys = loadedSystems.PolicySystem
 	if polSys then polSys.enact(tag, policyId, "voluntary") end
 end)
@@ -846,6 +863,39 @@ bindEvent("RepealPolicy", function(player, policyId)
 	local tag = auth.tagFor(player)
 	if not tag then return end
 	system.repeal(tag, policyId, "voluntary")
+end)
+
+-- Politics overhaul ("Authority & the Estates")
+bindEvent("GrantPrivilege", function(player, privilegeId)
+	local auth = authority()
+	if not auth or not context.EstateSystem then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	context.EstateSystem.grantPrivilege(tag, privilegeId)
+end)
+
+bindEvent("RevokePrivilege", function(player, privilegeId)
+	local auth = authority()
+	if not auth or not context.EstateSystem then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	context.EstateSystem.revokePrivilege(tag, privilegeId)
+end)
+
+bindEvent("SeizePower", function(player, estateId)
+	local auth = authority()
+	if not auth or not context.EstateSystem then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	context.EstateSystem.seizePower(tag, estateId)
+end)
+
+bindEvent("ResolveEvent", function(player, eventId, optionId)
+	local auth = authority()
+	if not auth or not context.EventSystem then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	context.EventSystem.resolveEvent(tag, eventId, optionId, false)
 end)
 
 bindEvent("SetResearch", function(player, techId)

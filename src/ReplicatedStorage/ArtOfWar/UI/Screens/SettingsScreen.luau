@@ -10,9 +10,12 @@ local Button = require(Components.Button)
 
 local SettingsScreen = {}
 
+local testCounter = 0
+
 local TABS = {
 	{ key = "general", label = "General" },
 	{ key = "controls", label = "Controls" },
+	{ key = "test", label = "Test Mode" },
 }
 
 local MENU_KEYS = {
@@ -123,6 +126,76 @@ function SettingsScreen.create(ctx)
 				ScreenKit.stat(body, { label = entry[1], value = entry[2], mono = true, layoutOrder = 20 + i })
 			end
 			ScreenKit.note(body, "Key rebinding is not yet available.", 40)
+		end,
+		test = function(body)
+			local Hud = require(script.Parent.Parent.Hud)
+			ScreenKit.section(body, "Event Notifications", 1)
+			ScreenKit.note(
+				body,
+				"Spawn a sample political event to preview the \"!\" alert and the draggable event window. Client-side preview only \u{2014} it does not affect your nation.",
+				2
+			)
+
+			local function spawn(title, bodyText, options)
+				testCounter += 1
+				Hud.showEventAlert({
+					eventId = "test_event_" .. testCounter,
+					title = title,
+					body = bodyText,
+					options = options,
+					onChoose = function(optionId)
+						Hud.notify({ kind = "info", title = "Test event", body = "You chose: " .. tostring(optionId) })
+						task.defer(function()
+							Hud.hideEventAlert()
+						end)
+					end,
+				})
+			end
+
+			local r1 = ScreenKit.buttonRow(body, 3)
+			Button.create({
+				parent = r1,
+				variant = "primary",
+				text = "Estate Demand (3 options)",
+				onClick = function()
+					spawn(
+						"A Demand from the Clergy",
+						"The clergy grow restless and press the ruler to confirm their ancient privileges. Concede, and they will be loyal but emboldened; refuse, and resentment will simmer.",
+						{
+							{ id = "grant", label = "Grant their privileges", tooltip = "+Loyalty and +Influence for the estate, \u{2212}Crown Authority." },
+							{ id = "refuse", label = "Refuse them", tooltip = "\u{2212}Loyalty and rising Unrest, but you keep (and gain) Authority." },
+							{ id = "bribe", label = "Buy them off with gold", tooltip = "Spend from the treasury to keep the peace without conceding power." },
+						}
+					)
+				end,
+			})
+
+			local r2 = ScreenKit.buttonRow(body, 4)
+			Button.create({
+				parent = r2,
+				variant = "secondary",
+				text = "Enlightenment (2 options)",
+				onClick = function()
+					spawn(
+						"The Spirit of the Age",
+						"Fashionable salons buzz with the new philosophy. The ruler may patronise the philosophes and ride the tide of reason \u{2014} at the cost of clerical goodwill.",
+						{
+							{ id = "embrace", label = "Patronise the philosophes", tooltip = "The philosophes warm to you; the clergy bristle." },
+							{ id = "rebuke", label = "Stand with the Church", tooltip = "The clergy approve; the philosophes are disappointed." },
+						}
+					)
+				end,
+			})
+
+			local r3 = ScreenKit.buttonRow(body, 5)
+			Button.create({
+				parent = r3,
+				variant = "ghost",
+				text = "Clear notification",
+				onClick = function()
+					Hud.hideEventAlert()
+				end,
+			})
 		end,
 	}
 

@@ -21,6 +21,19 @@ local function policyModifierSum(bundle, country, domain)
 	return sum
 end
 
+-- Estate privileges contribute their grantBonus exactly like an active policy.
+local function privilegeModifierSum(bundle, country, domain)
+	if not country.estatePrivileges or not bundle.privileges then return 0 end
+	local sum = 0
+	for privilegeId in country.estatePrivileges do
+		local def = bundle.privileges[privilegeId]
+		if def and def.grantBonus then
+			sum += def.grantBonus[domain] or 0
+		end
+	end
+	return sum
+end
+
 local function leaderModifierSum(bundle, country, domain)
 	if not country.leaders or not bundle.leaderTraits then return 0 end
 	local sum = 0
@@ -93,10 +106,11 @@ function ModifierStack.resolve(tag, domain)
 	local ideologyMod = sourceModifier(bundle.ideologies, country.ideology, domain)
 	local govMod = sourceModifier(bundle.governmentTypes, country.governmentForm, domain)
 	local policySum = policyModifierSum(bundle, country, domain)
+	local privilegeSum = privilegeModifierSum(bundle, country, domain)
 	local leaderSum = leaderModifierSum(bundle, country, domain)
 	local doctrineProduct = doctrineSlotProduct(bundle, country, domain)
 
-	local stacked = (1 + ideologyMod) * (1 + govMod) * (1 + policySum) * (1 + leaderSum) * doctrineProduct
+	local stacked = (1 + ideologyMod) * (1 + govMod) * (1 + policySum) * (1 + privilegeSum) * (1 + leaderSum) * doctrineProduct
 	local cap = ctx.WorldConstants.MultiplierCapEconomy
 	if country.transition then
 		local penalty = ctx.WorldConstants.TransitionStabilityPenalty or 0
@@ -113,9 +127,10 @@ function ModifierStack.resolveAdditive(tag, domain)
 	local ideologyMod = sourceModifier(bundle.ideologies, country.ideology, domain)
 	local govMod = sourceModifier(bundle.governmentTypes, country.governmentForm, domain)
 	local policySum = policyModifierSum(bundle, country, domain)
+	local privilegeSum = privilegeModifierSum(bundle, country, domain)
 	local leaderSum = leaderModifierSum(bundle, country, domain)
 	local doctrineSum = doctrineSlotSum(bundle, country, domain)
-	return ideologyMod + govMod + policySum + leaderSum + doctrineSum
+	return ideologyMod + govMod + policySum + privilegeSum + leaderSum + doctrineSum
 end
 
 function ModifierStack.register(context)

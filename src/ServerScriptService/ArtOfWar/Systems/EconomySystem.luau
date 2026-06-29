@@ -72,8 +72,16 @@ end
 
 -- Built-in providers ----------------------------------------------------------
 
+-- High unrest suppresses tax collection. (UnrestTaxPenaltyPerPoint was declared in WorldConstants
+-- but never read until now — this is what gives unrest its economic teeth.)
+local function unrestTaxFactor(country)
+	local unrest = (country and country.unrest) or 0
+	local penalty = math.clamp(unrest * (ctx.WorldConstants.UnrestTaxPenaltyPerPoint or 0), 0, 1)
+	return 1 - penalty
+end
+
 local function provider_taxIncome(country, _ctx, _days)
-	return cachedDailyTax[country.tag] or 0
+	return (cachedDailyTax[country.tag] or 0) * unrestTaxFactor(country)
 end
 
 local function provider_exports(country, _ctx, _days)
@@ -267,7 +275,7 @@ end
 
 local function dailyTaxOf(tag)
 	if cachedDailyTax[tag] == nil then recomputeProductionFor(tag) end
-	return cachedDailyTax[tag] or 0
+	return (cachedDailyTax[tag] or 0) * unrestTaxFactor(ctx.WorldState.getCountry(tag))
 end
 
 local function dailyProductionOf(tag)
