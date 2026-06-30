@@ -1231,8 +1231,8 @@ function ArmyPanel.create(ctx)
 		subtitle = subtitleStr,
 		anchorPoint = Vector2.new(1, 1),
 		position = UDim2.new(1, -16, 1, -16),
-		size = UDim2.fromOffset(360, 0),
-		autoHeight = true,
+		-- Fixed height matching the province panel (was autoHeight, which made it tiny for small armies).
+		size = UDim2.fromOffset(360, 620),
 	})
 
 	-- Small owner crest tucked into the shell header, left of the title (the body no longer carries one).

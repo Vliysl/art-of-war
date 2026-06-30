@@ -147,7 +147,7 @@ function CountryBar.create(config)
 	local root = Instance.new("Frame")
 	root.Name = "CountryStrip"
 	root.AnchorPoint = Vector2.new(0, 1)
-	root.Position = config.position or UDim2.new(0, 16, 1, -16)
+	root.Position = config.position or UDim2.new(0, 16, 1, -8)
 	root.Size = config.size or UDim2.fromOffset(900, 96)
 	root.BackgroundTransparency = 1
 	root.ZIndex = z
@@ -263,7 +263,7 @@ function CountryBar.create(config)
 	menuRow.Name = "MenuRow"
 	menuRow.AnchorPoint = Vector2.new(0, 1)
 	menuRow.Position = UDim2.new(0, 94, 1, 0)
-	menuRow.Size = UDim2.new(1, -94, 0, 22)
+	menuRow.Size = UDim2.new(1, -94, 0, Responsive.isTouch() and 28 or 22)
 	menuRow.BackgroundTransparency = 1
 	menuRow.Parent = content
 	local ml = Instance.new("UIListLayout")
@@ -300,6 +300,9 @@ function CountryBar.create(config)
 			AutomaticSize = Enum.AutomaticSize.X,
 			Size = UDim2.new(0, 0, 1, 0),
 		})
+		if Responsive.isTouch() then
+			lbl.TextSize = lbl.TextSize + 3
+		end
 		local underline = Instance.new("Frame")
 		underline.Name = "Underline"
 		underline.AnchorPoint = Vector2.new(0, 1)

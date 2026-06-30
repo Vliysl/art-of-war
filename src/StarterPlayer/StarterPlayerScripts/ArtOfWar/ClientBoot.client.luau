@@ -6,6 +6,17 @@ local aow = rs:WaitForChild("ArtOfWar")
 local mods = aow:WaitForChild("Modules", 10)
 if not mods then return end
 
+-- Lock to landscape: the HUD is laid out for landscape, so portrait would break it.
+do
+	local lp = game:GetService("Players").LocalPlayer
+	local pg = lp and lp:FindFirstChildOfClass("PlayerGui")
+	if pg then
+		pcall(function()
+			pg.ScreenOrientation = Enum.ScreenOrientation.LandscapeSensor
+		end)
+	end
+end
+
 local function safeRequire(name)
 	local module = mods:FindFirstChild(name)
 	if not module then

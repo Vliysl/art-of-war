@@ -7,16 +7,21 @@ local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
 local Colors = DesignSystem.Colors
 local Typography = DesignSystem.Typography
 local Icons = DesignSystem.Icons
+local Responsive = DesignSystem.Responsive
 local SimClock = require(script.Parent.Parent.Parent.Modules.SimClock)
 local WorldConstants = require(script.Parent.Parent.Parent.Shared.WorldConstants)
 local RunService = game:GetService("RunService")
 
 local ProvinceOverview = {}
 
-local ROW_HEIGHT = 44
-local BTN_SIZE = 36
+-- Recruit/build rows are a little larger on touch (taller row, bigger diamond + glyph + font) so they're
+-- comfortable to tap and read on a phone. Button.create already makes the button >=44 tall on touch, so
+-- bumping BTN_SIZE (the width) is what actually enlarges the width-limited diamond.
+local TOUCH = Responsive.isTouch()
+local ROW_HEIGHT = TOUCH and 52 or 44
+local BTN_SIZE = TOUCH and 44 or 36
 local CONTENT_X = BTN_SIZE + 10
-local GLYPH_SIZE = 22
+local GLYPH_SIZE = TOUCH and 28 or 22
 
 -- Repeatable tier-upgrade buildings are surfaced as + buttons on the tier row, not as list rows.
 local TIER_BUILDINGS = { improve_infrastructure = "infra", develop_province = "dev", walls = "fort" }
@@ -245,6 +250,9 @@ local function actionRow(parent, cfg)
 	name.TextYAlignment = Enum.TextYAlignment.Center
 	name.TextTruncate = Enum.TextTruncate.AtEnd
 	Typography.apply(name, "bodyMd")
+	if TOUCH then
+		name.TextSize = name.TextSize + 2
+	end
 	name.Parent = row
 
 	if cfg.value then
@@ -257,6 +265,9 @@ local function actionRow(parent, cfg)
 		value.TextColor3 = Colors.TextPrimary
 		value.TextXAlignment = Enum.TextXAlignment.Right
 		Typography.apply(value, "value")
+		if TOUCH then
+			value.TextSize = value.TextSize + 2
+		end
 		value.Parent = row
 	end
 
