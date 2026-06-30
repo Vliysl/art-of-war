@@ -5,7 +5,6 @@ local Spacing = DesignSystem.Spacing
 local Icons = DesignSystem.Icons
 local Shells = DesignSystem.Shells
 local Responsive = DesignSystem.Responsive
-local Platform = require(script.Parent.Parent.Parent.Modules.Platform)
 local Components = script.Parent.Parent.Components
 local TabBar = require(Components.TabBar)
 local SectionDivider = require(Components.SectionDivider)
@@ -20,15 +19,21 @@ function ScreenKit.open(ctx, opts)
 	local headerHeight = (hasSub and 60 or 44) + (hasTabs and 38 or 0)
 
 	local panelSize = opts.size or UDim2.new(0, opts.width or 440, 1, -132)
-	-- On touch, clamp an offset panel width to the phone viewport (accounting for the HUD UIScale) so
-	-- panels don't overflow; the scroll body keeps its row heights. Desktop / scale-width panels unchanged.
-	if Platform.isTouch and panelSize.X.Scale == 0 and panelSize.X.Offset > 0 then
+	-- On touch, clamp offset width/height to the phone viewport (÷ the HUD's Responsive UIScale). Without
+	-- the HEIGHT clamp a bottom-anchored fixed-height panel runs its header/tabs off the top of a short
+	-- landscape screen (so tabs vanish). The scroll body keeps row heights; desktop / scale dims unchanged.
+	if Responsive.isTouch() then
 		local cam = workspace.CurrentCamera
-		local vpX = (cam and cam.ViewportSize.X) or 1280
-		local maxW = (vpX - 24) / (Platform.scale or 1)
-		if panelSize.X.Offset > maxW then
-			panelSize = UDim2.new(0, math.floor(maxW), panelSize.Y.Scale, panelSize.Y.Offset)
+		local vp = (cam and cam.ViewportSize) or Vector2.new(1280, 720)
+		local layerScale = Responsive.computeScale()
+		local sx, sy = panelSize.X, panelSize.Y
+		if sx.Scale == 0 and sx.Offset > 0 then
+			sx = UDim.new(0, math.min(sx.Offset, math.floor((vp.X - 24) / layerScale)))
 		end
+		if sy.Scale == 0 and sy.Offset > 0 then
+			sy = UDim.new(0, math.min(sy.Offset, math.floor((vp.Y - 64) / layerScale)))
+		end
+		panelSize = UDim2.new(sx.Scale, sx.Offset, sy.Scale, sy.Offset)
 	end
 	local root = Shells.create(opts.shell or "panel_large_shell", {
 		Name = opts.name or "Screen",

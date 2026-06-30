@@ -915,8 +915,8 @@ function HudWiring.start(modules)
 				onClick = doDeselect,
 			})
 			deselectBtn.Name = "TouchDeselect"
-			deselectBtn.AnchorPoint = Vector2.new(0.5, 1)
-			deselectBtn.Position = UDim2.new(0.5, 0, 1, -(16 + 96 + 10)) -- above the country bar
+			deselectBtn.AnchorPoint = Vector2.new(0, 0)
+			deselectBtn.Position = UDim2.fromOffset(68, 16) -- top-left, just right of the settings gear
 			deselectBtn:SetAttribute("AoWInputSink", true)
 		end
 	end
