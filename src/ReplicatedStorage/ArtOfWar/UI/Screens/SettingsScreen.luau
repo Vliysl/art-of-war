@@ -170,6 +170,15 @@ function SettingsScreen.create(ctx)
 				return p .. "%"
 			end)
 
+			ScreenKit.section(body, "Controls", 13)
+			toggleRow(body, "Invert Map Drag", function()
+				return lp == nil or lp:GetAttribute("InvertDrag") ~= false
+			end, function(on)
+				if lp then
+					lp:SetAttribute("InvertDrag", on)
+				end
+			end, 14)
+
 			ScreenKit.section(body, "Map Mode", 4)
 			ScreenKit.note(body, "Switch between commanding the map and walking your ruler across it.", 5)
 			local row = ScreenKit.buttonRow(body, 6)

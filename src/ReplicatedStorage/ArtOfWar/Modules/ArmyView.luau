@@ -284,15 +284,15 @@ local function abbrevMen(n)
 end
 
 -- Shared overhead palette/fonts: match the in-world city/battle labels (Garamond serif, dark plate,
--- brown hairline, gold accents). FACE_COUNT mirrors UIStyle.FontFace.CinzelBold.
+-- brown hairline, gold accents). FACE_COUNT = the regiment-count font (Merriweather SemiBold).
 local OVH_PLATE = Color3.fromRGB(18, 12, 8)
 local OVH_HAIRLINE = Color3.fromRGB(60, 40, 22)
 local OVH_CREAM = Color3.fromRGB(248, 240, 218)
-local FACE_COUNT = Font.new("rbxasset://fonts/families/Garamond.json", Enum.FontWeight.Heavy, Enum.FontStyle.Normal)
+local FACE_COUNT = Font.new("rbxasset://fonts/families/Merriweather.json", Enum.FontWeight.SemiBold, Enum.FontStyle.Normal)
 local FACE_TAG_MONO = Font.new("rbxasset://fonts/families/RobotoMono.json", Enum.FontWeight.Bold, Enum.FontStyle.Normal)
 local OVH_BORDER = Color3.fromRGB(58, 47, 31) -- province-panel CountryBadge subtle border
 local OVH_TAGWHITE = Color3.fromRGB(245, 241, 232) -- province-panel CountryBadge tag colour
-local BANNER_SCALE = 0.85 -- constant on-screen label size (keeps aspect ratio); the size knob
+local BANNER_SCALE = 0.6 -- constant on-screen label size (keeps aspect ratio); the size knob (original was 0.85)
 -- A Roblox BillboardGui with an Offset Size GROWS on-screen as the camera gets farther (the "too big
 -- when zoomed out" quirk). To hold a CONSTANT on-screen size we counter it every frame: scale the label
 -- by LABEL_REF_DISTANCE / (camera->army distance). Labels also hide past LABEL_HIDE_ZOOM for a clean

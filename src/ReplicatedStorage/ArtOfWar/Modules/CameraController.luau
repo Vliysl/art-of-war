@@ -44,7 +44,7 @@ local Config = {
 	MAP_CENTER_X     = WorldConstants.MapCenterX,
 	MAP_CENTER_Z     = WorldConstants.MapCenterZ,
 	MAP_Y            = 0,
-	MIN_ZOOM         = 44,    -- scaled for 2048 map (was 400 @ 18665; same ratio)
+	MIN_ZOOM         = 20,    -- lowered so the camera can push in close for inspection (was 44)
 	MAX_ZOOM         = 700,   -- capped so the camera can't pull back past the ~2048-wide map (was 2400)
 	DEFAULT_ZOOM     = 500,   -- starting / wide view (was 990)
 	ZOOM_SPEED       = 0.14,
@@ -66,6 +66,8 @@ local Config = {
 		[Enum.KeyCode.Right] = Vector3.new(-1, 0, 0),
 	},
 }
+-- <1 damps pinch-zoom; with the incremental pinch math (TouchPinch handler) this fixes the over-sensitive pinch.
+Config.PINCH_SENSITIVITY = 0.6
 
 local targetPos = Vector3.new(Config.MAP_CENTER_X, Config.MAP_Y, Config.MAP_CENTER_Z)
 local targetZoom = Config.DEFAULT_ZOOM
@@ -78,6 +80,22 @@ local keysDown = {}
 local connections = {}
 local initialized = false
 local active = false
+local dragInverted = true -- "drag the map" feel (player-toggleable via the InvertDrag setting); default on
+local lastPinchScale = 1
+
+-- Drag-invert preference (LocalPlayer attribute "InvertDrag"; nil/true = inverted). Cached + live-updated.
+task.spawn(function()
+	local lp = Players.LocalPlayer
+	while not lp do
+		task.wait()
+		lp = Players.LocalPlayer
+	end
+	local function refresh()
+		dragInverted = lp:GetAttribute("InvertDrag") ~= false
+	end
+	refresh()
+	lp:GetAttributeChangedSignal("InvertDrag"):Connect(refresh)
+end)
 
 local function wrapX(x)
 	local halfW = Config.MAP_WIDTH / 2
@@ -191,9 +209,9 @@ local function wireConnections()
 			local worldPerPixel = (2 * currentZoom * math.tan(math.rad(camera.FieldOfView * 0.5))) / math.max(vp.Y, 1)
 			local scale = worldPerPixel * Config.DRAG_SENSITIVITY
 			targetPos = Vector3.new(
-				wrapX(dragCamStart.X - delta.X * scale),
+				wrapX(dragCamStart.X + (dragInverted and 1 or -1) * delta.X * scale),
 				Config.MAP_Y,
-				clampZ(dragCamStart.Z - delta.Y * scale)
+				clampZ(dragCamStart.Z + (dragInverted and 1 or -1) * delta.Y * scale)
 			)
 		end
 		if input.UserInputType == Enum.UserInputType.MouseWheel then
@@ -218,9 +236,9 @@ local function wireConnections()
 			local worldPerPixel = (2 * currentZoom * math.tan(math.rad(camera.FieldOfView * 0.5))) / math.max(vp.Y, 1)
 			local s = worldPerPixel * Config.DRAG_SENSITIVITY
 			targetPos = Vector3.new(
-				wrapX(dragCamStart.X - totalTranslation.X * s),
+				wrapX(dragCamStart.X + (dragInverted and 1 or -1) * totalTranslation.X * s),
 				Config.MAP_Y,
-				clampZ(dragCamStart.Z - totalTranslation.Y * s)
+				clampZ(dragCamStart.Z + (dragInverted and 1 or -1) * totalTranslation.Y * s)
 			)
 		elseif state == Enum.UserInputState.End or state == Enum.UserInputState.Cancel then
 			isDragging = false
@@ -230,11 +248,17 @@ local function wireConnections()
 	-- Two-finger pinch to zoom
 	connections[#connections + 1] = UserInputService.TouchPinch:Connect(function(_, scale, _, state, processed)
 		if not active or processed then return end
-		if state == Enum.UserInputState.Change then
-			-- scale > 1 = pinch-out (fingers spreading) = zoom in (closer to map = smaller targetZoom)
-			if scale and scale > 0 then
-				targetZoom = math.clamp(targetZoom / scale, Config.MIN_ZOOM, Config.MAX_ZOOM)
-			end
+		-- TouchPinch's `scale` is CUMULATIVE since the gesture began. Dividing the running targetZoom by it
+		-- every event compounded (way over-sensitive); instead apply only the incremental ratio since the
+		-- last event, damped by PINCH_SENSITIVITY (<1). scale > 1 = fingers spreading = zoom in.
+		if state == Enum.UserInputState.Begin then
+			lastPinchScale = (scale and scale > 0) and scale or 1
+		elseif state == Enum.UserInputState.Change and scale and scale > 0 then
+			local ratio = (lastPinchScale / scale) ^ Config.PINCH_SENSITIVITY
+			lastPinchScale = scale
+			targetZoom = math.clamp(targetZoom * ratio, Config.MIN_ZOOM, Config.MAX_ZOOM)
+		elseif state == Enum.UserInputState.End or state == Enum.UserInputState.Cancel then
+			lastPinchScale = 1
 		end
 	end)
 

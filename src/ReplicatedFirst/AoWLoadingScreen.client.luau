@@ -1,6 +1,7 @@
 local ReplicatedFirst = game:GetService("ReplicatedFirst")
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
+local rs = game:GetService("ReplicatedStorage")
 
 ReplicatedFirst:RemoveDefaultLoadingScreen()
 
@@ -110,14 +111,86 @@ task.spawn(function()
 	end
 end)
 
+local skipped = false
+local skipWrap = nil -- the Skip button, built lazily (in the real UI button style) only if loading drags on
+
+-- Reveal a Skip button only if loading drags on (quick loads never flash it). It is built in the game's
+-- real UI button style via the shared Button component, and wrapped in a CanvasGroup so the whole button
+-- (fill + stroke + label) fades in/out uniformly as one surface.
+task.spawn(function()
+	task.wait(4)
+	if not running or skipped then
+		return
+	end
+
+	local wrap = Instance.new("CanvasGroup")
+	wrap.Name = "SkipButton"
+	wrap.AnchorPoint = Vector2.new(0.5, 1)
+	wrap.Position = UDim2.new(0.5, 0, 1, -36)
+	wrap.Size = UDim2.fromOffset(168, 50)
+	wrap.BackgroundTransparency = 1
+	wrap.GroupTransparency = 1
+	wrap.Parent = bg
+
+	local built = false
+	local ok, Button = pcall(function()
+		local aow = rs:WaitForChild("ArtOfWar", 5)
+		local comps = aow and aow:WaitForChild("UI", 5):WaitForChild("Components", 5):WaitForChild("Button", 5)
+		return comps and require(comps)
+	end)
+	if ok and Button then
+		local btn = Button.create({
+			parent = wrap,
+			variant = "secondary",
+			text = "Skip",
+			width = 150,
+			onClick = function()
+				skipped = true
+			end,
+		})
+		btn.AnchorPoint = Vector2.new(0.5, 0.5)
+		btn.Position = UDim2.fromScale(0.5, 0.5)
+		built = true
+	end
+	if not built then
+		-- Fallback (component not replicated yet): a button matching the same dark fill + stroke, sharp corners.
+		local fb = Instance.new("TextButton")
+		fb.Size = UDim2.fromScale(1, 1)
+		fb.BackgroundColor3 = Color3.fromRGB(38, 33, 26)
+		fb.AutoButtonColor = false
+		fb.Text = "Skip"
+		fb.TextColor3 = Color3.fromRGB(232, 220, 198)
+		fb.Font = Enum.Font.GothamMedium
+		fb.TextSize = 17
+		fb.BorderSizePixel = 0
+		fb.Parent = wrap
+		local st = Instance.new("UIStroke")
+		st.Color = Color3.fromRGB(120, 96, 50)
+		st.Thickness = 1
+		st.Parent = fb
+		fb.Activated:Connect(function()
+			skipped = true
+		end)
+	end
+
+	skipWrap = wrap
+	if running and not skipped then
+		TweenService:Create(wrap, entrance, { GroupTransparency = 0 }):Play()
+	end
+end)
+
 if not game:IsLoaded() then
 	game.Loaded:Wait()
 end
 
 local deadline = os.clock() + 75
 while os.clock() < deadline do
-	local map = workspace:FindFirstChild("ArtOfWarMap")
-	if map and map:GetAttribute("mapPainted") then
+	if skipped then
+		break
+	end
+	-- Wait for the FULL client boot (HUD built + map painted), not just the map, so UI doesn't pop in
+	-- after the cover fades. ClientBoot sets AoWBootComplete at the very end of its boot.
+	if player:GetAttribute("AoWBootComplete") then
 		break
 	end
 	task.wait(0.1)
@@ -131,6 +204,9 @@ TweenService:Create(title, exit, { TextTransparency = 1 }):Play()
 TweenService:Create(subtitle, exit, { TextTransparency = 1 }):Play()
 TweenService:Create(status, exit, { TextTransparency = 1 }):Play()
 TweenService:Create(divider, exit, { BackgroundTransparency = 1 }):Play()
+if skipWrap then
+	TweenService:Create(skipWrap, exit, { GroupTransparency = 1 }):Play()
+end
 
 task.wait(0.75)
 if gui then

@@ -292,3 +292,38 @@ if Remotes then
 	local Command = Remotes:FindFirstChild("Command")
 	if Command then Command:FireServer("ready") end
 end
+
+-- Hold the loading cover until the client is genuinely RENDERED, not just data-ready. The HUD is built
+-- synchronously above (HudWiring.start) and the map is painted in the deferred task; the old 2-frame wait
+-- was too short, so the HUD/colours hadn't drawn yet and the UI "popped in" after the cover faded. Now:
+-- wait for mapPainted, confirm the HUD ScreenGui is present, then let several REAL render frames pass
+-- (layout + first GPU draw) before signalling. The loading screen's 75s deadline + Skip are fallbacks.
+task.spawn(function()
+	local Players = game:GetService("Players")
+	local RunService = game:GetService("RunService")
+	local plr = Players.LocalPlayer
+	local stopAt = os.clock() + 75
+	while os.clock() < stopAt do
+		if map and map:GetAttribute("mapPainted") then
+			break
+		end
+		task.wait(0.1)
+	end
+	-- Confirm the persistent HUD ScreenGui exists (built synchronously in the main flow above). Bounded so
+	-- a failed HUD build can't hang boot -- the render-frame settle + deadline still uncover the map.
+	local pg = plr and plr:FindFirstChildOfClass("PlayerGui")
+	if pg then
+		local hudDeadline = os.clock() + 5
+		while os.clock() < hudDeadline and not pg:FindFirstChild("AoW_Hud") do
+			task.wait(0.05)
+		end
+	end
+	-- Several rendered frames so the HUD lays out (UIListLayout / AutomaticSize / UIScale) and the map
+	-- colours are actually on-screen before the cover fades.
+	for _ = 1, 12 do
+		RunService.RenderStepped:Wait()
+	end
+	if plr then
+		plr:SetAttribute("AoWBootComplete", true)
+	end
+end)
