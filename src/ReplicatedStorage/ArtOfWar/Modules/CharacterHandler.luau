@@ -3,6 +3,7 @@ local CharacterHandler = {}
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
 local WorldConstants = require(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Shared"):WaitForChild("WorldConstants"))
 
@@ -10,6 +11,34 @@ local currentMode = WorldConstants.MapModeDefault
 local bodyConnection = nil
 local sprintActive = false
 local lastFieldPosition = nil
+
+-- Field-mode toroidal X-wrap. The world is periodic in X (period MapWidth): the camera
+-- (CameraController.wrapX) and the map visuals (LeftWrap/RightWrap, cloned at +/-MapWidth) already wrap,
+-- but the walking character did not -- crossing a seam ran it off the FieldFloor into the cosmetic water.
+-- Mirror the camera's wrap on the HumanoidRootPart so it teleports cleanly to the matching point on the
+-- opposite edge. The client owns its own character, so the move replicates to the server and other players.
+local WRAP_WIDTH = WorldConstants.MapWidth
+local WRAP_HALF = WorldConstants.MapHalfWidth
+local WRAP_CENTER_X = WorldConstants.MapCenterX
+local seamWrapConnection = nil
+
+local function wrapFieldCharacter()
+	if currentMode ~= "field" then return end
+	local player = Players.LocalPlayer
+	local char = player and player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+	local rel = hrp.Position.X - WRAP_CENTER_X
+	if rel >= WRAP_HALF or rel < -WRAP_HALF then
+		-- Shift the HRP by a whole number of map widths so X folds back into [-half, half) -- matching
+		-- CameraController.wrapX and the LeftWrap/RightWrap clones (offset by +/-MapWidth). The shift is an
+		-- EXACT integer multiple of MapWidth, so Y/Z, facing and velocity carry over and the destination
+		-- terrain is identical to the source. floor() (not a single +/-width) resolves a multi-width
+		-- lag-spike overshoot in one step.
+		local widths = math.floor((rel + WRAP_HALF) / WRAP_WIDTH)
+		hrp.CFrame = hrp.CFrame - Vector3.new(widths * WRAP_WIDTH, 0, 0)
+	end
+end
 
 local function defaultSpawnCFrame()
 	return CFrame.new(WorldConstants.MapCenterX, WorldConstants.FieldSpawnHeight, WorldConstants.MapCenterZ)
@@ -170,6 +199,11 @@ function CharacterHandler.start()
 
 	if player.Character then hookCharacter(player.Character) end
 	player.CharacterAdded:Connect(hookCharacter)
+
+	-- Wrap the field-mode character across the X seam each frame, after physics has moved it (no-op in
+	-- command mode / when no character).
+	if seamWrapConnection then seamWrapConnection:Disconnect() end
+	seamWrapConnection = RunService.Heartbeat:Connect(wrapFieldCharacter)
 end
 
 return CharacterHandler

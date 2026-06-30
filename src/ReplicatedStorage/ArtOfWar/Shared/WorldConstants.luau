@@ -7,6 +7,9 @@ WorldConstants.MapHalfWidth = WorldConstants.MapWidth * 0.5
 WorldConstants.MapHalfDepth = WorldConstants.MapDepth * 0.5
 WorldConstants.MapCenterX = 0
 WorldConstants.MapCenterZ = 0
+-- Extra invisible FieldFloor (FieldCollider) overhang past each X seam, so the field-mode character
+-- wrap (CharacterHandler) always has ground under the player at the instant it teleports across.
+WorldConstants.FieldSeamMargin = 120
 
 WorldConstants.ScenarioStartYear = 1750
 WorldConstants.ScenarioStartMonth = 1

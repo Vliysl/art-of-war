@@ -11,9 +11,15 @@ local function stampGrid(parent, constants)
 	local topY = constants.FieldColliderTopY or 6
 	local centerY = topY - thickness * 0.5
 
-	local cols = math.ceil(width / MAX_AXIS)
+	-- Extend the floor past each X seam so the field-mode toroidal wrap (CharacterHandler) always has
+	-- ground under the player at the instant it teleports across -- even if a lag spike overshoots the
+	-- seam before the wrap fires. Z is unchanged (the pole barriers bound it).
+	local seamMargin = constants.FieldSeamMargin or 120
+	local floorWidth = width + seamMargin * 2
+
+	local cols = math.ceil(floorWidth / MAX_AXIS)
 	local rows = math.ceil(depth / MAX_AXIS)
-	local tileW = width / cols
+	local tileW = floorWidth / cols
 	local tileD = depth / rows
 
 	local folder = Instance.new("Folder")
@@ -35,7 +41,7 @@ local function stampGrid(parent, constants)
 			part.Material = Enum.Material.SmoothPlastic
 			part.Size = Vector3.new(tileW, thickness, tileD)
 			part.Position = Vector3.new(
-				centerX - width * 0.5 + tileW * (ix + 0.5),
+				centerX - floorWidth * 0.5 + tileW * (ix + 0.5),
 				centerY,
 				centerZ - depth * 0.5 + tileD * (iz + 0.5)
 			)
