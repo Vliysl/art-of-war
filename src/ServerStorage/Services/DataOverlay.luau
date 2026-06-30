@@ -712,7 +712,7 @@ local COUNTRY_REF_FIELDS = {
 	ideology = "ideologies",
 }
 
-local PROVINCE_REF_ARRAY_FIELDS = { cores = "countries" }
+local PROVINCE_REF_ARRAY_FIELDS = { cores = "countries", claims = "countries" }
 local COUNTRY_REF_ARRAY_FIELDS = {
 	acceptedCultures = "cultures",
 	historicalRivals = "countries",
@@ -977,13 +977,16 @@ function DataOverlay.applyTo(bundle)
 				local incoming = rec
 				if type(rec) == "table" then
 					local owner = rec.ownerTag
-					if rec.controllerTag == nil or rec.cores == nil then
+					if rec.controllerTag == nil or rec.cores == nil or rec.claims == nil then
 						incoming = table.clone(rec)
 						if incoming.controllerTag == nil then
 							incoming.controllerTag = owner
 						end
 						if incoming.cores == nil then
 							incoming.cores = (owner and owner ~= "NONE") and { owner } or {}
+						end
+						if incoming.claims == nil then
+							incoming.claims = {}
 						end
 					end
 				end

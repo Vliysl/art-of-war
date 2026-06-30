@@ -11,6 +11,7 @@ local nextPactSeq = 0
 -- proposePeace`, NOT `local function`, so they fill these upvalues).
 local isClaimedTag
 local proposePeace
+local annexCountry -- full-annex helper (transfer all + delete); defined below, called by endWar's annex_all
 
 local function generateWarId(a, b)
 	nextWarSeq += 1
@@ -409,15 +410,28 @@ local function applyTermsWhitePeace(war)
 end
 
 local function applyTermsAnnexOccupied(war, winnerTag, loserTag)
-	-- Provinces where winnerTag controls but loserTag owns -> ownership flips to winnerTag
-	for id, province in ctx.WorldState.allProvinces() do
-		if province.controllerTag == winnerTag and province.ownerTag == loserTag then
-			local oldOwner = province.ownerTag
+	-- Provinces where winnerTag controls but loserTag owns -> ownership flips to winnerTag.
+	-- Iterate the winner's CONTROLLED provinces (O(controlled)) rather than scanning the whole world.
+	local ids = {}
+	if ctx.ProvinceRegistry and ctx.ProvinceRegistry.byController then
+		for _, id in ipairs(ctx.ProvinceRegistry.byController(winnerTag)) do
+			ids[#ids + 1] = id
+		end
+	else
+		for id, province in ctx.WorldState.allProvinces() do
+			if province.controllerTag == winnerTag and province.ownerTag == loserTag then
+				ids[#ids + 1] = id
+			end
+		end
+	end
+	for _, id in ipairs(ids) do
+		local province = ctx.WorldState.getProvince(id)
+		if province and province.controllerTag == winnerTag and province.ownerTag == loserTag then
 			province.ownerTag = winnerTag
 			ctx.WorldState.setProvince(id, province)
 			ctx.EventBus.publish(ctx.Channels.ProvinceOwnershipChanged, {
 				provinceId = id,
-				oldOwner = oldOwner,
+				oldOwner = loserTag,
 				newOwner = winnerTag,
 			})
 		end
@@ -575,6 +589,95 @@ local function offerPeaceToHuman(war, terms)
 	proposePeace(ai, human, offerTerms)
 end
 
+-- ============ Phase 3: war-score peace conference ============
+-- A "conference" peace carries a list of demands; the proposer (winner) spends war score to enact them.
+-- Costs are computed ONCE at proposal time (computeConferenceCost stamps demand.computedCost + totalCost)
+-- and only RE-VALIDATED against the live score at apply -- never recomputed. Cores cost more; claims less.
+local function provinceHasTag(list, tag)
+	return list ~= nil and table.find(list, tag) ~= nil
+end
+
+-- The winner's war score in THEIR favour (war.score is attacker-POV).
+local function scoreInFavour(war, winnerTag)
+	local s = war.score or 0
+	return (winnerTag == war.attackerTag) and s or -s
+end
+
+local function conferenceDemandCost(demand, winnerTag, loserTag)
+	local C = ctx.WorldConstants
+	local t = demand.type
+	if t == "annex_all" then
+		local n = (ctx.ProvinceRegistry and #ctx.ProvinceRegistry.byOwner(loserTag)) or 0
+		return (C.PeaceAnnexBaseCost or 20) + n * (C.PeaceAnnexPerProvinceCost or 10)
+	elseif t == "vassalize" then
+		return C.PeaceVassalizeCost or 90
+	elseif t == "take_province" then
+		local p = ctx.WorldState.getProvince(demand.provinceId)
+		if not p or p.ownerTag ~= loserTag then return math.huge end -- not the loser's -> not takeable
+		local cost = C.PeaceTakeProvinceCost or 12
+		if provinceHasTag(p.cores, loserTag) then cost *= (C.PeaceCoreMultiplier or 1.5) end
+		if provinceHasTag(p.claims, winnerTag) then cost *= (C.PeaceClaimCostDiscount or 0.7) end
+		return cost
+	end
+	return math.huge -- unknown demand type
+end
+
+-- Stamp each demand's cost + the total onto the terms (called at proposal time). Returns the total.
+local function computeConferenceCost(terms, winnerTag, loserTag)
+	local total = 0
+	for _, d in ipairs(terms.demands or {}) do
+		local c = conferenceDemandCost(d, winnerTag, loserTag)
+		d.computedCost = c
+		total += c
+	end
+	terms.totalCost = total
+	return total
+end
+
+-- Take a single province in a conference (owner + controller -> winner).
+local function takeConferenceProvince(winnerTag, loserTag, provinceId)
+	local p = ctx.WorldState.getProvince(provinceId)
+	if not p or p.ownerTag ~= loserTag then return end
+	p.ownerTag = winnerTag
+	if p.controllerTag == loserTag then
+		p.controllerTag = winnerTag
+	end
+	ctx.WorldState.setProvince(provinceId, p)
+	ctx.EventBus.publish(ctx.Channels.ProvinceOwnershipChanged, {
+		provinceId = provinceId,
+		oldOwner = loserTag,
+		newOwner = winnerTag,
+	})
+end
+
+-- Apply a conference's demands, re-validating the STORED total vs the live score (no recompute).
+-- annexCountry/isClaimedTag are forward-declared upvalues; setSubject/applyTermsAnnexOccupied are above.
+local function applyConference(war, winnerTag, loserTag, terms, warId)
+	if (terms.totalCost or 0) > scoreInFavour(war, winnerTag) + 1e-6 then
+		return false
+	end
+	for _, d in ipairs(terms.demands or {}) do
+		if d.type == "annex_all" then
+			if ctx.WorldConstants.EnableFullAnnex and not isClaimedTag(loserTag) then
+				annexCountry(winnerTag, loserTag, warId)
+			else
+				applyTermsAnnexOccupied(war, winnerTag, loserTag)
+			end
+		elseif d.type == "vassalize" then
+			setSubject(winnerTag, loserTag)
+		elseif d.type == "take_province" then
+			takeConferenceProvince(winnerTag, loserTag, d.provinceId)
+		end
+	end
+	-- Zombie cleanup: an AI loser reduced to 0 provinces (and not already deleted) is removed.
+	if ctx.WorldConstants.EnableFullAnnex and not isClaimedTag(loserTag)
+		and ctx.WorldState.getCountry(loserTag)
+		and ctx.ProvinceRegistry and #ctx.ProvinceRegistry.byOwner(loserTag) == 0 then
+		annexCountry(winnerTag, loserTag, warId)
+	end
+	return true
+end
+
 local function endWar(warId, terms, opts)
 	local war = ctx.WorldState.getWar(warId)
 	if not war or war.status ~= "active" then return false, "war_not_active" end
@@ -600,6 +703,29 @@ local function endWar(warId, terms, opts)
 		local winner = terms.proposerTag or war.attackerTag
 		local loser = (winner == war.attackerTag) and war.defenderTag or war.attackerTag
 		applyTermsAnnexOccupied(war, winner, loser)
+		-- Zombie cleanup: an AI loser reduced to 0 owned provinces is deleted outright, so it can't
+		-- linger owning un-occupied land (the old bug). Humans are never auto-deleted.
+		if ctx.WorldConstants.EnableFullAnnex and not isClaimedTag(loser)
+			and ctx.ProvinceRegistry and #ctx.ProvinceRegistry.byOwner(loser) == 0 then
+			annexCountry(winner, loser, warId)
+		end
+	elseif termType == "annex_all" then
+		-- Full annexation: take ALL the loser's provinces + delete it. Gated by EnableFullAnnex; a human
+		-- loser is never deleted (fall back to taking only occupied land).
+		local winner = terms.proposerTag or war.attackerTag
+		local loser = (winner == war.attackerTag) and war.defenderTag or war.attackerTag
+		if ctx.WorldConstants.EnableFullAnnex and not isClaimedTag(loser) then
+			annexCountry(winner, loser, warId)
+		else
+			applyTermsAnnexOccupied(war, winner, loser)
+		end
+	elseif termType == "conference" then
+		-- Phase 3: spend war score on a basket of demands (take provinces / annex_all / vassalize).
+		local winner = terms.proposerTag or war.attackerTag
+		local loser = (winner == war.attackerTag) and war.defenderTag or war.attackerTag
+		if ctx.WorldConstants.EnablePeaceConference then
+			applyConference(war, winner, loser, terms, warId)
+		end
 	elseif termType == "vassalize" then
 		-- The proposer (winner) makes the loser its subject.
 		local winner = terms.proposerTag or war.attackerTag
@@ -787,8 +913,13 @@ local function aiWouldAccept(war, fromTag, toTag, terms)
 	if terms.type == "annex_occupied" then
 		local n = occupiedProvinceCount(fromTag, toTag)
 		cost = (C.PeaceAnnexBaseCost or 20) + n * (C.PeaceAnnexPerProvinceCost or 10)
+	elseif terms.type == "annex_all" then
+		local n = (ctx.ProvinceRegistry and #ctx.ProvinceRegistry.byOwner(toTag)) or 0
+		cost = (C.PeaceAnnexBaseCost or 20) + n * (C.PeaceAnnexPerProvinceCost or 10)
 	elseif terms.type == "vassalize" then
 		cost = C.PeaceVassalizeCost or 90
+	elseif terms.type == "conference" then
+		cost = terms.totalCost or 0
 	else
 		cost = C.PeaceWhitePeaceCost or 0
 	end
@@ -826,11 +957,23 @@ function proposePeace(fromTag, toTag, terms) -- fills the forward-declared upval
 	local war = findActiveWar(fromTag, toTag)
 	if not war then return false, nil, "no_war" end
 	terms = terms or { type = "white_peace" }
-	if terms.type ~= "white_peace" and terms.type ~= "annex_occupied" and terms.type ~= "vassalize" then
+	if terms.type ~= "white_peace" and terms.type ~= "annex_occupied" and terms.type ~= "vassalize" and terms.type ~= "annex_all" and terms.type ~= "conference" then
 		return false, nil, "bad_terms"
 	end
 	-- Stamp proposer for annex resolution
 	terms.proposerTag = fromTag
+
+	-- Phase 3 conference: compute + stamp demand costs now; reject if the proposer can't afford them or
+	-- the feature is disabled. (Costs are re-validated, not recomputed, at apply.)
+	if terms.type == "conference" then
+		if not ctx.WorldConstants.EnablePeaceConference then
+			return false, nil, "bad_terms"
+		end
+		local cost = computeConferenceCost(terms, fromTag, toTag)
+		if cost > scoreInFavour(war, fromTag) + 1e-6 then
+			return false, nil, "insufficient_war_score"
+		end
+	end
 
 	cancelOutstandingProposalsBetween(fromTag, toTag)
 
@@ -1185,34 +1328,108 @@ local function releaseSubject(overlordTag, subjectTag)
 	return true
 end
 
--- Absorb a subject: end its wars, transfer ALL its owned provinces to the overlord, then delete the
--- now-empty nation (CapitalSystem/EconomySystem react to ProvinceOwnershipChanged automatically).
+-- Phase 4: voluntarily release a formable nation from your cores (independent, or as a puppet). Creates
+-- the nation (NationFactory), transfers + cores its homeland provinces, and optionally subjugates it.
+local function releaseNation(holderTag, formableTag, asPuppet)
+	if not ctx.WorldConstants.EnableFormables then return false, "disabled" end
+	if not ctx.FormableSystem or not ctx.NationFactory then return false, "unavailable" end
+	local def = ctx.FormableSystem.getDefinition(formableTag)
+	if not def or def.canRelease == false then return false, "not_releasable" end
+	if not def.requiredProvinceIds or #def.requiredProvinceIds == 0 then return false, "no_provinces" end
+	if ctx.WorldState.getCountry(formableTag) then return false, "already_exists" end
+	for _, id in ipairs(def.requiredProvinceIds) do
+		local p = ctx.WorldState.getProvince(id)
+		if not p or p.ownerTag ~= holderTag then return false, "must_own_all" end
+	end
+	local holder = ctx.WorldState.getCountry(holderTag)
+	local capProv = ctx.WorldState.getProvince(def.requiredProvinceIds[1])
+	ctx.NationFactory.create(formableTag, {
+		displayName = def.displayName,
+		color = def.color,
+		flag = def.flag,
+		capitalProvinceId = def.requiredProvinceIds[1],
+		primaryCulture = capProv and capProv.culture,
+		stateReligion = capProv and capProv.religion,
+		governmentForm = holder and holder.governmentForm,
+		ideology = holder and holder.ideology,
+	})
+	for _, id in ipairs(def.requiredProvinceIds) do
+		local p = ctx.WorldState.getProvince(id)
+		if p and p.ownerTag == holderTag then
+			p.ownerTag = formableTag
+			p.controllerTag = formableTag
+			p.cores = p.cores or {}
+			if not table.find(p.cores, formableTag) then
+				table.insert(p.cores, formableTag)
+			end
+			ctx.WorldState.setProvince(id, p)
+			ctx.EventBus.publish(ctx.Channels.ProvinceOwnershipChanged, {
+				provinceId = id,
+				oldOwner = holderTag,
+				newOwner = formableTag,
+			})
+		end
+	end
+	if asPuppet then
+		setSubject(holderTag, formableTag)
+	end
+	ctx.EventBus.publish(ctx.Channels.SubjectReleased, {
+		overlordTag = holderTag,
+		subjectTag = formableTag,
+	})
+	return true
+end
+
+-- Full annexation (shared): end the loser's OTHER active wars (skip exceptWarId -- the war currently
+-- being concluded, if any), transfer ALL its owned provinces to the winner (owner + controller), then
+-- delete the now-empty nation. O(owned) via ProvinceRegistry.byOwner. CapitalSystem / EconomySystem /
+-- ProvinceStamper / StateReplicator all react to ProvinceOwnershipChanged automatically. Callers gate
+-- the consent / human checks. `function` (not `local function`) fills the forward-declared upvalue.
+function annexCountry(winnerTag, loserTag, exceptWarId)
+	for _, war in getActiveWarsFor(loserTag) do
+		if war.id ~= exceptWarId then
+			endWar(war.id, { type = "white_peace", forced = true, reason = "annexed" }, { consented = true })
+		end
+	end
+	-- Snapshot the id list (byOwner returns the live bucket, which we mutate as we reassign owners).
+	local ids = {}
+	if ctx.ProvinceRegistry and ctx.ProvinceRegistry.byOwner then
+		for _, id in ipairs(ctx.ProvinceRegistry.byOwner(loserTag)) do
+			ids[#ids + 1] = id
+		end
+	else
+		for id, province in ctx.WorldState.allProvinces() do
+			if province.ownerTag == loserTag then
+				ids[#ids + 1] = id
+			end
+		end
+	end
+	for _, id in ipairs(ids) do
+		local province = ctx.WorldState.getProvince(id)
+		if province and province.ownerTag == loserTag then
+			province.ownerTag = winnerTag
+			if province.controllerTag == loserTag then
+				province.controllerTag = winnerTag
+			end
+			ctx.WorldState.setProvince(id, province)
+			ctx.EventBus.publish(ctx.Channels.ProvinceOwnershipChanged, {
+				provinceId = id,
+				oldOwner = loserTag,
+				newOwner = winnerTag,
+			})
+		end
+	end
+	ctx.WorldState.deleteCountry(loserTag)
+end
+
+-- Absorb a subject: clear the subject link, then full-annex it (AI subjects only).
 local function annexSubject(overlordTag, subjectTag)
 	if overlordOf(subjectTag) ~= overlordTag then return false, "not_your_subject" end
 	-- A human-controlled nation can never be annexed away (that would end their wars + delete their
 	-- country with no consent). Overlord annexation is an AI-subject-only mechanic.
 	if isClaimedTag(subjectTag) then return false, "cannot_annex_player" end
-	for _, war in getActiveWarsFor(subjectTag) do
-		-- subjectTag is AI here; the subject is being absorbed, so its wars must end (consented).
-		endWar(war.id, { type = "white_peace", forced = true, reason = "annexed" }, { consented = true })
-	end
-	for id, province in ctx.WorldState.allProvinces() do
-		if province.ownerTag == subjectTag then
-			local oldOwner = province.ownerTag
-			province.ownerTag = overlordTag
-			if province.controllerTag == subjectTag then
-				province.controllerTag = overlordTag
-			end
-			ctx.WorldState.setProvince(id, province)
-			ctx.EventBus.publish(ctx.Channels.ProvinceOwnershipChanged, {
-				provinceId = id,
-				oldOwner = oldOwner,
-				newOwner = overlordTag,
-			})
-		end
-	end
 	clearSubject(overlordTag, subjectTag)
-	ctx.WorldState.deleteCountry(subjectTag)
+	annexCountry(overlordTag, subjectTag)
 	ctx.EventBus.publish(ctx.Channels.SubjectAnnexed, {
 		overlordTag = overlordTag,
 		subjectTag = subjectTag,
@@ -1516,10 +1733,20 @@ local function onWarDeclared(payload)
 	end
 end
 
+-- Phase 2: does `tag` hold a claim on this province? Claims live on the province (single source of
+-- truth) -- a direct membership read. Feeds the peace-conference cost math + CB checks (Phase 3).
+-- Returns false while EnableCores is off, so claim discounts/CBs stay inert until the phase is enabled.
+local function hasClaimOn(tag, provinceId)
+	if not ctx.WorldConstants.EnableCores then return false end
+	local p = ctx.WorldState.getProvince(provinceId)
+	return p ~= nil and p.claims ~= nil and table.find(p.claims, tag) ~= nil
+end
+
 function DiplomacySystem.register(context)
 	ctx = context
 	local api = {
 		declareWar = declareWar,
+		hasClaimOn = hasClaimOn,
 		proposePeace = proposePeace,
 		acceptPeace = acceptPeace,
 		rejectPeace = rejectPeace,
@@ -1546,6 +1773,7 @@ function DiplomacySystem.register(context)
 		isSubject = isSubject,
 		overlordOf = overlordOf,
 		releaseSubject = releaseSubject,
+		releaseNation = releaseNation,
 		annexSubject = annexSubject,
 		getOutgoingPacts = getOutgoingPacts,
 		getIncomingPacts = getIncomingPacts,

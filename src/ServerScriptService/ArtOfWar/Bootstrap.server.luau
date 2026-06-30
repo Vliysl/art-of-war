@@ -633,7 +633,7 @@ InputValidator.register("DeclareWar", {
 InputValidator.register("ProposePeace", {
 	schema = {
 		{ name = "targetTag", type = "countryTag" },
-		{ name = "terms", type = "shallowTable" },
+		{ name = "terms", type = "peaceTerms" },
 	},
 	rate = { count = 4, window = 30 },
 })
@@ -685,6 +685,14 @@ InputValidator.register("ReleaseSubject", {
 })
 InputValidator.register("AnnexSubject", {
 	schema = { { name = "subjectTag", type = "countryTag" } },
+	rate = { count = 4, window = 30 },
+})
+InputValidator.register("FormNation", {
+	schema = { { name = "formableTag", type = "string" } },
+	rate = { count = 4, window = 15 },
+})
+InputValidator.register("ReleaseNation", {
+	schema = { { name = "formableTag", type = "string" }, { name = "asPuppet", type = "any" } },
 	rate = { count = 4, window = 30 },
 })
 
@@ -1379,6 +1387,24 @@ bindEvent("AnnexSubject", function(player, subjectTag)
 	local tag = auth.tagFor(player)
 	if not tag then return end
 	system.annexSubject(tag, subjectTag)
+end)
+
+bindEvent("FormNation", function(player, formableTag)
+	local auth = authority()
+	local system = context.FormableSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.formNation(tag, formableTag)
+end)
+
+bindEvent("ReleaseNation", function(player, formableTag, asPuppet)
+	local auth = authority()
+	local system = loadedSystems.DiplomacySystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.releaseNation(tag, formableTag, asPuppet == true)
 end)
 
 

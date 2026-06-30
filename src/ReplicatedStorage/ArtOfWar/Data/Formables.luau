@@ -1,0 +1,29 @@
+-- Formable / releasable nation definitions (Phase 4). A definition is a nation you can FORM by holding
+-- its required territory (you adopt its identity, core that land, and gain a bonus) and/or RELEASE from
+-- your cores (as an independent nation or a puppet). Province ids are MAP PART NUMBERS (schema v3+).
+-- Custom definitions authored in the owner suite (Phase 6) are stored in DataStore and merged on top of
+-- these at runtime via FormableSystem.addDefinition.
+--
+-- Schema (keyed by formable tag):
+--   [tag] = {
+--     displayName         = string,             -- name shown once formed / released
+--     color               = { r, g, b },        -- 0-255 map colour
+--     flag                = string?,             -- "rbxassetid://..." crest (optional)
+--     requiredProvinceIds = { ProvinceId },      -- provinces that must be held to form; also become its cores
+--     formReqs            = { ... }?,             -- reserved for extra conditions (tech/culture/...); nil = none
+--     formBonuses         = { stability = n? }?,  -- applied to the former on formation
+--     canForm             = boolean?,             -- default true
+--     canRelease          = boolean?,             -- default true
+--   }
+--
+-- Example (fill requiredProvinceIds with real map-part numbers via the Data Editor / Phase 6 suite):
+--   GBR_EMPIRE = {
+--     displayName = "British Empire",
+--     color = { 200, 40, 40 },
+--     requiredProvinceIds = { 183, 184 },
+--     formBonuses = { stability = 1 },
+--     canForm = true,
+--     canRelease = true,
+--   },
+
+return {}
