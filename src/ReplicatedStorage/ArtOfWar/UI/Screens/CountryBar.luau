@@ -6,6 +6,7 @@ local Icons = DesignSystem.Icons
 local Shells = DesignSystem.Shells
 local CountryBadge = require(script.Parent.Parent.Components.CountryBadge)
 local Tooltip = require(script.Parent.Parent.Components.Tooltip)
+local Platform = require(script.Parent.Parent.Parent.Modules.Platform)
 
 local CountryBar = {}
 
@@ -151,6 +152,28 @@ function CountryBar.create(config)
 	root.BackgroundTransparency = 1
 	root.ZIndex = z
 	root:SetAttribute("AoWInputSink", true)
+
+	-- The bar's art + element offsets are baked against a fixed 900x96, so it can't reflow. On touch we
+	-- uniformly scale it down to fit the phone's width (accounting for the HUD's own UIScale via
+	-- Platform.scale). Desktop is untouched.
+	if Platform.isTouch then
+		local fit = Instance.new("UIScale")
+		fit.Name = "TouchFit"
+		fit.Parent = root
+		local function refit()
+			local cam = workspace.CurrentCamera
+			local vpX = (cam and cam.ViewportSize.X) or 1280
+			fit.Scale = math.clamp((vpX - 24) / (900 * (Platform.scale or 1)), 0.4, 1)
+		end
+		refit()
+		local cam = workspace.CurrentCamera
+		if cam then
+			local conn = cam:GetPropertyChangedSignal("ViewportSize"):Connect(refit)
+			root.Destroying:Connect(function()
+				conn:Disconnect()
+			end)
+		end
+	end
 
 	local bg = Shells.create("hud_country_bar_bg", { ZIndex = z })
 	bg.Name = "Bg"

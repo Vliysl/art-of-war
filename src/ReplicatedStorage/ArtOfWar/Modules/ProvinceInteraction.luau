@@ -5,6 +5,8 @@ local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
 local GuiService = game:GetService("GuiService")
 
+local Platform = require(script.Parent:WaitForChild("Platform"))
+
 local DEBOUNCE_FRAMES = 1
 local HOVER_INTERVAL = 1 / 30
 local RAY_LENGTH = 200000
@@ -143,6 +145,8 @@ local mb2Down = false
 local mb2DownProvince = nil
 local mb2Moved = false
 local mb2Accum = 0
+local touchDownPos = nil
+local touchMoved = false
 local rightClickArmed = function()
 	return true
 end
@@ -410,6 +414,12 @@ function ProvinceInteraction.init()
 	end
 
 	connections[#connections + 1] = RunService.RenderStepped:Connect(function(dt)
+		-- No cursor hover on touch: GetMouseLocation reports the last TAP, so this loop would constantly
+		-- "hover" the last-tapped tile (spurious tooltip / path-preview). Touch users get info from the
+		-- tap -> province panel instead.
+		if Platform.isTouch then
+			return
+		end
 		hoverClock += dt
 		if hoverClock < HOVER_INTERVAL then
 			return
@@ -477,6 +487,12 @@ function ProvinceInteraction.init()
 		if processed then
 			return
 		end
+		-- Touch tap: track the press; resolve as a tap (select/move) or a drag (camera pan) on release.
+		if input.UserInputType == Enum.UserInputType.Touch then
+			touchDownPos = Vector2.new(input.Position.X, input.Position.Y)
+			touchMoved = false
+			return
+		end
 		if input.KeyCode == Enum.KeyCode.Escape then
 			setSelection(nil)
 			return
@@ -512,9 +528,50 @@ function ProvinceInteraction.init()
 				updateDragRect(mb1DownPos, Vector2.new(mp.X, mp.Y))
 			end
 		end
+		-- Touch drag past the threshold = a pan (handled by CameraController.TouchPan), not a tap.
+		if touchDownPos and input.UserInputType == Enum.UserInputType.Touch then
+			local p = input.Position
+			if math.abs(p.X - touchDownPos.X) > CLICK_DRAG_THRESHOLD
+				or math.abs(p.Y - touchDownPos.Y) > CLICK_DRAG_THRESHOLD then
+				touchMoved = true
+			end
+		end
 	end)
 
 	connections[#connections + 1] = UserInputService.InputEnded:Connect(function(input, processed)
+		-- Touch tap = select / move (mirrors left-click + the tap-to-move rule). A moved touch was a drag
+		-- (camera pan), not a tap. GetMouseLocation tracks the last touch, so the existing raycast helpers
+		-- resolve at the tap point (same coordinate space as the desktop path).
+		if input.UserInputType == Enum.UserInputType.Touch then
+			local downPos = touchDownPos
+			local moved = touchMoved
+			touchDownPos = nil
+			touchMoved = false
+			if not downPos or moved or processed then
+				return
+			end
+			if isMouseOverUI() then
+				return
+			end
+			-- 1) Tapped one of our own armies -> classifier selects/stacks it.
+			if tryClassifierRaycasts() then
+				clearSelectionSilent()
+				clearMultiSelection()
+				return
+			end
+			local ok, province = pcall(getProvinceAtMouse, true)
+			-- 2) Units already selected + tapped a province -> MOVE there (tap-to-move).
+			if ok and province and rightClickArmed() then
+				if onRightClicked then
+					onRightClicked(province)
+				end
+				return
+			end
+			-- 3) Otherwise select/inspect the tapped province (or deselect on empty water).
+			clearMultiSelection()
+			setSelection(ok and province or nil)
+			return
+		end
 		if input.UserInputType == Enum.UserInputType.MouseButton2 then
 			local wasDown, province, moved = mb2Down, mb2DownProvince, mb2Moved
 			mb2Down, mb2DownProvince, mb2Moved, mb2Accum = false, nil, false, 0

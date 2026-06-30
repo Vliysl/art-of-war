@@ -3,18 +3,79 @@ local SprintController = {}
 local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local CharacterHandler = require(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Modules"):WaitForChild("CharacterHandler"))
+local aow = ReplicatedStorage:WaitForChild("ArtOfWar")
+local CharacterHandler = require(aow:WaitForChild("Modules"):WaitForChild("CharacterHandler"))
+local Players = game:GetService("Players")
+local Platform = require(aow.Modules:WaitForChild("Platform"))
+local Button = require(aow:WaitForChild("UI"):WaitForChild("Components"):WaitForChild("Button"))
 
 local connections = {}
 local eligible = true
+local sprintGui = nil
+local sprintBtn = nil
+local sprintOn = false
 
 local function isSprintKey(code)
 	return code == Enum.KeyCode.LeftShift or code == Enum.KeyCode.RightShift
 end
 
+-- Touch sprint is a TOGGLE (there's no key to hold). The button exists only on touch and only while
+-- sprint is eligible (field mode); Shift still works on desktop.
+local function setSprintLabel()
+	if sprintBtn then
+		local lbl = sprintBtn:FindFirstChild("Label")
+		if lbl then
+			lbl.Text = sprintOn and "Sprinting" or "Sprint"
+		end
+	end
+end
+
+local function ensureSprintGui()
+	if sprintGui or not Platform.isTouch then
+		return
+	end
+	local lp = Players.LocalPlayer
+	local pg = lp and lp:FindFirstChildOfClass("PlayerGui")
+	if not pg then
+		return
+	end
+	sprintGui = Instance.new("ScreenGui")
+	sprintGui.Name = "AoW_SprintControl"
+	sprintGui.ResetOnSpawn = false
+	sprintGui.DisplayOrder = 15
+	sprintGui.Enabled = false
+	sprintGui.Parent = pg
+	sprintBtn = Button.create({
+		parent = sprintGui,
+		variant = "secondary",
+		text = "Sprint",
+		onClick = function()
+			sprintOn = not sprintOn
+			CharacterHandler.setSprint(sprintOn)
+			setSprintLabel()
+		end,
+	})
+	sprintBtn.Name = "TouchSprint"
+	sprintBtn.AnchorPoint = Vector2.new(1, 1)
+	sprintBtn.Position = UDim2.new(1, -16, 1, -120)
+	sprintBtn:SetAttribute("AoWInputSink", true)
+end
+
 function SprintController.setEligible(flag)
 	eligible = flag and true or false
-	if not eligible then CharacterHandler.setSprint(false) end
+	if not eligible then
+		CharacterHandler.setSprint(false)
+		sprintOn = false
+		setSprintLabel()
+		if sprintGui then
+			sprintGui.Enabled = false
+		end
+		return
+	end
+	ensureSprintGui()
+	if sprintGui then
+		sprintGui.Enabled = true
+	end
 end
 
 function SprintController.start()

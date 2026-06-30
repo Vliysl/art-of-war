@@ -4,6 +4,8 @@ local Typography = DesignSystem.Typography
 local Spacing = DesignSystem.Spacing
 local Icons = DesignSystem.Icons
 local Shells = DesignSystem.Shells
+local Responsive = DesignSystem.Responsive
+local Platform = require(script.Parent.Parent.Parent.Modules.Platform)
 local Components = script.Parent.Parent.Components
 local TabBar = require(Components.TabBar)
 local SectionDivider = require(Components.SectionDivider)
@@ -17,11 +19,22 @@ function ScreenKit.open(ctx, opts)
 	local hasTabs = opts.tabs ~= nil
 	local headerHeight = (hasSub and 60 or 44) + (hasTabs and 38 or 0)
 
+	local panelSize = opts.size or UDim2.new(0, opts.width or 440, 1, -132)
+	-- On touch, clamp an offset panel width to the phone viewport (accounting for the HUD UIScale) so
+	-- panels don't overflow; the scroll body keeps its row heights. Desktop / scale-width panels unchanged.
+	if Platform.isTouch and panelSize.X.Scale == 0 and panelSize.X.Offset > 0 then
+		local cam = workspace.CurrentCamera
+		local vpX = (cam and cam.ViewportSize.X) or 1280
+		local maxW = (vpX - 24) / (Platform.scale or 1)
+		if panelSize.X.Offset > maxW then
+			panelSize = UDim2.new(0, math.floor(maxW), panelSize.Y.Scale, panelSize.Y.Offset)
+		end
+	end
 	local root = Shells.create(opts.shell or "panel_large_shell", {
 		Name = opts.name or "Screen",
 		AnchorPoint = opts.anchorPoint or Vector2.new(0, 0),
 		Position = opts.position or UDim2.fromOffset(16, 16),
-		Size = opts.size or UDim2.new(0, opts.width or 440, 1, -132),
+		Size = panelSize,
 		ZIndex = 1,
 	})
 	root:SetAttribute("AoWInputSink", true)
@@ -67,7 +80,7 @@ function ScreenKit.open(ctx, opts)
 	close.Name = "Close"
 	close.AnchorPoint = Vector2.new(1, 0)
 	close.Position = UDim2.fromScale(1, 0)
-	close.Size = UDim2.fromOffset(30, 30)
+	close.Size = UDim2.fromOffset(Responsive.tapHeight(30), Responsive.tapHeight(30))
 	close.BackgroundTransparency = 1
 	close.AutoButtonColor = false
 	close.Text = ""

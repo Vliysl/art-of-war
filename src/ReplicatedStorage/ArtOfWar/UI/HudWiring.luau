@@ -6,6 +6,8 @@ local ArtOfWar = UI.Parent
 local Hud = require(UI.Hud)
 local Registries = require(UI.Registries)
 local ProvinceTooltip = require(UI.Components.ProvinceTooltip)
+local Platform = require(ArtOfWar.Modules.Platform)
+local Button = require(UI.Components.Button)
 
 local HudWiring = {}
 
@@ -870,15 +872,10 @@ function HudWiring.start(modules)
 		end)
 	end
 
-	-- X deselects the current army stack or, if none is selected, the selected province (X is otherwise
-	-- unbound in the live HUD). gameProcessed guards typing in TextBoxes so we never steal it from inputs.
-	UserInputService.InputBegan:Connect(function(input, gameProcessed)
-		if gameProcessed then
-			return
-		end
-		if input.KeyCode ~= Enum.KeyCode.X then
-			return
-		end
+	-- Deselect the army stack, or (if none) the selected province. Shared by the X key and, on touch,
+	-- an on-screen button (no keyboard on touch). clearSelection() fires the select listener with nil,
+	-- whose handler closes the context panel (parallels the empty-map click/tap).
+	local function doDeselect()
 		local sel = selectedArmies()
 		if sel and #sel > 0 then
 			if ArmyView and ArmyView.deselect then
@@ -890,12 +887,39 @@ function HudWiring.start(modules)
 			end
 			return
 		end
-		-- No army selected: X also deselects a selected PROVINCE. clearSelection() fires the select
-		-- listener with nil, whose handler closes the context panel (parallels the empty-map click).
 		if ProvinceInteraction and ProvinceInteraction.getSelected and ProvinceInteraction.getSelected() then
 			ProvinceInteraction.clearSelection()
 		end
+	end
+
+	-- X deselects (X is otherwise unbound in the live HUD). gameProcessed guards typing in TextBoxes.
+	UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		if gameProcessed then
+			return
+		end
+		if input.KeyCode == Enum.KeyCode.X then
+			doDeselect()
+		end
 	end)
+
+	-- Touch has no keyboard: an always-available on-screen Deselect button mirrors the X key. (A no-op
+	-- when nothing is selected; needed because with units selected a tap on land issues a move, so there
+	-- is otherwise no way to deselect without tapping empty water.)
+	if Platform.isTouch then
+		local hudLayer = Hud.getLayer("Hud")
+		if hudLayer then
+			local deselectBtn = Button.create({
+				parent = hudLayer,
+				variant = "secondary",
+				text = "Deselect",
+				onClick = doDeselect,
+			})
+			deselectBtn.Name = "TouchDeselect"
+			deselectBtn.AnchorPoint = Vector2.new(0.5, 1)
+			deselectBtn.Position = UDim2.new(0.5, 0, 1, -(16 + 96 + 10)) -- above the country bar
+			deselectBtn:SetAttribute("AoWInputSink", true)
+		end
+	end
 
 	claimedTag = resolveTag()
 	Hud.setContext({ tag = claimedTag })
