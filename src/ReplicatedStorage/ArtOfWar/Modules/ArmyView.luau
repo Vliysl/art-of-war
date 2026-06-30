@@ -284,13 +284,11 @@ local function abbrevMen(n)
 end
 
 -- Shared overhead palette/fonts: match the in-world city/battle labels (Garamond serif, dark plate,
--- brown hairline, gold accents). FACE_COUNT/FACE_TAG mirror UIStyle.FontFace.CinzelBold/Cinzel.
+-- brown hairline, gold accents). FACE_COUNT mirrors UIStyle.FontFace.CinzelBold.
 local OVH_PLATE = Color3.fromRGB(18, 12, 8)
 local OVH_HAIRLINE = Color3.fromRGB(60, 40, 22)
 local OVH_CREAM = Color3.fromRGB(248, 240, 218)
-local OVH_SHOVEL = Color3.fromRGB(232, 196, 120)
 local FACE_COUNT = Font.new("rbxasset://fonts/families/Garamond.json", Enum.FontWeight.Heavy, Enum.FontStyle.Normal)
-local FACE_TAG = Font.new("rbxasset://fonts/families/Garamond.json", Enum.FontWeight.Bold, Enum.FontStyle.Normal)
 local FACE_TAG_MONO = Font.new("rbxasset://fonts/families/RobotoMono.json", Enum.FontWeight.Bold, Enum.FontStyle.Normal)
 local OVH_BORDER = Color3.fromRGB(58, 47, 31) -- province-panel CountryBadge subtle border
 local OVH_TAGWHITE = Color3.fromRGB(245, 241, 232) -- province-panel CountryBadge tag colour
@@ -304,12 +302,12 @@ local BANNER_DESIGN_H = 60
 local LABEL_REF_DISTANCE = 44 -- scaled for 2048 map (was 400 @ 18665); on-screen banner size knob (smaller = smaller banner)
 local LABEL_HIDE_ZOOM = 1208 -- scaled for 2048 map (was 11000); labels hide past this camera distance
 
--- Overhead banner (Rise-of-Nations style), laid out as three adjacent elements:
---   [ crest panel ]  [ dark count box ]   shovel
+-- Overhead banner (Rise-of-Nations style), laid out as two adjacent elements:
+--   [ crest panel ]  [ dark count box ]
 -- with a thin capture bar directly below the count box. The crest is its OWN panel (not inside the
 -- box). "Bg" is a transparent container kept ONLY so reconcileOne's bg:FindFirstChild lookups still
--- resolve; CountLabel/EntShovel/EntValue/CaptureTrack are direct children of it (siblings of the box)
--- so those lookups are unchanged. reconcileOne fills crest colour/tag, the count, the shovel and the
+-- resolve; CountLabel/CaptureTrack are direct children of it (siblings of the box)
+-- so those lookups are unchanged. reconcileOne fills crest colour/tag, the count and the
 -- capture bar by element name. Adornee/offset/parent are caller-supplied.
 local function buildBannerGui(adornee, studsOffset, _factionColor)
 	local bb = Instance.new("BillboardGui")
@@ -491,36 +489,6 @@ local function buildBannerGui(adornee, studsOffset, _factionColor)
 	local capFillCorner = Instance.new("UICorner")
 	capFillCorner.CornerRadius = UDim.new(0, 2)
 	capFillCorner.Parent = capFill
-
-	-- ── Entrenchment: shovel glyph over its level, to the RIGHT of the box (hidden at 0) ─────────
-	local entIcon = Instance.new("TextLabel")
-	entIcon.Name = "EntShovel"
-	entIcon.Position = UDim2.fromOffset(172, 4)
-	entIcon.Size = UDim2.fromOffset(28, 24)
-	entIcon.BackgroundTransparency = 1
-	entIcon.Text = "\u{26CF}"
-	entIcon.TextColor3 = OVH_SHOVEL
-	entIcon.TextScaled = true
-	entIcon.TextStrokeTransparency = 0.4
-	entIcon.TextStrokeColor3 = Color3.fromRGB(16, 10, 6)
-	entIcon.Visible = false
-	entIcon.ZIndex = 2
-	entIcon.Parent = bg
-	local entVal = Instance.new("TextLabel")
-	entVal.Name = "EntValue"
-	entVal.Position = UDim2.fromOffset(172, 27)
-	entVal.Size = UDim2.fromOffset(28, 16)
-	entVal.BackgroundTransparency = 1
-	entVal.Text = ""
-	entVal.TextColor3 = OVH_SHOVEL
-	entVal.FontFace = FACE_TAG
-	entVal.TextSize = 14
-	entVal.TextXAlignment = Enum.TextXAlignment.Center
-	entVal.TextStrokeTransparency = 0.4
-	entVal.TextStrokeColor3 = Color3.fromRGB(16, 10, 6)
-	entVal.Visible = false
-	entVal.ZIndex = 2
-	entVal.Parent = bg
 
 	return bb
 end
@@ -1095,16 +1063,6 @@ local function reconcileOne(armyId)
 			-- readable during big battles. The crest + count box (and the occupy glyph) are always shown.
 			local inCombat = (army.battleId ~= nil) or state == "attacking" or state == "defending"
 			local showDetails = inCombat or (selectedArmyIds[armyId] == true)
-
-			-- Entrenchment: shovel + level (detail; also needs entrenchment > 0).
-			local entIcon = vbg:FindFirstChild("EntShovel")
-			local entVal = vbg:FindFirstChild("EntValue")
-			local entLevel = math.floor(army.entrenchment or 0)
-			if entIcon then entIcon.Visible = showDetails and entLevel > 0 end
-			if entVal then
-				entVal.Visible = showDetails and entLevel > 0
-				entVal.Text = tostring(entLevel)
-			end
 
 			-- Morale (green) + Organization (yellow) bars (detail).
 			local moraleTrack = vbg:FindFirstChild("MoraleTrack")

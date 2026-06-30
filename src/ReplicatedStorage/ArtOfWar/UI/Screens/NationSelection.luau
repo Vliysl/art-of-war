@@ -603,7 +603,8 @@ function NationSelection.create(ctx)
 		swatchCorner.Parent = swatch
 		swatch.Parent = btn
 
-		local badge = CountryBadge.create({ code = vm.tag, countryColor = vm.color, size = "sm", parent = btn })
+		-- px = 40 matches the colour accent swatch height (40) so the crest lines up with it (was 44).
+		local badge = CountryBadge.create({ code = vm.tag, countryColor = vm.color, size = "sm", px = 40, parent = btn })
 		badge.AnchorPoint = Vector2.new(0, 0.5)
 		badge.Position = UDim2.new(0, 26, 0.5, 0)
 		badge.ZIndex = 4

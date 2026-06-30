@@ -73,6 +73,7 @@ return {
 		historicalRivals = { "SWE" },
 		historicalFriends = { "RUS" },
 		color = { 195, 30, 40 },
+		flagAssetId = "rbxassetid://6131454962",
 	},
 	FRA = {
 		tag = "FRA",
@@ -88,7 +89,7 @@ return {
 		historicalRivals = { "GBR", "HAB" },
 		historicalFriends = { "SPA" },
 		color = { 33, 72, 180 },
-		flagAssetId = "rbxassetid://76821307863837",
+		flagAssetId = "rbxassetid://14446207308",
 	},
 	GBR = {
 		tag = "GBR",
@@ -120,6 +121,7 @@ return {
 		historicalRivals = { "PRU", "FRA", "TUR" },
 		historicalFriends = { "RUS" },
 		color = { 220, 210, 190 },
+		flagAssetId = "rbxassetid://6570972922",
 	},
 	HAN = {
 		tag = "HAN",
@@ -195,6 +197,7 @@ return {
 		historicalRivals = { "SPA" },
 		historicalFriends = { "GBR" },
 		color = { 80, 140, 70 },
+		flagAssetId = "rbxassetid://4889997886",
 	},
 	PRU = {
 		tag = "PRU",
@@ -210,6 +213,7 @@ return {
 		historicalRivals = { "HAB", "SAX" },
 		historicalFriends = { "GBR", "NED" },
 		color = { 40, 40, 40 },
+		flagAssetId = "rbxassetid://16110656916",
 	},
 	RUS = {
 		tag = "RUS",
@@ -225,6 +229,7 @@ return {
 		historicalRivals = { "TUR", "SWE", "PLC" },
 		historicalFriends = { "HAB", "DAN" },
 		color = { 60, 90, 50 },
+		flagAssetId = "rbxassetid://4908546427",
 	},
 	SAX = {
 		tag = "SAX",
@@ -270,6 +275,7 @@ return {
 		historicalRivals = { "GBR" },
 		historicalFriends = { "FRA" },
 		color = { 220, 185, 40 },
+		flagAssetId = "rbxassetid://77738121672616",
 	},
 	SWE = {
 		tag = "SWE",
@@ -300,5 +306,6 @@ return {
 		historicalRivals = { "HAB", "RUS" },
 		historicalFriends = { "FRA", "SWE" },
 		color = { 180, 80, 50 },
+		flagAssetId = "rbxassetid://10478968407",
 	},
 }
