@@ -233,6 +233,11 @@ task.defer(function()
 			end)
 		end
 	end
+	-- Tiles are stamped + coloured now; start the render-distance culler (per-device default applied
+	-- on first join; XZ-distance tile hiding driven by the Settings slider).
+	local RenderDistanceController = safeRequire("RenderDistanceController")
+	safeCall(RenderDistanceController, "init")
+
 	-- Preload the CENTER province meshes in the BACKGROUND so the map fills in at ANY zoom instead of
 	-- streaming tiles in by camera proximity (far tiles otherwise stay bare ocean until you zoom onto
 	-- them, regardless of distance). LeftWrap/RightWrap are clones with identical MeshIds, so warming the

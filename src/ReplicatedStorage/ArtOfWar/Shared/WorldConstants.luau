@@ -11,6 +11,15 @@ WorldConstants.MapCenterZ = 0
 -- wrap (CharacterHandler) always has ground under the player at the instant it teleports across.
 WorldConstants.FieldSeamMargin = 120
 
+-- Render distance (client-side tile culling; see Modules/RenderDistanceController). Horizontal (XZ)
+-- studs from the camera's ground focus; map tiles farther than this are hidden. Max = no culling
+-- (large enough to cover the whole map from any camera position). Per-device defaults applied on join.
+WorldConstants.RenderDistanceMin = 400
+WorldConstants.RenderDistanceMax = 2300
+WorldConstants.RenderDistanceDefaultDesktop = WorldConstants.RenderDistanceMax -- PC: render everything
+WorldConstants.RenderDistanceDefaultTablet = 1400
+WorldConstants.RenderDistanceDefaultMobile = 900
+
 WorldConstants.ScenarioStartYear = 1750
 WorldConstants.ScenarioStartMonth = 1
 WorldConstants.ScenarioStartDay = 1

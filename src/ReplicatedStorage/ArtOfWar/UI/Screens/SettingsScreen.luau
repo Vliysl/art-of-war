@@ -7,6 +7,8 @@ local Typography = DesignSystem.Typography
 local Responsive = DesignSystem.Responsive
 local Components = script.Parent.Parent.Components
 local Button = require(Components.Button)
+local Slider = require(Components.Slider)
+local WorldConstants = require(script.Parent.Parent.Parent.Shared.WorldConstants)
 
 local SettingsScreen = {}
 
@@ -70,6 +72,61 @@ local function toggleRow(parent, label, getValue, setValue, order)
 	btn.Position = UDim2.fromScale(1, 0.5)
 end
 
+local function sliderRow(parent, label, getValue, setValue, minV, maxV, order, formatFn)
+	local row = Instance.new("Frame")
+	row.Name = label
+	row.Size = UDim2.new(1, 0, 0, Responsive.tapHeight(54))
+	row.BackgroundTransparency = 1
+	row.LayoutOrder = order
+	row.Parent = parent
+
+	local text = Instance.new("TextLabel")
+	text.Size = UDim2.new(1, -76, 0, 20)
+	text.BackgroundTransparency = 1
+	text.Text = label
+	text.TextColor3 = Colors.TextSecondary
+	text.TextXAlignment = Enum.TextXAlignment.Left
+	text.TextYAlignment = Enum.TextYAlignment.Center
+	Typography.apply(text, "bodyMd")
+	text.Parent = row
+
+	local valueLabel = Instance.new("TextLabel")
+	valueLabel.Name = "Value"
+	valueLabel.AnchorPoint = Vector2.new(1, 0)
+	valueLabel.Position = UDim2.fromScale(1, 0)
+	valueLabel.Size = UDim2.new(0, 72, 0, 20)
+	valueLabel.BackgroundTransparency = 1
+	valueLabel.TextColor3 = Colors.TextPrimary
+	valueLabel.TextXAlignment = Enum.TextXAlignment.Right
+	valueLabel.TextYAlignment = Enum.TextYAlignment.Center
+	Typography.apply(valueLabel, "bodyMd")
+	valueLabel.Parent = row
+
+	local function fmt(v)
+		return formatFn and formatFn(v) or tostring(math.floor(v + 0.5))
+	end
+	valueLabel.Text = fmt(getValue())
+
+	local holder = Instance.new("Frame")
+	holder.Name = "SliderHolder"
+	holder.AnchorPoint = Vector2.new(0, 1)
+	holder.Position = UDim2.fromScale(0, 1)
+	holder.Size = UDim2.new(1, 0, 0, 20)
+	holder.BackgroundTransparency = 1
+	holder.Parent = row
+
+	Slider.create({
+		parent = holder,
+		min = minV,
+		max = maxV,
+		value = getValue(),
+		onChange = function(v)
+			setValue(v)
+			valueLabel.Text = fmt(v)
+		end,
+	})
+end
+
 function SettingsScreen.create(ctx)
 	local lp = Players.LocalPlayer
 	local handle
@@ -91,6 +148,27 @@ function SettingsScreen.create(ctx)
 					lp:SetAttribute("ReduceMotion", on)
 				end
 			end, 3)
+
+			ScreenKit.section(body, "Graphics", 10)
+			ScreenKit.note(
+				body,
+				"Lower render distance hides far-off map tiles for better performance on weaker devices.",
+				11
+			)
+			sliderRow(body, "Render Distance", function()
+				return (lp and lp:GetAttribute("RenderDistance")) or WorldConstants.RenderDistanceMax
+			end, function(v)
+				if lp then
+					lp:SetAttribute("RenderDistance", v)
+				end
+			end, WorldConstants.RenderDistanceMin, WorldConstants.RenderDistanceMax, 12, function(v)
+				if v >= WorldConstants.RenderDistanceMax then
+					return "Max"
+				end
+				local span = WorldConstants.RenderDistanceMax - WorldConstants.RenderDistanceMin
+				local p = span > 0 and math.floor((v - WorldConstants.RenderDistanceMin) / span * 100 + 0.5) or 0
+				return p .. "%"
+			end)
 
 			ScreenKit.section(body, "Map Mode", 4)
 			ScreenKit.note(body, "Switch between commanding the map and walking your ruler across it.", 5)
