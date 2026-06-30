@@ -14,7 +14,6 @@ local Screens = UI.Screens
 local Components = UI.Components
 local CountryBar = require(Screens.CountryBar)
 local TopBar = require(Screens.TopBar)
-local MapModeGrid = require(Screens.MapModeGrid)
 local NotificationCard = require(Components.NotificationCard)
 
 local Hud = {}
@@ -118,16 +117,8 @@ local function mountPersistent(opts)
 	placeTopBar()
 	GuiService:GetPropertyChangedSignal("TopbarInset"):Connect(placeTopBar)
 
-	widgets.mapModeGrid = MapModeGrid.create({
-		parent = layers.Hud,
-		modes = opts.mapModes,
-		active = opts.mapMode or "political",
-		onChange = function(mode)
-			if handlers.onMapMode then
-				handlers.onMapMode(mode)
-			end
-		end,
-	})
+	-- (Map-mode coloring buttons removed -- they were non-functional. The map stays in its boot political
+	-- coloring; MapRenderer still applies it. Hud.setMapMode is now a no-op via the nil widget guard.)
 
 	buildCountryBar()
 
