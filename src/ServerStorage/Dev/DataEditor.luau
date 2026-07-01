@@ -2102,6 +2102,34 @@ function DataEditor.dumpDataStore(forceRefresh)
 	return overlay.snapshot(forceRefresh)
 end
 
+-- Named Save/Load map configs (RoN "Save/Load Map"). Thin wrappers over the DataOverlay implementation;
+-- loadConfig also reloads the editor model so the UI reflects the freshly-loaded world immediately.
+function DataEditor.saveConfig(name)
+	local overlay = overlayModule()
+	assert(overlay and overlay.saveNamedConfig, "DataOverlay.saveNamedConfig unavailable")
+	return overlay.saveNamedConfig(name)
+end
+
+function DataEditor.listConfigs()
+	local overlay = overlayModule()
+	assert(overlay and overlay.listNamedConfigs, "DataOverlay.listNamedConfigs unavailable")
+	return overlay.listNamedConfigs()
+end
+
+function DataEditor.deleteConfig(name)
+	local overlay = overlayModule()
+	assert(overlay and overlay.deleteNamedConfig, "DataOverlay.deleteNamedConfig unavailable")
+	return overlay.deleteNamedConfig(name)
+end
+
+function DataEditor.loadConfig(name)
+	local overlay = overlayModule()
+	assert(overlay and overlay.loadNamedConfig, "DataOverlay.loadNamedConfig unavailable")
+	local result = overlay.loadNamedConfig(name)
+	DataEditor.load() -- rebuild the editor model from the freshly-loaded overlay cache
+	return result
+end
+
 function DataEditor.migrateLegacy()
 	local overlay = overlayModule()
 	if not overlay or not overlay.migrateLegacy then

@@ -1002,6 +1002,14 @@ api.OnServerInvoke = function(player, command, payload)
 	elseif command == "dumpDataStore" then
 		local force = type(payload) == "table" and payload.forceRefresh == true
 		return safeCall(Editor.dumpDataStore, force)
+	elseif command == "listConfigs" then
+		return safeCall(Editor.listConfigs)
+	elseif command == "saveConfig" then
+		return safeCall(Editor.saveConfig, payload.name)
+	elseif command == "loadConfig" then
+		return safeCall(Editor.loadConfig, payload.name)
+	elseif command == "deleteConfig" then
+		return safeCall(Editor.deleteConfig, payload.name)
 	elseif command == "migrateLegacy" then
 		return safeCall(Editor.migrateLegacy)
 	elseif command == "undo" then

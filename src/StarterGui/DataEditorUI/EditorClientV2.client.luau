@@ -159,6 +159,7 @@ local TABS = {
 	{ key = "provinces", label = "Provinces" },
 	{ key = "identity", label = "Identity" },
 	{ key = "formables", label = "Formables" },
+	{ key = "saves", label = "Saves" },
 }
 local tabRow = frame({ parent = root, transparent = true, size = UDim2.new(1, 0, 0, 34), position = UDim2.fromOffset(0, 40) })
 local tabButtons = {}
@@ -1148,6 +1149,146 @@ local function renderIdentity()
 	showDetail(state.selected)
 end
 
+-- ─────────────────────────── Saves tab (named Save/Load map configs, Phase 6) ───────────────────────────
+-- Save the full map+nations under a name, list them, load (replaces the live world in storage; applies on
+-- restart/rejoin, with the current world auto-backed up), or delete. Backed by DataStore save:* keys.
+local function renderSaves()
+	local columns = frame({ parent = body, transparent = true })
+	local detail = makeDetailPane(columns)
+
+	-- Fetch the config index once per render (re-rendering after save/delete refreshes it).
+	local configs = {}
+	local res = editorCall("listConfigs")
+	if type(res) == "table" and type(res.configs) == "table" then
+		for _, cfg in ipairs(res.configs) do
+			if cfg.name then configs[cfg.name] = cfg end
+		end
+	end
+
+	local function showDetail(name)
+		clearDetail(detail)
+
+		-- Save the current world under a new name (always shown at top).
+		local saveRow = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 30) })
+		saveRow.LayoutOrder = -3
+		local nameBox = textbox(saveRow, "new save name")
+		nameBox.Size = UDim2.new(1, -136, 1, 0)
+		local saveNewBtn = Button.create({
+			parent = saveRow,
+			variant = "primary",
+			text = "Save current",
+			width = 128,
+			onClick = function()
+				local nm = (nameBox.Text or ""):match("^%s*(.-)%s*$") or ""
+				if nm == "" then
+					setStatus("Enter a save name", Colors.Negative)
+					return
+				end
+				setStatus("Saving config…", Colors.TextSecondary)
+				local r, err = editorCall("saveConfig", { name = nm })
+				if r then
+					setStatus("Saved config '" .. nm .. "'", Colors.Positive)
+					state.selected = nm
+					render()
+				else
+					setStatus("Save failed: " .. tostring(err), Colors.Negative)
+				end
+			end,
+		})
+		saveNewBtn.Position = UDim2.new(1, -128, 0, 0)
+
+		local hint = label(detail, "Named snapshots of the full map + nations, stored in the DataStore.", "bodySm", Colors.TextSecondary)
+		hint.LayoutOrder = -2
+		hint.Size = UDim2.new(1, 0, 0, 18)
+
+		local meta = name and configs[name] or nil
+		if not meta then
+			label(detail, "Select a saved config on the left, or save the current world above.", "bodyMd", Colors.TextSecondary)
+			return
+		end
+
+		label(detail, name, "displayLg").Size = UDim2.new(1, 0, 0, 26)
+		readonlyRow(detail, "Saved", meta.savedAt or "?")
+		readonlyRow(detail, "Countries", meta.countries)
+		readonlyRow(detail, "Provinces", meta.provinces)
+
+		-- Load: two-click confirm (replaces the live world in storage; applies on restart/rejoin).
+		local armed = false
+		local loadBtn
+		loadBtn = Button.create({
+			parent = detail,
+			variant = "danger",
+			text = "Load (replaces live map)",
+			width = 220,
+			onClick = function()
+				if not armed then
+					armed = true
+					loadBtn.Text = "Click again to confirm load"
+					setStatus("Load replaces the live map (current world is auto-backed up). Click again to confirm.", Colors.Negative)
+					return
+				end
+				setStatus("Loading config '" .. name .. "'…", Colors.TextSecondary)
+				local r, err = editorCall("loadConfig", { name = name })
+				if r then
+					local snap = editorCall("reloadState")
+					if snap and type(snap) == "table" and snap.countries then
+						applySnapshot(snap)
+					else
+						render()
+					end
+					setStatus((type(r) == "table" and r.message) or ("Loaded '" .. name .. "'"), Colors.Positive)
+				else
+					setStatus("Load failed: " .. tostring(err), Colors.Negative)
+				end
+			end,
+		})
+		loadBtn.LayoutOrder = 90
+
+		local delBtn = Button.create({
+			parent = detail,
+			variant = "ghost",
+			text = "Delete",
+			width = 100,
+			onClick = function()
+				local r, err = editorCall("deleteConfig", { name = name })
+				if r then
+					setStatus("Deleted config '" .. name .. "'", Colors.Positive)
+					state.selected = nil
+					render()
+				else
+					setStatus("Delete failed: " .. tostring(err), Colors.Negative)
+				end
+			end,
+		})
+		delBtn.LayoutOrder = 91
+	end
+
+	listColumn({
+		parent = columns,
+		getKeys = function(q)
+			q = string.lower(q or "")
+			local out = {}
+			for nm in pairs(configs) do
+				if q == "" or string.find(string.lower(nm), q, 1, true) then
+					out[#out + 1] = nm
+				end
+			end
+			table.sort(out)
+			return out
+		end,
+		labelFor = function(nm)
+			local m = configs[nm]
+			return (m and m.savedAt) and string.format("%s  (%s)", nm, m.savedAt) or nm
+		end,
+		onSelect = function(nm)
+			state.selected = nm
+			showDetail(nm)
+		end,
+	})
+
+	showDetail(state.selected)
+end
+
 render = function()
 	if formablesConn then
 		formablesConn:Disconnect()
@@ -1168,6 +1309,8 @@ render = function()
 		renderIdentity()
 	elseif state.tab == "formables" then
 		renderFormables()
+	elseif state.tab == "saves" then
+		renderSaves()
 	end
 end
 

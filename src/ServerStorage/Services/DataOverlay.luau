@@ -690,6 +690,173 @@ function DataOverlay.flush()
 	return result
 end
 
+-- ─────────────────────────── named Save/Load map configs (RoN "Save/Load Map") ───────────────────────────
+-- A named config is a full snapshot of every kind's aggregate, stored under namespaced keys so each fits
+-- the DataStore value limit exactly like the live aggregates do, plus an index key tracking names + metadata.
+-- Loading writes the config back into the LIVE aggregate keys (via cache + flush) so it applies on the next
+-- server boot -- mirroring RoN's map load (a fresh boot avoids dangling army/war references that a live
+-- full-world swap would leave). loadNamedConfig auto-backs up the current world first for reversibility.
+local CONFIG_INDEX_KEY = "save:__index"
+local CONFIG_NAME_MAX = 25 -- keeps "save:<name>:<kind>" within the 50-char DataStore key limit
+local AUTO_BACKUP_NAME = "auto- before last load"
+
+local function configKey(name, kind)
+	return "save:" .. name .. ":" .. kind
+end
+local function configMetaKey(name)
+	return "save:" .. name .. ":meta"
+end
+local function countMap(map)
+	local n = 0
+	for _ in pairs(map or {}) do
+		n += 1
+	end
+	return n
+end
+local function readConfigIndex(ds)
+	local ok, raw = withRetry(function()
+		return ds:GetAsync(CONFIG_INDEX_KEY)
+	end, "GetAsync " .. CONFIG_INDEX_KEY)
+	if not ok then
+		return nil
+	end
+	local decoded = decodeValue(raw)
+	return (type(decoded) == "table") and decoded or {}
+end
+
+function DataOverlay.saveNamedConfig(name)
+	assert(type(name) == "string" and name ~= "", "config name required")
+	assert(#name <= CONFIG_NAME_MAX, "config name too long (max " .. CONFIG_NAME_MAX .. " chars)")
+	ensureLoaded()
+	local ds = store()
+	local counts = {}
+	for _, kind in ipairs(ALL_KINDS) do
+		local map = cache.data[kind] or {}
+		counts[kind] = countMap(map)
+		local serializable = {}
+		for k, v in pairs(map) do
+			serializable[tostring(k)] = v
+		end
+		local encodeOk, payload = pcall(HttpService.JSONEncode, HttpService, serializable)
+		if not encodeOk then
+			error("failed to encode " .. kind .. " for config '" .. name .. "'")
+		end
+		local ok, err = withRetry(function()
+			ds:SetAsync(configKey(name, kind), payload)
+		end, "SetAsync config " .. name .. ":" .. kind)
+		if not ok then
+			error("write failed for " .. kind .. ": " .. tostring(err))
+		end
+	end
+	local meta = {
+		name = name,
+		savedAt = os.time(),
+		savedAtStr = os.date("!%Y-%m-%d %H:%M UTC"),
+		countries = counts[KIND_COUNTRIES],
+		provinces = counts[KIND_PROVINCES],
+		schema = cache.collapsed and COLLAPSED_VERSION or SCHEMA_VERSION,
+	}
+	withRetry(function()
+		ds:SetAsync(configMetaKey(name), HttpService:JSONEncode(meta))
+	end, "SetAsync config meta " .. name)
+	local idx = readConfigIndex(ds) or {}
+	idx[name] = { savedAt = meta.savedAt, savedAtStr = meta.savedAtStr, countries = meta.countries, provinces = meta.provinces }
+	withRetry(function()
+		ds:SetAsync(CONFIG_INDEX_KEY, HttpService:JSONEncode(idx))
+	end, "SetAsync " .. CONFIG_INDEX_KEY)
+	return { name = name, savedAt = meta.savedAtStr, countries = meta.countries, provinces = meta.provinces }
+end
+
+function DataOverlay.listNamedConfigs()
+	local ds = store()
+	local idx = readConfigIndex(ds)
+	assert(idx ~= nil, "could not read the config index")
+	local out = {}
+	for cname, meta in pairs(idx) do
+		out[#out + 1] = {
+			name = cname,
+			savedAt = meta.savedAtStr or (meta.savedAt and tostring(meta.savedAt)) or "?",
+			savedAtEpoch = meta.savedAt or 0,
+			countries = meta.countries,
+			provinces = meta.provinces,
+		}
+	end
+	table.sort(out, function(a, b)
+		return (a.savedAtEpoch or 0) > (b.savedAtEpoch or 0)
+	end)
+	return { configs = out }
+end
+
+function DataOverlay.deleteNamedConfig(name)
+	assert(type(name) == "string" and name ~= "", "config name required")
+	local ds = store()
+	for _, kind in ipairs(ALL_KINDS) do
+		withRetry(function()
+			ds:RemoveAsync(configKey(name, kind))
+		end, "RemoveAsync config " .. name .. ":" .. kind)
+	end
+	withRetry(function()
+		ds:RemoveAsync(configMetaKey(name))
+	end, "RemoveAsync config meta " .. name)
+	local idx = readConfigIndex(ds) or {}
+	idx[name] = nil
+	withRetry(function()
+		ds:SetAsync(CONFIG_INDEX_KEY, HttpService:JSONEncode(idx))
+	end, "SetAsync " .. CONFIG_INDEX_KEY)
+	return { name = name }
+end
+
+-- Overwrite the live aggregate keys with a saved config (auto-backing up the current world first).
+-- Reads every kind up front so a mid-read failure aborts before anything is mutated. Applies on the next
+-- server boot; also refreshes the in-memory cache so the editor reflects the loaded world immediately.
+function DataOverlay.loadNamedConfig(name)
+	assert(type(name) == "string" and name ~= "", "config name required")
+	ensureLoaded()
+	local ds = store()
+	local mok, mraw = withRetry(function()
+		return ds:GetAsync(configMetaKey(name))
+	end, "GetAsync config meta " .. name)
+	if not mok then
+		error("could not read config '" .. name .. "'")
+	end
+	if type(decodeValue(mraw)) ~= "table" then
+		error("config '" .. name .. "' not found")
+	end
+	local loaded = {}
+	for _, kind in ipairs(ALL_KINDS) do
+		local ok, raw = withRetry(function()
+			return ds:GetAsync(configKey(name, kind))
+		end, "GetAsync config " .. name .. ":" .. kind)
+		if not ok then
+			error("read failed for " .. kind)
+		end
+		local decoded = decodeValue(raw)
+		local map = {}
+		if type(decoded) == "table" then
+			for k, v in pairs(decoded) do
+				map[coerceKey(kind, k)] = v
+			end
+		end
+		loaded[kind] = map
+	end
+	local backupOk = pcall(DataOverlay.saveNamedConfig, AUTO_BACKUP_NAME)
+	for _, kind in ipairs(ALL_KINDS) do
+		cache.data[kind] = loaded[kind]
+		cache.dirty[kind] = true
+	end
+	local flushResult = DataOverlay.flush()
+	return {
+		name = name,
+		backedUp = backupOk,
+		flush = flushResult,
+		message = string.format(
+			"Loaded '%s' into storage%s. Restart the server or rejoin to apply it to the live map.",
+			name,
+			backupOk and (" (current world backed up as '" .. AUTO_BACKUP_NAME .. "')") or ""
+		),
+	}
+end
+
 local PROVINCE_REF_FIELDS = {
 	areaId = "areas",
 	regionId = "regions",
