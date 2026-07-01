@@ -1474,6 +1474,11 @@ context.isAdminPlayer = isAdminPlayer
 
 local function applyAdminAttribute(player)
 	player:SetAttribute("IsAdmin", isAdminPlayer(player))
+	-- Place-independent editor authorization — drives the Settings "Teleport to Map Editor" button. Distinct
+	-- from IsAdmin, which is the EFFECTIVE editor access in THIS place (config tiers only unlock on the Map
+	-- Editor place). A historian therefore has MapEditorAuthorized=true but IsAdmin=false in the main game.
+	local anywhere = EditorAdmins.isEditorAuthorizedAnywhere and EditorAdmins.isEditorAuthorizedAnywhere(player) or false
+	player:SetAttribute("MapEditorAuthorized", anywhere)
 end
 
 local Players = game:GetService("Players")
@@ -1490,6 +1495,38 @@ if EditorAdmins.onAccessChanged then
 			applyAdminAttribute(p)
 		end
 	end)
+end
+
+-- Map Editor place is restricted: only authorized editors may remain. Because config access loads async,
+-- wait for the config to resolve (or a grace window) before kicking, and never kick an always-on manager.
+if game.PlaceId == WorldConstants.MapEditorPlaceId then
+	local function gateMapEditor(player)
+		local deadline = tick() + 60
+		while player.Parent do
+			if EditorAdmins.isEditorAuthorizedAnywhere(player) then
+				return -- authorized (official manager immediately, or config resolved in their favor)
+			end
+			local info = EditorAdmins.getAccessInfo and EditorAdmins.getAccessInfo() or {}
+			if info.configLoaded or info.configAvailable == false or tick() > deadline then
+				break -- config has had its chance; decide now
+			end
+			-- Actively drive the async config load so a legit historian isn't kicked while the module's own
+			-- slow retry cadence (5 tries, then a 5-min backstop) is still pending.
+			if EditorAdmins.reload then
+				pcall(EditorAdmins.reload)
+			end
+			task.wait(1)
+		end
+		if player.Parent and not EditorAdmins.isEditorAuthorizedAnywhere(player) then
+			player:Kick("The Map Editor is restricted to authorized editors.")
+		end
+	end
+	Players.PlayerAdded:Connect(function(p)
+		task.spawn(gateMapEditor, p)
+	end)
+	for _, p in Players:GetPlayers() do
+		task.spawn(gateMapEditor, p)
+	end
 end
 
 Players.PlayerRemoving:Connect(function(player)

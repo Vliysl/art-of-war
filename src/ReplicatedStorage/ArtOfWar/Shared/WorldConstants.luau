@@ -20,6 +20,12 @@ WorldConstants.RenderDistanceDefaultDesktop = WorldConstants.RenderDistanceMax -
 WorldConstants.RenderDistanceDefaultTablet = 1400
 WorldConstants.RenderDistanceDefaultMobile = 900
 
+-- Dedicated "Map Editor" place (same universe). The Data Editor's config-driven access (managers +
+-- historians set in the "data_editor_access" config) unlocks ONLY on this place; every other place
+-- restricts the editor to the built-in dev managers. The Settings "Teleport to Map Editor" button and the
+-- Map Editor place's join gate both key off this id. Single source of truth (EditorAdmins reads it too).
+WorldConstants.MapEditorPlaceId = 104399454095233
+
 -- Feature kill-switches for the country/province restructure (v4). Each gates a phase's new behavior so it
 -- can be disabled at runtime without a code revert -- flip false to fall back to the old behavior.
 WorldConstants.EnableFullAnnex = true         -- Phase 1: full-annex peace term + defeated-country deletion + zombie cleanup

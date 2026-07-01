@@ -44,6 +44,9 @@
 			"DataEditorUI": {
 				"$className": "ScreenGui",
 				"$ignoreUnknownInstances": true,
+				"$properties": {
+					"ResetOnSpawn": false
+				},
 				"EditorClient": {
 					"$path": "src/StarterGui/DataEditorUI/EditorClient.client.luau"
 				},

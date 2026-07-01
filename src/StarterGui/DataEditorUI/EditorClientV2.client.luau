@@ -24,6 +24,7 @@ local VirtualList = require(Components:WaitForChild("VirtualList"))
 local api = aow:WaitForChild("Remotes"):WaitForChild("DataEditorAPI")
 local remotesFolder = aow:WaitForChild("Remotes")
 local FormablesClient = require(aow:WaitForChild("Modules"):WaitForChild("FormablesClient"))
+local ClientSignals = require(aow:WaitForChild("Modules"):WaitForChild("ClientSignals"))
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
@@ -1994,28 +1995,39 @@ end
 
 selectTab("countries")
 
+-- Open/close the editor. The window is gated on the server-authoritative, place-aware IsAdmin attribute
+-- (Bootstrap sets it = EditorAdmins.isAllowed for THIS place, and re-stamps it live when the access config
+-- loads). No client probe/cache: a config-driven editor (Historian) gets IsAdmin=true the moment their
+-- config lands on the Map Editor place, so \ and the Settings button both open reliably. The server still
+-- rejects every editor command independently, so this attribute gate is UX only, not the security boundary.
+local function setEditorOpen(open)
+	if open and player:GetAttribute("IsAdmin") ~= true then
+		return
+	end
+	gui.Enabled = open
+	if open then
+		ensureLoaded()
+		render()
+	end
+end
+
 UserInputService.InputBegan:Connect(function(input, gpe)
-	if gpe then return end
+	if gpe then
+		return
+	end
 	if input.KeyCode == Enum.KeyCode.BackSlash then
-		-- Gate the window on server authorization: regular players get nothing (the editor never opens).
-		-- Cache ONLY the positive result. Config-driven editors (Historians) are authorized asynchronously —
-		-- their access config loads a few seconds after server boot — so a \ press during that window returns
-		-- "not authorized"; caching that would lock them out for the whole session. Re-probe (throttled) while
-		-- unauthorized and latch once authorized. The server also rejects every command (defence-in-depth).
-		if not state.authorized then
-			local now = tick()
-			if not state.lastAuthProbe or (now - state.lastAuthProbe) >= 1.5 then
-				state.lastAuthProbe = now
-				state.authorized = editorCall("authCheck") ~= nil
-			end
-		end
-		if not state.authorized then
-			return
-		end
-		gui.Enabled = not gui.Enabled
-		if gui.Enabled then
-			ensureLoaded()
-			render()
-		end
+		setEditorOpen(not gui.Enabled)
+	end
+end)
+
+-- The Settings "Open Data Editor" button (shown on the Map Editor place) routes here.
+ClientSignals.connect("OpenDataEditor", function()
+	setEditorOpen(true)
+end)
+
+-- If access is revoked while the window is open, close it.
+player:GetAttributeChangedSignal("IsAdmin"):Connect(function()
+	if gui.Enabled and player:GetAttribute("IsAdmin") ~= true then
+		setEditorOpen(false)
 	end
 end)

@@ -3982,22 +3982,13 @@ local function hideRoot()
 end
 closeBtn.MouseButton1Click:Connect(hideRoot)
 
--- Server-authorization gate: regular players get nothing on backtick. The server also rejects every
--- command, so this just keeps the window from opening for non-editors. Cache ONLY the positive result:
--- config-driven editors (Historians) are authorized asynchronously (their access config loads a few
--- seconds after server boot), so a probe during that window returns "not authorized" — caching that would
--- lock them out for the session. Re-probe (throttled) while unauthorized and latch once authorized.
-local authorizedProbe = false
-local lastAuthProbe = 0
+-- Server-authorization gate: the window opens only for editors. Read the server-authoritative, place-aware
+-- IsAdmin attribute (Bootstrap sets it = EditorAdmins.isAllowed for THIS place, and re-stamps it live when
+-- the access config loads) instead of probing the server — so config-driven editors (Historians) open
+-- reliably the moment their config lands, with no cache/latch quirks. The server rejects every command
+-- independently, so this attribute gate is UX only, not the security boundary.
 local function isEditorAuthorized()
-	if not authorizedProbe then
-		local now = tick()
-		if (now - lastAuthProbe) >= 1.5 then
-			lastAuthProbe = now
-			authorizedProbe = call("authCheck") ~= nil
-		end
-	end
-	return authorizedProbe
+	return player:GetAttribute("IsAdmin") == true
 end
 
 UserInputService.InputBegan:Connect(function(input, processed)

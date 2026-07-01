@@ -1,6 +1,19 @@
 local RunService = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
 
+-- The dedicated Map Editor place id. Config-driven access (managers/historians) unlocks ONLY on this place;
+-- every other place restricts the editor to the always-on managers below. Read from WorldConstants (single
+-- source of truth) with a literal fallback so a load hiccup can never break the gate.
+local MAP_EDITOR_PLACE_ID = 104399454095233
+do
+	local ok, wc = pcall(function()
+		return require(game:GetService("ReplicatedStorage").ArtOfWar.Shared.WorldConstants)
+	end)
+	if ok and type(wc) == "table" and tonumber(wc.MapEditorPlaceId) then
+		MAP_EDITOR_PLACE_ID = tonumber(wc.MapEditorPlaceId)
+	end
+end
+
 -- ConfigService (Roblox "Configs & Experiments", 2025) is SERVER-ONLY. This module lives in ServerStorage
 -- and is required only by server scripts, so that is fine. Acquire it defensively: if the running build
 -- predates ConfigService, we simply fall back to the hardcoded dev list below (never a hard error).
@@ -215,12 +228,22 @@ local function isConfigHistorian(player)
 	return isPlayer(player) and configHistorians[player.UserId] == true
 end
 
+-- The Data Editor's config-driven tiers unlock only on the dedicated Map Editor place. Everywhere else the
+-- editor is restricted to the always-on managers (Studio / creator / group-owner / hardcoded devs).
+local function isMapEditorPlace()
+	return game.PlaceId == MAP_EDITOR_PLACE_ID
+end
+
 -- Managers can use the editor AND run the destructive/admin actions and manage who else can. Official
 -- managers always qualify; config-listed managers qualify; the VIP private-server owner qualifies only when
 -- the owner suite is enabled.
 function EditorAdmins.canManage(player)
 	if isOfficialManager(player) then
 		return true
+	end
+	-- Config-driven managers + the VIP owner only unlock on the Map Editor place.
+	if not isMapEditorPlace() then
+		return false
 	end
 	if isPlayer(player) and configManagers[player.UserId] == true then
 		return true
@@ -234,10 +257,13 @@ function EditorAdmins.canManage(player)
 end
 
 -- Anyone who may use the editor: a manager, a config-listed historian, or (only when the suite is on) a
--- session-granted player.
+-- session-granted player. Config historians + grants only unlock on the Map Editor place.
 function EditorAdmins.isAllowed(player)
 	if EditorAdmins.canManage(player) then
 		return true
+	end
+	if not isMapEditorPlace() then
+		return false
 	end
 	if isConfigHistorian(player) then
 		return true
@@ -248,15 +274,40 @@ function EditorAdmins.isAllowed(player)
 	return false
 end
 
--- "manager" | "historian" | "none" — for display in the Access tab / server logs.
+-- Place-INDEPENDENT authorization: would this player be allowed to use the editor ON the Map Editor place?
+-- Drives the Settings "Teleport to Map Editor" button visibility and the Map Editor place's join gate. It
+-- deliberately ignores the current-place restriction that canManage/isAllowed apply.
+function EditorAdmins.isEditorAuthorizedAnywhere(player)
+	if isOfficialManager(player) then
+		return true
+	end
+	if not isPlayer(player) then
+		return false
+	end
+	if configManagers[player.UserId] == true or configHistorians[player.UserId] == true then
+		return true
+	end
+	if EditorAdmins.OWNER_SUITE_ENABLED then
+		if game.PrivateServerOwnerId ~= 0 and player.UserId == game.PrivateServerOwnerId then
+			return true
+		end
+		if granted[player.UserId] == true then
+			return true
+		end
+	end
+	return false
+end
+
+-- "manager" | "historian" | "granted" | "none" — the player's EFFECTIVE tier in the CURRENT place (so on a
+-- non-editor place a config historian reads "none"). For display in the Access tab / server logs.
 function EditorAdmins.classify(player)
 	if EditorAdmins.canManage(player) then
 		return "manager"
 	end
-	if isConfigHistorian(player) then
+	if isMapEditorPlace() and isConfigHistorian(player) then
 		return "historian"
 	end
-	if EditorAdmins.OWNER_SUITE_ENABLED and isPlayer(player) and granted[player.UserId] == true then
+	if EditorAdmins.OWNER_SUITE_ENABLED and isMapEditorPlace() and isPlayer(player) and granted[player.UserId] == true then
 		return "granted"
 	end
 	return "none"
@@ -283,6 +334,8 @@ function EditorAdmins.getAccessInfo()
 		historians = historians,
 		devUserIds = devIds,
 		ownerSuiteEnabled = EditorAdmins.OWNER_SUITE_ENABLED,
+		mapEditorPlaceId = MAP_EDITOR_PLACE_ID,
+		isMapEditorPlace = isMapEditorPlace(),
 	}
 end
 
