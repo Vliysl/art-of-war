@@ -3982,12 +3982,20 @@ local function hideRoot()
 end
 closeBtn.MouseButton1Click:Connect(hideRoot)
 
--- Server-authorization gate (cached): regular players get nothing on backtick. The server also rejects
--- every command, so this just keeps the window from opening for non-editors.
-local authorizedProbe = nil
+-- Server-authorization gate: regular players get nothing on backtick. The server also rejects every
+-- command, so this just keeps the window from opening for non-editors. Cache ONLY the positive result:
+-- config-driven editors (Historians) are authorized asynchronously (their access config loads a few
+-- seconds after server boot), so a probe during that window returns "not authorized" — caching that would
+-- lock them out for the session. Re-probe (throttled) while unauthorized and latch once authorized.
+local authorizedProbe = false
+local lastAuthProbe = 0
 local function isEditorAuthorized()
-	if authorizedProbe == nil then
-		authorizedProbe = call("authCheck") ~= nil
+	if not authorizedProbe then
+		local now = tick()
+		if (now - lastAuthProbe) >= 1.5 then
+			lastAuthProbe = now
+			authorizedProbe = call("authCheck") ~= nil
+		end
 	end
 	return authorizedProbe
 end

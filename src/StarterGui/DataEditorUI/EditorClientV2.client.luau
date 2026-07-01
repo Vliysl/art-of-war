@@ -1998,9 +1998,16 @@ UserInputService.InputBegan:Connect(function(input, gpe)
 	if gpe then return end
 	if input.KeyCode == Enum.KeyCode.BackSlash then
 		-- Gate the window on server authorization: regular players get nothing (the editor never opens).
-		-- Probed once and cached; the server also rejects every command, so this is defence-in-depth.
-		if state.authorized == nil then
-			state.authorized = editorCall("authCheck") ~= nil
+		-- Cache ONLY the positive result. Config-driven editors (Historians) are authorized asynchronously —
+		-- their access config loads a few seconds after server boot — so a \ press during that window returns
+		-- "not authorized"; caching that would lock them out for the whole session. Re-probe (throttled) while
+		-- unauthorized and latch once authorized. The server also rejects every command (defence-in-depth).
+		if not state.authorized then
+			local now = tick()
+			if not state.lastAuthProbe or (now - state.lastAuthProbe) >= 1.5 then
+				state.lastAuthProbe = now
+				state.authorized = editorCall("authCheck") ~= nil
+			end
 		end
 		if not state.authorized then
 			return
