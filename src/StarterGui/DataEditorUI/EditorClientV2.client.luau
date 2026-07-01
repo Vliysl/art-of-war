@@ -1284,7 +1284,57 @@ local function renderFormables()
 		local nameBox = field("Display name", def and def.displayName or "")
 		local formerBox = field("Formed by (tags)", def and def.formerTags and table.concat(def.formerTags, ", ") or "")
 		local col3 = (def and def.color) or { 150, 150, 150 }
-		local reqBox = bigField("Required province IDs", def and def.requiredProvinceIds and table.concat(def.requiredProvinceIds, ", ") or "")
+		local reqBox = bigField("Required province IDs", def and def.requiredProvinceIds and table.concat(def.requiredProvinceIds, ", ") or "", 60)
+		-- Map-select flow: shift-select tiles on the map, then add them here instead of typing ids.
+		do
+			local reqTools = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 28) })
+			local addSel = Button.create({
+				parent = reqTools,
+				variant = "primary",
+				text = "Add map selection",
+				width = 170,
+				size = "sm",
+				onClick = function()
+					if not (paintInteraction and paintInteraction.getMultiSelection) then
+						setStatus("Map selection unavailable", Colors.Negative)
+						return
+					end
+					local set = {}
+					for s in string.gmatch(reqBox.Text or "", "%d+") do set[tonumber(s)] = true end
+					local added = 0
+					for _, part in ipairs(paintInteraction.getMultiSelection()) do
+						local pid = part:GetAttribute("province_id")
+						local isSea = part.Parent and part.Parent.Name == "Sea"
+						if pid and not isSea and not set[pid] then
+							set[pid] = true
+							added += 1
+						end
+					end
+					local ids = {}
+					for id in pairs(set) do ids[#ids + 1] = id end
+					table.sort(ids, function(a, b) return a < b end)
+					reqBox.Text = table.concat(ids, ", ")
+					setStatus(string.format("Added %d tiles (%d total)", added, #ids), added > 0 and Colors.Positive or Colors.TextSecondary)
+				end,
+			})
+			addSel.Position = UDim2.fromOffset(126, 0)
+			local clearBtn = Button.create({
+				parent = reqTools,
+				variant = "ghost",
+				text = "Clear",
+				width = 76,
+				size = "sm",
+				onClick = function()
+					reqBox.Text = ""
+					setStatus("Cleared required provinces", Colors.TextSecondary)
+				end,
+			})
+			clearBtn.Position = UDim2.fromOffset(304, 0)
+			local hint = label(reqTools, "shift-select map tiles \u{2192} Add", "bodySm", Colors.TextSecondary)
+			hint.Position = UDim2.fromOffset(390, 0)
+			hint.Size = UDim2.new(1, -390, 1, 0)
+			hint.TextTruncate = Enum.TextTruncate.AtEnd
+		end
 		local colorBox = field("Colour (r,g,b)", string.format("%d, %d, %d", col3[1] or 0, col3[2] or 0, col3[3] or 0))
 		local flagBox = field("Flag (rbxassetid)", (def and def.flag) or "")
 		local bonusBox = field("Form bonus: stability", def and def.formBonuses and tostring(def.formBonuses.stability or "") or "")
