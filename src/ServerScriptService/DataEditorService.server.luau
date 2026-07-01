@@ -540,7 +540,14 @@ api.OnServerInvoke = function(player, command, payload)
 	-- rate limiter: the window-open sequence fires authCheck immediately followed by loadState, and if
 	-- authCheck stamped the call cooldown, loadState would be rejected with "too many calls".
 	if command == "authCheck" then
-		return { ok = true, result = { allowed = true, canManage = EditorAdmins.canManage(player) } }
+		return {
+			ok = true,
+			result = {
+				allowed = true,
+				canManage = EditorAdmins.canManage(player),
+				role = EditorAdmins.classify(player),
+			},
+		}
 	end
 	if payload ~= nil and not validatePayload(payload) then
 		return { ok = false, error = "payload rejected" }
@@ -1053,18 +1060,24 @@ api.OnServerInvoke = function(player, command, payload)
 		end
 		return safeCall(Editor.deleteConfig, payload.name)
 	elseif command == "listAccess" then
-		-- Current players + who is a manager / granted. Any authorized user may view; only managers act.
+		-- Current players + each one's tier, plus the config-driven access model (managers/historians are set
+		-- in the Creator Hub "data_editor_access" config — no republish). Any authorized user may view.
 		return safeCall(function()
 			local list = {}
 			for _, plr in ipairs(Players:GetPlayers()) do
 				list[#list + 1] = {
 					userId = plr.UserId,
 					name = plr.DisplayName or plr.Name,
+					role = EditorAdmins.classify(plr),
 					granted = EditorAdmins.isGranted(plr.UserId),
 					manager = EditorAdmins.canManage(plr),
 				}
 			end
-			return { canManage = EditorAdmins.canManage(player), players = list }
+			return {
+				canManage = EditorAdmins.canManage(player),
+				players = list,
+				access = EditorAdmins.getAccessInfo(),
+			}
 		end)
 	elseif command == "grantAccess" then
 		if type(payload) ~= "table" then
@@ -1093,6 +1106,10 @@ api.OnServerInvoke = function(player, command, payload)
 		EditorAdmins.revoke(uid)
 		return { ok = true, result = { userId = uid } }
 	elseif command == "migrateLegacy" then
+		-- Destructive DataStore-writing migration — manager-only, like its v4 siblings below.
+		if not EditorAdmins.canManage(player) then
+			return { ok = false, error = "only the owner can run the legacy migration" }
+		end
 		return safeCall(Editor.migrateLegacy)
 	elseif command == "migrateV3toV4" then
 		-- Schema-flipping store migration (v3 -> v4). Owner-only, like load/delete config. Never auto.
@@ -1270,7 +1287,18 @@ local function adminSummary()
 	for _ in pairs(EditorAdmins.userIds) do
 		allowCount += 1
 	end
-	table.insert(parts, string.format("allowlist=%d", allowCount))
+	table.insert(parts, string.format("devlist=%d", allowCount))
+	local info = EditorAdmins.getAccessInfo()
+	table.insert(
+		parts,
+		string.format(
+			"config[%s]=%s (mgr=%d, hist=%d)",
+			info.configKey,
+			info.configAvailable and (info.configLoaded and "loaded" or "pending") or "unavailable",
+			#info.managers,
+			#info.historians
+		)
+	)
 	return table.concat(parts, " | ")
 end
 print(string.format("[DataEditorService] auth policy: %s", adminSummary()))

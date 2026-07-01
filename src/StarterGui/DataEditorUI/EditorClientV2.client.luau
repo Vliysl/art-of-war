@@ -1762,30 +1762,46 @@ local function renderSaves()
 	showDetail(state.selected)
 end
 
--- ─────────────────────────── Access tab (RoN-style: owner grants editor access, Phase 6) ───────────────────────────
--- Lists online players + their access tier. Managers (owner/dev) get Grant/Revoke buttons; everyone else
--- sees it read-only. Grants are session-scoped on the server (reset on restart, no DataStore writes).
+-- ─────────────────────────── Access tab (config-driven, Configs & Experiments) ───────────────────────────
+-- Access is set in the Creator Hub config "data_editor_access" (a JSON object { managers, historians }) and
+-- changes go live WITHOUT a place republish. This tab explains that model and lists online players + their
+-- tier. The legacy in-game session Grant/Revoke buttons only appear when the RoN owner suite is enabled.
 local function renderAccess()
 	local res = editorCall("listAccess")
 	local canManage = type(res) == "table" and res.canManage == true
 	local players = (type(res) == "table" and res.players) or {}
+	local access = (type(res) == "table" and res.access) or {}
+	local suiteOn = access.ownerSuiteEnabled == true
 
+	local configState = access.configAvailable == false and "unavailable on this build"
+		or (access.configLoaded and "loaded" or "pending…")
 	local note = label(
 		body,
-		canManage and "Grant other players editor access for this session (resets on server restart)."
-			or "Only the server owner / a dev can manage editor access.",
-		"bodyMd",
+		string.format(
+			'Access is set in the Creator Hub config "%s" (Configs & Experiments) — no republish needed.\n'
+				.. 'Edit its JSON  { "managers": [...], "historians": [...] }  and Publish; live in ~5 min.\n'
+				.. "historians = mappers (edit map + formables + save).  managers = full access incl. admin actions.\n"
+				.. "Config: %s   |   managers: %d   |   historians: %d",
+			access.configKey or "data_editor_access",
+			configState,
+			#(access.managers or {}),
+			#(access.historians or {})
+		),
+		"bodySm",
 		Colors.TextSecondary
 	)
 	note.Position = UDim2.fromOffset(4, 2)
-	note.Size = UDim2.new(1, -8, 0, 22)
+	note.Size = UDim2.new(1, -8, 0, 76)
+	note.TextWrapped = true
+	note.TextYAlignment = Enum.TextYAlignment.Top
 
+	local headerH = 84
 	local scroll = Instance.new("ScrollingFrame")
 	scroll.BackgroundColor3 = Colors.SurfaceBase
 	scroll.BorderSizePixel = 0
 	scroll.ScrollBarThickness = 6
-	scroll.Position = UDim2.fromOffset(0, 30)
-	scroll.Size = UDim2.new(1, 0, 1, -30)
+	scroll.Position = UDim2.fromOffset(0, headerH)
+	scroll.Size = UDim2.new(1, 0, 1, -headerH)
 	scroll.CanvasSize = UDim2.fromOffset(0, #players * 38 + 16) -- rows are 34px + 4px layout padding
 	scroll.Parent = body
 	do
@@ -1817,14 +1833,24 @@ local function renderAccess()
 		nameLbl.Position = UDim2.fromOffset(10, 0)
 		nameLbl.Size = UDim2.new(1, -260, 1, 0)
 
-		local statusText = p.manager and "Owner / dev" or (p.granted and "Granted" or "No access")
-		local statusColor = p.manager and Colors.Accent or (p.granted and Colors.Positive or Colors.TextSecondary)
+		local role = p.role or (p.manager and "manager" or (p.granted and "granted" or "none"))
+		local statusText = ({
+			manager = "Manager",
+			historian = "Historian",
+			granted = "Granted (session)",
+			none = "No access",
+		})[role] or "No access"
+		local statusColor = (role == "manager" and Colors.Accent)
+			or ((role == "historian" or role == "granted") and Colors.Positive)
+			or Colors.TextSecondary
 		local statusLbl = label(row, statusText, "bodySm", statusColor)
 		statusLbl.Position = UDim2.new(1, -240, 0, 0)
 		statusLbl.Size = UDim2.fromOffset(120, 34)
 		statusLbl.TextXAlignment = Enum.TextXAlignment.Right
 
-		if canManage and not p.manager then
+		-- Session Grant/Revoke is legacy and only takes effect while the RoN owner suite is on. When it's off,
+		-- the config (managers/historians) is the only path — buttons are hidden to avoid a no-op.
+		if suiteOn and canManage and (role == "none" or role == "granted") then
 			local btn = Button.create({
 				parent = row,
 				variant = p.granted and "danger" or "primary",

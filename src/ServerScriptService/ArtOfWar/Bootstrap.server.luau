@@ -1482,6 +1482,16 @@ for _, p in Players:GetPlayers() do
 	task.spawn(applyAdminAttribute, p)
 end
 
+-- Config-driven access loads async and can change live, so re-stamp IsAdmin for everyone whenever the
+-- access lists change (a config-only manager/mapper who joined before the snapshot landed gets it then).
+if EditorAdmins.onAccessChanged then
+	EditorAdmins.onAccessChanged(function()
+		for _, p in Players:GetPlayers() do
+			applyAdminAttribute(p)
+		end
+	end)
+end
+
 Players.PlayerRemoving:Connect(function(player)
 	InputValidator.releaseWindows(player.UserId)
 end)
