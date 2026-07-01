@@ -8,6 +8,17 @@ local screen = script.Parent
 
 local api = ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Remotes"):WaitForChild("DataEditorAPI")
 
+-- Phase 5: the rebuilt DesignSystem editor (EditorClientV2) supersedes this legacy one. Exactly one
+-- editor runs at a time -- stand down when the flag is on.
+do
+	local ok, wc = pcall(function()
+		return require(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Shared"):WaitForChild("WorldConstants"))
+	end)
+	if ok and wc and wc.EnableNewEditor then
+		return
+	end
+end
+
 local ProvinceInteraction
 do
 	local aow = ReplicatedStorage:FindFirstChild("ArtOfWar")

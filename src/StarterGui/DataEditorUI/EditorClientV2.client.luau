@@ -1,0 +1,467 @@
+-- EditorClientV2 -- the rebuilt Data Editor on the DesignSystem (Phase 5). Runs only when
+-- WorldConstants.EnableNewEditor is true (the legacy EditorClient stands down; exactly one runs).
+--
+-- This is the SHELL + first tabs slice: a themed window, the (unchanged) DataEditorService command
+-- protocol client, virtualized + searchable Countries and Provinces lists, and a Countries detail form
+-- with edit + Save. It shows only authoritative DEFINITION fields (no derived/runtime noise like manpower).
+-- Remaining slices layer on: identity tabs, cores/claims/releasable editing, the peace-conference modal,
+-- and the owner suite (Phase 6). Toggle with the backtick key.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+
+local aow = ReplicatedStorage:WaitForChild("ArtOfWar")
+local WorldConstants = require(aow:WaitForChild("Shared"):WaitForChild("WorldConstants"))
+if not WorldConstants.EnableNewEditor then
+	return
+end
+
+local DesignSystem = require(aow:WaitForChild("DesignSystem"))
+local Colors = DesignSystem.Colors
+local Typography = DesignSystem.Typography
+local Components = aow:WaitForChild("UI"):WaitForChild("Components")
+local Button = require(Components:WaitForChild("Button"))
+local VirtualList = require(Components:WaitForChild("VirtualList"))
+
+local api = aow:WaitForChild("Remotes"):WaitForChild("DataEditorAPI")
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- ─────────────────────────── protocol client (same commands as DataEditorService) ───────────────────────────
+local function editorCall(command, payload)
+	local ok, response = pcall(function()
+		return api:InvokeServer(command, payload)
+	end)
+	if not ok then
+		return nil, tostring(response)
+	end
+	if type(response) == "table" and response.ok == false then
+		return nil, response.error or "error"
+	end
+	if type(response) == "table" and response.result ~= nil then
+		return response.result
+	end
+	return true
+end
+
+local state = { snapshot = nil, tab = "countries", selected = nil, loaded = false }
+
+-- ─────────────────────────── small styled builders ───────────────────────────
+local function frame(props)
+	local f = Instance.new("Frame")
+	f.BorderSizePixel = 0
+	f.BackgroundColor3 = props.color or Colors.SurfaceElevated
+	f.BackgroundTransparency = props.transparent and 1 or 0
+	f.Size = props.size or UDim2.fromScale(1, 1)
+	f.Position = props.position or UDim2.new()
+	if props.anchor then f.AnchorPoint = props.anchor end
+	f.Parent = props.parent
+	return f
+end
+
+local function label(parent, text, role, color)
+	local l = Instance.new("TextLabel")
+	l.BackgroundTransparency = 1
+	l.Text = text
+	l.TextColor3 = color or Colors.TextPrimary
+	l.TextXAlignment = Enum.TextXAlignment.Left
+	l.TextYAlignment = Enum.TextYAlignment.Center
+	l.Size = UDim2.fromScale(1, 1)
+	Typography.apply(l, role or "bodyMd")
+	l.Parent = parent
+	return l
+end
+
+local function textbox(parent, placeholder)
+	local tb = Instance.new("TextBox")
+	tb.BackgroundColor3 = Colors.SurfaceSunken or Colors.SurfaceBase
+	tb.BorderSizePixel = 0
+	tb.ClearTextOnFocus = false
+	tb.Text = ""
+	tb.PlaceholderText = placeholder or ""
+	tb.TextColor3 = Colors.TextPrimary
+	tb.TextXAlignment = Enum.TextXAlignment.Left
+	tb.Size = UDim2.fromScale(1, 1)
+	Typography.apply(tb, "bodyMd")
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 8)
+	pad.PaddingRight = UDim.new(0, 8)
+	pad.Parent = tb
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Colors.BorderStrong
+	stroke.Thickness = 1
+	stroke.Parent = tb
+	tb.Parent = parent
+	return tb
+end
+
+-- ─────────────────────────── window shell ───────────────────────────
+local gui = Instance.new("ScreenGui")
+gui.Name = "AoWDataEditorV2"
+gui.ResetOnSpawn = false
+gui.DisplayOrder = 1500000
+gui.IgnoreGuiInset = true
+gui.Enabled = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent = playerGui
+
+local root = frame({ parent = gui, color = Colors.SurfaceBase, size = UDim2.fromOffset(940, 640) })
+root.Name = "Window"
+root.AnchorPoint = Vector2.new(0.5, 0.5)
+root.Position = UDim2.fromScale(0.5, 0.5)
+do
+	local s = Instance.new("UIStroke")
+	s.Color = Colors.BorderStrong
+	s.Thickness = 1
+	s.Parent = root
+end
+
+-- header
+local header = frame({ parent = root, color = Colors.SurfaceElevated, size = UDim2.new(1, 0, 0, 40) })
+header.Name = "Header"
+do
+	local title = label(header, "Data Editor", "displayLg")
+	title.Position = UDim2.fromOffset(14, 0)
+	title.Size = UDim2.new(0, 240, 1, 0)
+end
+local status = label(header, "", "bodySm", Colors.TextSecondary)
+status.Position = UDim2.fromOffset(270, 0)
+status.Size = UDim2.new(1, -300, 1, 0)
+local function setStatus(text, color)
+	status.Text = text or ""
+	status.TextColor3 = color or Colors.TextSecondary
+end
+
+local closeBtn = Button.create({
+	parent = header,
+	variant = "ghost",
+	text = "Close (`)",
+	width = 92,
+	onClick = function()
+		gui.Enabled = false
+	end,
+})
+closeBtn.AnchorPoint = Vector2.new(1, 0.5)
+closeBtn.Position = UDim2.new(1, -10, 0.5, 0)
+
+-- tab row
+local TABS = {
+	{ key = "countries", label = "Countries" },
+	{ key = "provinces", label = "Provinces" },
+}
+local tabRow = frame({ parent = root, transparent = true, size = UDim2.new(1, 0, 0, 34), position = UDim2.fromOffset(0, 40) })
+local tabButtons = {}
+
+-- body
+local body = frame({ parent = root, transparent = true, size = UDim2.new(1, -20, 1, -84), position = UDim2.fromOffset(10, 78) })
+body.Name = "Body"
+
+local render -- fwd
+
+local function selectTab(key)
+	state.tab = key
+	state.selected = nil
+	for k, b in pairs(tabButtons) do
+		local labelChild = b:FindFirstChildWhichIsA("TextLabel")
+		b.BackgroundColor3 = (k == key) and Colors.SurfaceOverlay or Colors.SurfaceElevated
+		if labelChild then labelChild.TextColor3 = (k == key) and Colors.Accent or Colors.TextSecondary end
+	end
+	render()
+end
+
+do
+	local x = 10
+	for _, def in ipairs(TABS) do
+		local b = Instance.new("TextButton")
+		b.AutoButtonColor = false
+		b.BackgroundColor3 = Colors.SurfaceElevated
+		b.BorderSizePixel = 0
+		b.Size = UDim2.fromOffset(120, 26)
+		b.Position = UDim2.fromOffset(x, 4)
+		b.Text = ""
+		b.Parent = tabRow
+		local lbl = label(b, def.label, "label", Colors.TextSecondary)
+		lbl.TextXAlignment = Enum.TextXAlignment.Center
+		b.MouseButton1Click:Connect(function() selectTab(def.key) end)
+		tabButtons[def.key] = b
+		x += 128
+	end
+end
+
+-- ─────────────────────────── reusable list column (search + VirtualList) ───────────────────────────
+-- cfg: { parent, getKeys(query) -> array, labelFor(key) -> string, onSelect(key), rowHeight? }
+local function listColumn(cfg)
+	local col = frame({ parent = cfg.parent, transparent = true, size = UDim2.new(0, 300, 1, 0) })
+	local search = textbox(col, "Search…")
+	search.Size = UDim2.new(1, 0, 0, 28)
+	local holder = frame({ parent = col, color = Colors.SurfaceBase, size = UDim2.new(1, 0, 1, -34), position = UDim2.fromOffset(0, 34) })
+	do
+		local s = Instance.new("UIStroke")
+		s.Color = Colors.BorderSubtle
+		s.Thickness = 1
+		s.Parent = holder
+	end
+
+	local keys = {}
+	local vlist
+	vlist = VirtualList.create({
+		parent = holder,
+		rowHeight = cfg.rowHeight or 26,
+		getCount = function() return #keys end,
+		createRow = function()
+			local row = Instance.new("TextButton")
+			row.AutoButtonColor = false
+			row.BackgroundColor3 = Colors.SurfaceElevated
+			row.BackgroundTransparency = 0.35
+			row.BorderSizePixel = 0
+			row.Text = ""
+			local rl = label(row, "", "bodySm")
+			rl.Position = UDim2.fromOffset(8, 0)
+			rl.Size = UDim2.new(1, -12, 1, 0)
+			row.MouseButton1Click:Connect(function()
+				local key = row:GetAttribute("key")
+				if key ~= nil then cfg.onSelect(key) end
+			end)
+			return row
+		end,
+		bindRow = function(row, i)
+			local key = keys[i]
+			row:SetAttribute("key", key)
+			local rl = row:FindFirstChildWhichIsA("TextLabel")
+			if rl then rl.Text = cfg.labelFor(key) end
+		end,
+	})
+
+	local function rebuild()
+		keys = cfg.getKeys(search.Text)
+		vlist.refresh()
+	end
+	search:GetPropertyChangedSignal("Text"):Connect(rebuild)
+	rebuild()
+	return col
+end
+
+-- ─────────────────────────── Countries tab ───────────────────────────
+local function sortedMatching(dict, query, keyToText)
+	query = string.lower(query or "")
+	local out = {}
+	for k, v in pairs(dict or {}) do
+		if query == "" or string.find(string.lower(keyToText(k, v)), query, 1, true) then
+			out[#out + 1] = k
+		end
+	end
+	table.sort(out, function(a, b) return tostring(a) < tostring(b) end)
+	return out
+end
+
+local function clearDetail(detail)
+	for _, ch in detail:GetChildren() do
+		if not ch:IsA("UIStroke") then
+			ch:Destroy()
+		end
+	end
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 14)
+	pad.PaddingRight = UDim.new(0, 14)
+	pad.PaddingTop = UDim.new(0, 12)
+	pad.Parent = detail
+	local layout = Instance.new("UIListLayout")
+	layout.Padding = UDim.new(0, 8)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = detail
+end
+
+local function makeDetailPane(columns)
+	local detail = frame({ parent = columns, color = Colors.SurfaceBase, size = UDim2.new(1, -312, 1, 0), position = UDim2.fromOffset(312, 0) })
+	local s = Instance.new("UIStroke")
+	s.Color = Colors.BorderSubtle
+	s.Thickness = 1
+	s.Parent = detail
+	return detail
+end
+
+local function readonlyRow(detail, name, value)
+	local r = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 22) })
+	label(r, name, "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 90, 1, 0)
+	local v = label(r, tostring(value or "—"), "bodySm")
+	v.Position = UDim2.fromOffset(96, 0)
+	v.Size = UDim2.new(1, -96, 1, 0)
+end
+
+local function renderCountries()
+	local snap = state.snapshot
+	local columns = frame({ parent = body, transparent = true })
+	-- Detail pane is built once; only its contents refresh on selection, so the list column's search box
+	-- and scroll position persist across clicks.
+	local detail = makeDetailPane(columns)
+
+	local function showDetail(tag)
+		clearDetail(detail)
+		local c = tag and snap.countries[tag]
+		if not c then
+			label(detail, "Select a country", "bodyMd", Colors.TextSecondary)
+			return
+		end
+		label(detail, tostring(tag), "displayLg").Size = UDim2.new(1, 0, 0, 26)
+
+		local nameRow = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 28) })
+		label(nameRow, "Name", "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 90, 1, 0)
+		local nameBox = textbox(nameRow, "display name")
+		nameBox.Size = UDim2.new(1, -96, 1, 0)
+		nameBox.Position = UDim2.fromOffset(96, 0)
+		nameBox.Text = c.displayName or ""
+
+		local colorRow = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 28) })
+		label(colorRow, "Colour", "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 90, 1, 0)
+		local col3 = c.color or { 150, 150, 150 }
+		local boxes = {}
+		for i = 1, 3 do
+			local b = textbox(colorRow, tostring(col3[i] or 0))
+			b.Size = UDim2.new(0, 52, 1, 0)
+			b.Position = UDim2.fromOffset(96 + (i - 1) * 58, 0)
+			b.Text = tostring(col3[i] or 0)
+			boxes[i] = b
+		end
+		local swatch = frame({ parent = colorRow, size = UDim2.fromOffset(24, 24), position = UDim2.fromOffset(96 + 3 * 58 + 6, 2) })
+		local function refreshSwatch()
+			swatch.BackgroundColor3 = Color3.fromRGB(
+				tonumber(boxes[1].Text) or 0, tonumber(boxes[2].Text) or 0, tonumber(boxes[3].Text) or 0
+			)
+		end
+		refreshSwatch()
+		for _, b in ipairs(boxes) do b:GetPropertyChangedSignal("Text"):Connect(refreshSwatch) end
+
+		-- read-only definition fields (dropdown editing comes in a later slice); derived/runtime fields
+		-- (manpower, treasury, ...) are intentionally NOT shown -- they're recomputed, not definition data.
+		readonlyRow(detail, "Capital", c.capitalProvinceId)
+		readonlyRow(detail, "Culture", c.primaryCulture)
+		readonlyRow(detail, "Religion", c.stateReligion)
+		readonlyRow(detail, "Government", c.governmentForm)
+		readonlyRow(detail, "Ideology", c.ideology)
+
+		local saveBtn = Button.create({
+			parent = detail,
+			variant = "primary",
+			text = "Save",
+			width = 120,
+			onClick = function()
+				local newColor = { tonumber(boxes[1].Text) or 0, tonumber(boxes[2].Text) or 0, tonumber(boxes[3].Text) or 0 }
+				local res, err = editorCall("updateCountry", { tag = tag, opts = { displayName = nameBox.Text, color = newColor } })
+				if res then
+					c.displayName = nameBox.Text
+					c.color = newColor
+					setStatus("Saved " .. tostring(tag), Colors.Positive)
+				else
+					setStatus("Save failed: " .. tostring(err), Colors.Negative)
+				end
+			end,
+		})
+		saveBtn.LayoutOrder = 99
+	end
+
+	listColumn({
+		parent = columns,
+		getKeys = function(q)
+			return sortedMatching(snap.countries, q, function(tag, c)
+				return tostring(tag) .. " " .. (c.displayName or "")
+			end)
+		end,
+		labelFor = function(tag)
+			local c = snap.countries[tag]
+			return string.format("%s  —  %s", tostring(tag), (c and c.displayName) or "?")
+		end,
+		onSelect = function(tag)
+			state.selected = tag
+			showDetail(tag)
+		end,
+	})
+
+	showDetail(state.selected)
+end
+
+-- ─────────────────────────── Provinces tab (virtualized; read-only detail this slice) ───────────────────────────
+local function renderProvinces()
+	local snap = state.snapshot
+	local columns = frame({ parent = body, transparent = true })
+	local detail = makeDetailPane(columns)
+
+	local function showDetail(id)
+		clearDetail(detail)
+		local p = id and snap.provinces[id]
+		if not p then
+			label(detail, "Select a province", "bodyMd", Colors.TextSecondary)
+			return
+		end
+		label(detail, string.format("#%s  %s", tostring(id), p.name or "?"), "displayLg").Size = UDim2.new(1, 0, 0, 26)
+		readonlyRow(detail, "Owner", p.ownerTag)
+		readonlyRow(detail, "Controller", p.controllerTag)
+		readonlyRow(detail, "Culture", p.culture)
+		readonlyRow(detail, "Religion", p.religion)
+		readonlyRow(detail, "Cores", p.cores and table.concat(p.cores, ", ") or "")
+		readonlyRow(detail, "Claims", p.claims and table.concat(p.claims, ", ") or "")
+	end
+
+	listColumn({
+		parent = columns,
+		getKeys = function(q)
+			return sortedMatching(snap.provinces, q, function(id, p)
+				return tostring(id) .. " " .. (p.name or "")
+			end)
+		end,
+		labelFor = function(id)
+			local p = snap.provinces[id]
+			return string.format("#%s  %s", tostring(id), (p and p.name) or "?")
+		end,
+		onSelect = function(id)
+			state.selected = id
+			showDetail(id)
+		end,
+	})
+
+	showDetail(state.selected)
+end
+
+render = function()
+	for _, child in body:GetChildren() do
+		if child:IsA("GuiObject") then child:Destroy() end
+	end
+	if not state.snapshot then
+		label(body, "Loading… (or not authorized)", "bodyMd", Colors.TextSecondary)
+		return
+	end
+	if state.tab == "countries" then
+		renderCountries()
+	elseif state.tab == "provinces" then
+		renderProvinces()
+	end
+end
+
+local function ensureLoaded()
+	if state.loaded then return end
+	local snap, err = editorCall("loadState")
+	if not snap then
+		setStatus("Load failed: " .. tostring(err), Colors.Negative)
+		return
+	end
+	state.snapshot = snap
+	state.loaded = true
+	local cn, pn = 0, 0
+	for _ in pairs(snap.countries or {}) do cn += 1 end
+	for _ in pairs(snap.provinces or {}) do pn += 1 end
+	setStatus(string.format("%d countries  •  %d provinces", cn, pn))
+	render()
+end
+
+selectTab("countries")
+
+UserInputService.InputBegan:Connect(function(input, gpe)
+	if gpe then return end
+	if input.KeyCode == Enum.KeyCode.Backquote then
+		gui.Enabled = not gui.Enabled
+		if gui.Enabled then
+			ensureLoaded()
+			render()
+		end
+	end
+end)

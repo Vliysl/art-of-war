@@ -27,6 +27,7 @@ WorldConstants.EnableCores = false            -- Phase 2: cores suppress unrest 
 WorldConstants.EnablePeaceConference = false  -- Phase 3: war-score peace conference
 WorldConstants.EnableFormables = false        -- Phase 4: formable nations + releasables
 WorldConstants.EnableRebellions = false       -- Phase 4: rebellions flip provinces
+WorldConstants.EnableNewEditor = false        -- Phase 5: use the rebuilt DesignSystem editor (legacy one stands down)
 
 -- Phase 2: unrest added per owned province the nation holds NO core on (cores suppress unrest). Default 0
 -- (opt-in) -- raise once balanced. Gated by EnableCores; computed O(owned) in UnrestSystem.targetUnrest.
