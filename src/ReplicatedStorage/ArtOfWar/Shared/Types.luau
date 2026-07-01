@@ -108,6 +108,7 @@ export type CountryRecord = {
 	expenseBreakdown: { [string]: number }?,
 	dailyConsumption: { [TradeGoodId]: number }?,
 	truces: { [CountryTag]: number }?,
+	formedTags: { [string]: boolean }?, -- formables already formed (one-time bonus guard)
 	-- Politics overhaul ("Authority & the Estates") — all optional, system-seeded, save-compatible
 	crownAuthority: number?,                                                    -- 0..cap, current Authority (Crown/Republican/Chiefly)
 	crownAuthorityCap: number?,                                                 -- 100 + Σ privilege.authorityCap (<=0 each)

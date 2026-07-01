@@ -17,8 +17,12 @@ local STORE_NAME = "AoW_Formables"
 local STORE_SCOPE = "v4"
 local KEY = "all"
 
+local FLUSH_DELAY = 6 -- seconds; coalesce bursty edits into one SetAsync
+
 local ctx
 local custom = {} -- tag -> definition
+local dirty = false -- a persist is pending (edits since last write)
+local flushScheduled = false -- a task.delay flush is in flight
 
 -- Mirror the custom set to ReplicatedStorage/ArtOfWar/FormablesRuntime (JSON) for clients.
 local function replicate()
@@ -46,9 +50,26 @@ local function applyAll()
 	end
 end
 
-local function persist()
+-- Write the current custom set to the DataStore once (blocking). Only call from a flush.
+local function writeNow()
+	dirty = false
 	pcall(function()
 		DataStoreService:GetDataStore(STORE_NAME, STORE_SCOPE):SetAsync(KEY, custom)
+	end)
+end
+
+-- Mark the store dirty and schedule a single coalesced flush; bursty edits collapse into one write.
+local function persist()
+	dirty = true
+	if flushScheduled then
+		return
+	end
+	flushScheduled = true
+	task.delay(FLUSH_DELAY, function()
+		flushScheduled = false
+		if dirty then
+			writeNow()
+		end
 	end)
 end
 
@@ -65,6 +86,12 @@ function FormableStore.register(context)
 	ctx = context
 	load()
 	replicate()
+	-- Don't lose a pending coalesced write when the server shuts down.
+	game:BindToClose(function()
+		if dirty then
+			writeNow()
+		end
+	end)
 	-- Apply after the register loop so FormableSystem is guaranteed registered (order-independent).
 	task.defer(applyAll)
 

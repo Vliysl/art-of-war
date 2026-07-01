@@ -120,6 +120,7 @@ Channels.SubjectAnnexed = "diplomacy.subject.annexed"
 Channels.PlayerReady = "player.ready"
 Channels.CountryClaimed = "country.claimed"
 Channels.CountryReleased = "country.released"
+Channels.NationFormed = "nation.formed"
 Channels.StateReplicated = "state.replicated"
 
 Channels.PlayerMapModeChanged = "player.mapmode.changed"

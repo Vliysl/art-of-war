@@ -615,8 +615,12 @@ local function conferenceDemandCost(demand, winnerTag, loserTag)
 		local p = ctx.WorldState.getProvince(demand.provinceId)
 		if not p or p.ownerTag ~= loserTag then return math.huge end -- not the loser's -> not takeable
 		local cost = C.PeaceTakeProvinceCost or 12
-		if provinceHasTag(p.cores, loserTag) then cost *= (C.PeaceCoreMultiplier or 1.5) end
-		if provinceHasTag(p.claims, winnerTag) then cost *= (C.PeaceClaimCostDiscount or 0.7) end
+		-- Cores/claims only modify cost once the cores phase is enabled (mirrors hasClaimOn's gate), so the
+		-- surcharge/discount stay inert -- and match the client preview -- while EnableCores is off.
+		if C.EnableCores then
+			if provinceHasTag(p.cores, loserTag) then cost *= (C.PeaceCoreMultiplier or 1.5) end
+			if provinceHasTag(p.claims, winnerTag) then cost *= (C.PeaceClaimCostDiscount or 0.7) end
+		end
 		return cost
 	end
 	return math.huge -- unknown demand type
@@ -637,7 +641,11 @@ end
 -- Take a single province in a conference (owner + controller -> winner).
 local function takeConferenceProvince(winnerTag, loserTag, provinceId)
 	local p = ctx.WorldState.getProvince(provinceId)
-	if not p or p.ownerTag ~= loserTag then return end
+	if not p or p.ownerTag ~= loserTag then
+		warn(string.format("[Diplomacy] takeConferenceProvince skipped: province %s no longer owned by %s",
+			tostring(provinceId), tostring(loserTag)))
+		return
+	end
 	p.ownerTag = winnerTag
 	if p.controllerTag == loserTag then
 		p.controllerTag = winnerTag
@@ -657,7 +665,14 @@ local function applyConference(war, winnerTag, loserTag, terms, warId)
 		return false
 	end
 	for _, d in ipairs(terms.demands or {}) do
-		if d.type == "annex_all" then
+		-- Re-derive each demand's cost against the LIVE state (province may have changed hands, the loser
+		-- may have shrunk) and skip any that are now impossible/unaffordable, rather than applying blindly
+		-- off the stale stamped cost. Unknown/ineligible demands return math.huge from conferenceDemandCost.
+		local liveCost = conferenceDemandCost(d, winnerTag, loserTag)
+		if liveCost == math.huge then
+			warn(string.format("[Diplomacy] applyConference skipped demand '%s' (live cost is impossible)",
+				tostring(d.type)))
+		elseif d.type == "annex_all" then
 			if ctx.WorldConstants.EnableFullAnnex and not isClaimedTag(loserTag) then
 				annexCountry(winnerTag, loserTag, warId)
 			else
@@ -1357,7 +1372,11 @@ local function releaseNation(holderTag, formableTag, asPuppet)
 		local p = ctx.WorldState.getProvince(id)
 		if p and p.ownerTag == holderTag then
 			p.ownerTag = formableTag
-			p.controllerTag = formableTag
+			-- Only hand over the controller if the holder still occupies it; an enemy-occupied core stays
+			-- occupied (mirrors annexCountry) rather than being silently freed to the new nation.
+			if p.controllerTag == holderTag then
+				p.controllerTag = formableTag
+			end
 			p.cores = p.cores or {}
 			if not table.find(p.cores, formableTag) then
 				table.insert(p.cores, formableTag)
@@ -1386,8 +1405,27 @@ end
 -- ProvinceStamper / StateReplicator all react to ProvinceOwnershipChanged automatically. Callers gate
 -- the consent / human checks. `function` (not `local function`) fills the forward-declared upvalue.
 function annexCountry(winnerTag, loserTag, exceptWarId)
+	local loserCountry = ctx.WorldState.getCountry(loserTag)
+	local loserName = (loserCountry and loserCountry.displayName) or loserTag
+	local winnerCountry = ctx.WorldState.getCountry(winnerTag)
+	local winnerName = (winnerCountry and winnerCountry.displayName) or winnerTag
 	for _, war in getActiveWarsFor(loserTag) do
 		if war.id ~= exceptWarId then
+			-- The other belligerent in this side-war is losing an enemy to a third-party annexation, not
+			-- negotiating a peace. If they are a connected human, tell them explicitly -- the plain
+			-- PeaceConcluded toast (white_peace) would misrepresent why the war ended.
+			local otherTag = (war.attackerTag == loserTag) and war.defenderTag or war.attackerTag
+			if otherTag ~= winnerTag and isClaimedTag(otherTag) and ctx.NotificationBroadcaster then
+				ctx.NotificationBroadcaster.push({
+					kind = "info",
+					title = "War Ended",
+					body = string.format("%s has been annexed by %s; our war with them is over.", loserName, winnerName),
+					audience = "self",
+					tag = otherTag,
+					eventType = "war.enemy.annexed",
+					ttl = 10,
+				})
+			end
 			endWar(war.id, { type = "white_peace", forced = true, reason = "annexed" }, { consented = true })
 		end
 	end

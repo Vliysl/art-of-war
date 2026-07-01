@@ -1020,10 +1020,27 @@ api.OnServerInvoke = function(player, command, payload)
 	elseif command == "listConfigs" then
 		return safeCall(Editor.listConfigs)
 	elseif command == "saveConfig" then
+		if type(payload) ~= "table" then
+			return { ok = false, error = "payload required" }
+		end
+		-- Asymmetry is intentional: saveConfig + listConfigs are non-destructive (any authorized user),
+		-- but loadConfig/deleteConfig replace or delete the live world and are gated to the owner below.
 		return safeCall(Editor.saveConfig, payload.name)
 	elseif command == "loadConfig" then
+		if type(payload) ~= "table" then
+			return { ok = false, error = "payload required" }
+		end
+		if not EditorAdmins.canManage(player) then
+			return { ok = false, error = "only the owner can load/delete map configs" }
+		end
 		return safeCall(Editor.loadConfig, payload.name)
 	elseif command == "deleteConfig" then
+		if type(payload) ~= "table" then
+			return { ok = false, error = "payload required" }
+		end
+		if not EditorAdmins.canManage(player) then
+			return { ok = false, error = "only the owner can load/delete map configs" }
+		end
 		return safeCall(Editor.deleteConfig, payload.name)
 	elseif command == "listAccess" then
 		-- Current players + who is a manager / granted. Any authorized user may view; only managers act.
@@ -1040,6 +1057,9 @@ api.OnServerInvoke = function(player, command, payload)
 			return { canManage = EditorAdmins.canManage(player), players = list }
 		end)
 	elseif command == "grantAccess" then
+		if type(payload) ~= "table" then
+			return { ok = false, error = "payload required" }
+		end
 		if not EditorAdmins.canManage(player) then
 			return { ok = false, error = "only the server owner can grant editor access" }
 		end
@@ -1050,6 +1070,9 @@ api.OnServerInvoke = function(player, command, payload)
 		EditorAdmins.grant(uid)
 		return { ok = true, result = { userId = uid } }
 	elseif command == "revokeAccess" then
+		if type(payload) ~= "table" then
+			return { ok = false, error = "payload required" }
+		end
 		if not EditorAdmins.canManage(player) then
 			return { ok = false, error = "only the server owner can revoke editor access" }
 		end

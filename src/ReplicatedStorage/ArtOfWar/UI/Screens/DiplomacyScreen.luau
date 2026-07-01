@@ -767,11 +767,15 @@ function DiplomacyScreen.create(ctx)
 			for id, p in pairs(cache.allProvinces()) do
 				if p.ownerTag == tag then
 					local cost = wc.PeaceTakeProvinceCost or 12
-					if p.cores and table.find(p.cores, tag) then
-						cost = cost * (wc.PeaceCoreMultiplier or 1.5)
-					end
-					if p.claims and mineTag and table.find(p.claims, mineTag) then
-						cost = cost * (wc.PeaceClaimCostDiscount or 0.7)
+					-- Core surcharge / claim discount only apply while the cores phase is on (matches the
+					-- server's EnableCores gate in conferenceDemandCost), so the preview stays accurate.
+					if wc.EnableCores then
+						if p.cores and table.find(p.cores, tag) then
+							cost = cost * (wc.PeaceCoreMultiplier or 1.5)
+						end
+						if p.claims and mineTag and table.find(p.claims, mineTag) then
+							cost = cost * (wc.PeaceClaimCostDiscount or 0.7)
+						end
 					end
 					cost = math.floor(cost + 0.5)
 					costById[id] = cost

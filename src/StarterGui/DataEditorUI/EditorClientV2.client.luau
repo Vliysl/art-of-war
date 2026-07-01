@@ -1384,6 +1384,10 @@ render = function()
 		formablesConn:Disconnect()
 		formablesConn = nil
 	end
+	-- Close any open dropdown popup: it (and its full-screen click-catcher) parent to the root gui, outside
+	-- body, so the body-only clear below would leave a stale invisible click-blocker on a re-render.
+	if openPopup then openPopup:Destroy() end -- its Destroying handler removes the catcher too
+	openPopup = nil
 	for _, child in body:GetChildren() do
 		if child:IsA("GuiObject") then child:Destroy() end
 	end

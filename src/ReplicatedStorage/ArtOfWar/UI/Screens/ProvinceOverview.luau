@@ -888,6 +888,23 @@ function ProvinceOverview.create(ctx)
 			end
 			table.sort(avail)
 			parts[#parts + 1] = "av:" .. table.concat(avail, ",")
+		elseif tabKey == "information" then
+			-- The Cores row is the only runtime-mutable structure here (cores/defaultCores change on
+			-- war/peace). Fold their SORTED ids in (both arrays are unordered) so the tab rebuilds when
+			-- they change; other Information stats live-update via prov, no rebuild needed.
+			local live = liveProvince()
+			local cores = {}
+			for _, t in ipairs((live and live.cores) or {}) do
+				cores[#cores + 1] = t
+			end
+			table.sort(cores)
+			parts[#parts + 1] = "co:" .. table.concat(cores, ",")
+			local dcores = {}
+			for _, t in ipairs((live and live.defaultCores) or {}) do
+				dcores[#dcores + 1] = t
+			end
+			table.sort(dcores)
+			parts[#parts + 1] = "dc:" .. table.concat(dcores, ",")
 		end
 		return table.concat(parts, "|")
 	end

@@ -44,7 +44,10 @@ local function canForm(tag, formableTag)
 	local def = getDef(formableTag)
 	if not def or def.canForm == false then return false end
 	-- Can't form a nation you ARE already (identity already adopted), and the tag must exist.
-	if not ctx.WorldState.getCountry(tag) then return false end
+	local country = ctx.WorldState.getCountry(tag)
+	if not country then return false end
+	-- One-time only: refuse if this tag already formed this formable (bonus already granted).
+	if country.formedTags and country.formedTags[formableTag] then return false end
 	return ownsAll(tag, def.requiredProvinceIds)
 end
 
@@ -74,6 +77,9 @@ local function formNation(tag, formableTag)
 	if def.formBonuses and type(def.formBonuses.stability) == "number" then
 		country.stability = (country.stability or 0) + def.formBonuses.stability
 	end
+	-- Mark this formable as formed so the one-time bonus can't be re-stacked (see canForm).
+	country.formedTags = country.formedTags or {}
+	country.formedTags[formableTag] = true
 	ctx.WorldState.setCountry(tag, country)
 
 	-- Core the required provinces to the former (single source of truth: province.cores).

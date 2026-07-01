@@ -153,7 +153,7 @@ local function registerProvince(id, record)
 	end
 	local clone = table.clone(record)
 	clone.cores = table.clone(record.cores or {})
-	clone.defaultCores = table.clone(record.defaultCores or {})
+	clone.defaultCores = table.clone(record.defaultCores or record.cores or {})
 	clone.claims = table.clone(record.claims or {})
 	if clone.goods == nil then
 		local g = {}

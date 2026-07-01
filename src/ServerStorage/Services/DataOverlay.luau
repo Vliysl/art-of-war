@@ -700,6 +700,19 @@ local CONFIG_INDEX_KEY = "save:__index"
 local CONFIG_NAME_MAX = 25 -- keeps "save:<name>:<kind>" within the 50-char DataStore key limit
 local AUTO_BACKUP_NAME = "auto- before last load"
 
+-- Memoized copy of the config index (module-level upvalue). readConfigIndex/listNamedConfigs return
+-- this if present; save/delete update or invalidate it whenever they write CONFIG_INDEX_KEY so we
+-- avoid a GetAsync on every listing.
+local configIndexMemo = nil
+
+-- Only [%w _%-] (letters/digits/space/underscore/hyphen) — rejects ':' (our key separator) and any
+-- control chars, and enforces the length cap so "save:<name>:<kind>" stays inside the key limit.
+local function validateConfigName(name)
+	assert(type(name) == "string" and name ~= "", "config name required")
+	assert(#name <= CONFIG_NAME_MAX, "config name too long (max " .. CONFIG_NAME_MAX .. " chars)")
+	assert(name:match("^[%w _%-]+$") ~= nil, "config name has invalid characters (allowed: letters, digits, space, _ , -)")
+end
+
 local function configKey(name, kind)
 	return "save:" .. name .. ":" .. kind
 end
@@ -714,6 +727,9 @@ local function countMap(map)
 	return n
 end
 local function readConfigIndex(ds)
+	if configIndexMemo ~= nil then
+		return configIndexMemo
+	end
 	local ok, raw = withRetry(function()
 		return ds:GetAsync(CONFIG_INDEX_KEY)
 	end, "GetAsync " .. CONFIG_INDEX_KEY)
@@ -721,32 +737,50 @@ local function readConfigIndex(ds)
 		return nil
 	end
 	local decoded = decodeValue(raw)
-	return (type(decoded) == "table") and decoded or {}
+	local idx = (type(decoded) == "table") and decoded or {}
+	configIndexMemo = idx
+	return idx
+end
+
+-- Atomically upsert (or remove, when entry == nil) the given name in the config index via
+-- UpdateAsync, then refresh the memo. Never calls readConfigIndex inside the transform.
+local function updateConfigIndexEntry(ds, name, entry)
+	local ok, newIdx = withRetry(function()
+		return ds:UpdateAsync(CONFIG_INDEX_KEY, function(raw)
+			local idx = (decodeValue(raw)) or {}
+			idx[name] = entry
+			return HttpService:JSONEncode(idx)
+		end)
+	end, "UpdateAsync " .. CONFIG_INDEX_KEY)
+	if ok then
+		local decoded = decodeValue(newIdx)
+		configIndexMemo = (type(decoded) == "table") and decoded or nil
+	else
+		configIndexMemo = nil -- unknown state: force a fresh read next time
+	end
+	return ok
 end
 
 function DataOverlay.saveNamedConfig(name)
-	assert(type(name) == "string" and name ~= "", "config name required")
-	assert(#name <= CONFIG_NAME_MAX, "config name too long (max " .. CONFIG_NAME_MAX .. " chars)")
+	validateConfigName(name)
 	ensureLoaded()
+	-- All-or-nothing: if ANY kind failed to load its aggregate, snapshotting cache.data[kind] (which
+	-- is {} for a failed kind) would silently bake an empty aggregate into the config → data loss.
+	for _, kind in ipairs(ALL_KINDS) do
+		if cache.loadStatus[kind] == "read_failed" then
+			error(
+				"refusing to save config '"
+					.. name
+					.. "': aggregate '"
+					.. kind
+					.. "' failed to load — saving now would snapshot it as empty. Wait for the retry to recover it, then save again."
+			)
+		end
+	end
 	local ds = store()
 	local counts = {}
 	for _, kind in ipairs(ALL_KINDS) do
-		local map = cache.data[kind] or {}
-		counts[kind] = countMap(map)
-		local serializable = {}
-		for k, v in pairs(map) do
-			serializable[tostring(k)] = v
-		end
-		local encodeOk, payload = pcall(HttpService.JSONEncode, HttpService, serializable)
-		if not encodeOk then
-			error("failed to encode " .. kind .. " for config '" .. name .. "'")
-		end
-		local ok, err = withRetry(function()
-			ds:SetAsync(configKey(name, kind), payload)
-		end, "SetAsync config " .. name .. ":" .. kind)
-		if not ok then
-			error("write failed for " .. kind .. ": " .. tostring(err))
-		end
+		counts[kind] = countMap(cache.data[kind] or {})
 	end
 	local meta = {
 		name = name,
@@ -755,15 +789,73 @@ function DataOverlay.saveNamedConfig(name)
 		countries = counts[KIND_COUNTRIES],
 		provinces = counts[KIND_PROVINCES],
 		schema = cache.collapsed and COLLAPSED_VERSION or SCHEMA_VERSION,
+		counts = counts, -- per-kind counts, consulted by loadNamedConfig to refuse empty-over-real
+		status = "pending", -- flipped to "complete" only after every kind write succeeds
 	}
+	-- Publish the pending index entry + meta BEFORE writing kinds, so a crash mid-loop leaves a
+	-- clearly-incomplete marker that listNamedConfigs/loadNamedConfig ignore (never a torn "complete").
+	local idxOk = updateConfigIndexEntry(ds, name, {
+		savedAt = meta.savedAt,
+		savedAtStr = meta.savedAtStr,
+		countries = meta.countries,
+		provinces = meta.provinces,
+		status = "pending",
+	})
+	if not idxOk then
+		error("write failed for config index (pending) '" .. name .. "'")
+	end
 	withRetry(function()
 		ds:SetAsync(configMetaKey(name), HttpService:JSONEncode(meta))
 	end, "SetAsync config meta " .. name)
-	local idx = readConfigIndex(ds) or {}
-	idx[name] = { savedAt = meta.savedAt, savedAtStr = meta.savedAtStr, countries = meta.countries, provinces = meta.provinces }
+
+	local writtenKinds = {}
+	for _, kind in ipairs(ALL_KINDS) do
+		local map = cache.data[kind] or {}
+		local serializable = {}
+		for k, v in pairs(map) do
+			serializable[tostring(k)] = v
+		end
+		local encodeOk, payload = pcall(HttpService.JSONEncode, HttpService, serializable)
+		local ok, err
+		if encodeOk then
+			ok, err = withRetry(function()
+				ds:SetAsync(configKey(name, kind), payload)
+			end, "SetAsync config " .. name .. ":" .. kind)
+		end
+		if not (encodeOk and ok) then
+			-- Best-effort roll back the partial write from THIS attempt, then re-error.
+			for _, wk in ipairs(writtenKinds) do
+				withRetry(function()
+					ds:RemoveAsync(configKey(name, wk))
+				end, "RemoveAsync partial config " .. name .. ":" .. wk)
+			end
+			updateConfigIndexEntry(ds, name, nil)
+			withRetry(function()
+				ds:RemoveAsync(configMetaKey(name))
+			end, "RemoveAsync partial config meta " .. name)
+			if not encodeOk then
+				error("failed to encode " .. kind .. " for config '" .. name .. "'")
+			end
+			error("write failed for " .. kind .. ": " .. tostring(err))
+		end
+		table.insert(writtenKinds, kind)
+	end
+
+	-- All 8 kinds landed — flip meta + index to "complete".
+	meta.status = "complete"
 	withRetry(function()
-		ds:SetAsync(CONFIG_INDEX_KEY, HttpService:JSONEncode(idx))
-	end, "SetAsync " .. CONFIG_INDEX_KEY)
+		ds:SetAsync(configMetaKey(name), HttpService:JSONEncode(meta))
+	end, "SetAsync config meta complete " .. name)
+	local completeOk = updateConfigIndexEntry(ds, name, {
+		savedAt = meta.savedAt,
+		savedAtStr = meta.savedAtStr,
+		countries = meta.countries,
+		provinces = meta.provinces,
+		status = "complete",
+	})
+	if not completeOk then
+		error("write failed for config index (complete) '" .. name .. "'")
+	end
 	return { name = name, savedAt = meta.savedAtStr, countries = meta.countries, provinces = meta.provinces }
 end
 
@@ -773,13 +865,17 @@ function DataOverlay.listNamedConfigs()
 	assert(idx ~= nil, "could not read the config index")
 	local out = {}
 	for cname, meta in pairs(idx) do
-		out[#out + 1] = {
-			name = cname,
-			savedAt = meta.savedAtStr or (meta.savedAt and tostring(meta.savedAt)) or "?",
-			savedAtEpoch = meta.savedAt or 0,
-			countries = meta.countries,
-			provinces = meta.provinces,
-		}
+		-- Ignore torn/in-progress saves (status ~= "complete"). Legacy entries predating the status
+		-- field have status == nil; treat those as complete for backward compatibility.
+		if meta.status == nil or meta.status == "complete" then
+			out[#out + 1] = {
+				name = cname,
+				savedAt = meta.savedAtStr or (meta.savedAt and tostring(meta.savedAt)) or "?",
+				savedAtEpoch = meta.savedAt or 0,
+				countries = meta.countries,
+				provinces = meta.provinces,
+			}
+		end
 	end
 	table.sort(out, function(a, b)
 		return (a.savedAtEpoch or 0) > (b.savedAtEpoch or 0)
@@ -788,7 +884,7 @@ function DataOverlay.listNamedConfigs()
 end
 
 function DataOverlay.deleteNamedConfig(name)
-	assert(type(name) == "string" and name ~= "", "config name required")
+	validateConfigName(name)
 	local ds = store()
 	for _, kind in ipairs(ALL_KINDS) do
 		withRetry(function()
@@ -798,11 +894,7 @@ function DataOverlay.deleteNamedConfig(name)
 	withRetry(function()
 		ds:RemoveAsync(configMetaKey(name))
 	end, "RemoveAsync config meta " .. name)
-	local idx = readConfigIndex(ds) or {}
-	idx[name] = nil
-	withRetry(function()
-		ds:SetAsync(CONFIG_INDEX_KEY, HttpService:JSONEncode(idx))
-	end, "SetAsync " .. CONFIG_INDEX_KEY)
+	updateConfigIndexEntry(ds, name, nil)
 	return { name = name }
 end
 
@@ -810,7 +902,7 @@ end
 -- Reads every kind up front so a mid-read failure aborts before anything is mutated. Applies on the next
 -- server boot; also refreshes the in-memory cache so the editor reflects the loaded world immediately.
 function DataOverlay.loadNamedConfig(name)
-	assert(type(name) == "string" and name ~= "", "config name required")
+	validateConfigName(name)
 	ensureLoaded()
 	local ds = store()
 	local mok, mraw = withRetry(function()
@@ -819,9 +911,15 @@ function DataOverlay.loadNamedConfig(name)
 	if not mok then
 		error("could not read config '" .. name .. "'")
 	end
-	if type(decodeValue(mraw)) ~= "table" then
+	local meta = decodeValue(mraw)
+	if type(meta) ~= "table" then
 		error("config '" .. name .. "' not found")
 	end
+	-- Refuse torn/in-progress saves. Legacy configs predating the status field have status == nil.
+	if meta.status ~= nil and meta.status ~= "complete" then
+		error("config '" .. name .. "' is incomplete (a previous save did not finish); refusing to load it")
+	end
+	local metaCounts = type(meta.counts) == "table" and meta.counts or {}
 	local loaded = {}
 	for _, kind in ipairs(ALL_KINDS) do
 		local ok, raw = withRetry(function()
@@ -837,9 +935,26 @@ function DataOverlay.loadNamedConfig(name)
 				map[coerceKey(kind, k)] = v
 			end
 		end
+		-- Guard against wiping a real aggregate with an empty snapshot: if the config was saved with
+		-- a non-zero count for this kind but decoded to nothing, the stored value is corrupt/torn.
+		local expected = tonumber(metaCounts[kind]) or 0
+		if expected > 0 and countMap(map) == 0 then
+			error(
+				"config '"
+					.. name
+					.. "' expected "
+					.. expected
+					.. " '"
+					.. kind
+					.. "' records but decoded none — refusing to overwrite the live world with an empty snapshot"
+			)
+		end
 		loaded[kind] = map
 	end
 	local backupOk = pcall(DataOverlay.saveNamedConfig, AUTO_BACKUP_NAME)
+	if not backupOk then
+		error("aborting load of '" .. name .. "': auto-backup failed, live world untouched")
+	end
 	for _, kind in ipairs(ALL_KINDS) do
 		cache.data[kind] = loaded[kind]
 		cache.dirty[kind] = true
