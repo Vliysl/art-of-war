@@ -532,6 +532,12 @@ api.OnServerInvoke = function(player, command, payload)
 	if not isAuthorized(player) then
 		return { ok = false, error = "not authorized — only admins may use the data editor" }
 	end
+	-- authCheck is a trivial authorized-only probe the client uses to gate its window. Handle it BEFORE the
+	-- rate limiter: the window-open sequence fires authCheck immediately followed by loadState, and if
+	-- authCheck stamped the call cooldown, loadState would be rejected with "too many calls".
+	if command == "authCheck" then
+		return { ok = true, result = { allowed = true, canManage = EditorAdmins.canManage(player) } }
+	end
 	if payload ~= nil and not validatePayload(payload) then
 		return { ok = false, error = "payload rejected" }
 	end
@@ -544,10 +550,7 @@ api.OnServerInvoke = function(player, command, payload)
 		pcall(Editor.setActiveUser, player.UserId)
 	end
 
-	if command == "authCheck" then
-		-- Only reached if isAuthorized passed above, so the client can gate its window on this.
-		return { ok = true, result = { allowed = true, canManage = EditorAdmins.canManage(player) } }
-	elseif command == "loadState" then
+	if command == "loadState" then
 		return safeCall(snapshotState)
 	elseif command == "reloadState" then
 		Editor.load()
