@@ -30,4 +30,29 @@
 --     canRelease = true,
 --   },
 
-return {}
+return {
+	-- Unite the Iberian peninsula. Formable by Portugal OR Spain once either holds the whole mainland
+	-- (152 provinces; the Balearics, Canaries, Madeira, Ceuta and all overseas colonies are excluded).
+	-- The forming nation keeps its own tag and adopts the Iberia identity. Province ids are map part
+	-- numbers (schema v3+), derived geographically from the live map.
+	IBERIA = {
+		displayName = "Iberia",
+		color = { 210, 170, 60 },
+		formerTags = { "POR", "SPA" },
+		formBonuses = { stability = 1 },
+		canForm = true,
+		canRelease = false,
+		requiredProvinceIds = {
+			206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221,
+			222, 223, 224, 225, 227, 228, 229, 230, 231, 232, 335, 1745, 1746, 1747, 1748, 1749,
+			1750, 1851, 2751, 2754, 2755, 2987, 2988, 2989, 2990, 3095, 3099, 3104, 3108, 4150, 4154, 4546,
+			4547, 4548, 4549, 4550, 4551, 4552, 4553, 4554, 4555, 4556, 4557, 4558, 4787, 4788, 4789, 5545,
+			7903, 7920, 7929, 8016, 8026, 8033, 8034, 8035, 8036, 8037, 8038, 8039, 8040, 8041, 8042, 8043,
+			8044, 8045, 8047, 8048, 8049, 8050, 8051, 8052, 8053, 8054, 8055, 8056, 8057, 8058, 8059, 8060,
+			8061, 8062, 8063, 8064, 8065, 8066, 8067, 8068, 8069, 8070, 8071, 8072, 8073, 8075, 8076, 8077,
+			8078, 8079, 8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088, 8089, 8090, 8091, 8092, 8093,
+			8094, 8095, 8096, 8097, 8098, 8099, 8100, 8101, 8102, 8103, 8104, 8105, 8106, 8107, 8108, 8109,
+			8110, 8111, 8113, 8114, 8115, 8116, 8117, 8121,
+		},
+	},
+}

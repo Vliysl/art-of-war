@@ -25,7 +25,7 @@ WorldConstants.RenderDistanceDefaultMobile = 900
 WorldConstants.EnableFullAnnex = true         -- Phase 1: full-annex peace term + defeated-country deletion + zombie cleanup
 WorldConstants.EnableCores = false            -- Phase 2: cores suppress unrest / non-core unrest pressure
 WorldConstants.EnablePeaceConference = false  -- Phase 3: war-score peace conference
-WorldConstants.EnableFormables = false        -- Phase 4: formable nations + releasables
+WorldConstants.EnableFormables = true         -- Phase 4: formable nations (Iberia is the first; no releasable defs yet)
 WorldConstants.EnableRebellions = false       -- Phase 4: rebellions flip provinces
 WorldConstants.EnableNewEditor = false        -- Phase 5: reserved. Both editors currently run (legacy=backtick, new=backslash)
 
