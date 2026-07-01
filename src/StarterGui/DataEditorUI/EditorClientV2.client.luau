@@ -189,6 +189,101 @@ do
 	end
 end
 
+-- sorted array of a dict's keys (as strings), for dropdown option lists.
+local function sortedKeys(dict)
+	local out = {}
+	for k in pairs(dict or {}) do
+		out[#out + 1] = k
+	end
+	table.sort(out, function(a, b) return tostring(a) < tostring(b) end)
+	return out
+end
+
+-- Lightweight dropdown (no shared component exists). cfg: { parent, size, position, options[], value, onChange? }.
+-- The popup + a full-screen click-catcher live on the root ScreenGui so they overlay and close on outside click.
+local openPopup
+local function dropdown(cfg)
+	local btn = Instance.new("TextButton")
+	btn.AutoButtonColor = false
+	btn.BackgroundColor3 = Colors.SurfaceSunken or Colors.SurfaceBase
+	btn.BorderSizePixel = 0
+	btn.Size = cfg.size
+	btn.Position = cfg.position
+	btn.Text = ""
+	btn.Parent = cfg.parent
+	local s = Instance.new("UIStroke")
+	s.Color = Colors.BorderStrong
+	s.Thickness = 1
+	s.Parent = btn
+	local lbl = label(btn, cfg.value or "—", "bodyMd")
+	lbl.Position = UDim2.fromOffset(8, 0)
+	lbl.Size = UDim2.new(1, -16, 1, 0)
+	local current = cfg.value
+
+	local function closePopup()
+		if openPopup then
+			openPopup:Destroy() -- its Destroying handler removes the catcher too
+			openPopup = nil
+		end
+	end
+
+	btn.MouseButton1Click:Connect(function()
+		closePopup()
+		local catcher = Instance.new("TextButton")
+		catcher.BackgroundTransparency = 1
+		catcher.AutoButtonColor = false
+		catcher.Text = ""
+		catcher.Size = UDim2.fromScale(1, 1)
+		catcher.ZIndex = 60
+		catcher.Parent = gui
+		catcher.MouseButton1Click:Connect(closePopup)
+
+		local n = #cfg.options
+		local popup = Instance.new("ScrollingFrame")
+		popup.BackgroundColor3 = Colors.SurfaceElevated
+		popup.BorderSizePixel = 0
+		popup.ScrollBarThickness = 4
+		popup.ZIndex = 61
+		popup.CanvasSize = UDim2.fromOffset(0, n * 24)
+		local abs, sz = btn.AbsolutePosition, btn.AbsoluteSize
+		popup.Size = UDim2.fromOffset(sz.X, math.min(math.max(n, 1), 8) * 24)
+		popup.Position = UDim2.fromOffset(abs.X, abs.Y + sz.Y)
+		popup.Parent = gui
+		local ps = Instance.new("UIStroke")
+		ps.Color = Colors.BorderStrong
+		ps.Thickness = 1
+		ps.Parent = popup
+		popup.Destroying:Connect(function()
+			if catcher then catcher:Destroy() end
+		end)
+
+		for i, opt in ipairs(cfg.options) do
+			local ob = Instance.new("TextButton")
+			ob.AutoButtonColor = true
+			ob.BackgroundColor3 = Colors.SurfaceElevated
+			ob.BorderSizePixel = 0
+			ob.ZIndex = 62
+			ob.Size = UDim2.new(1, 0, 0, 24)
+			ob.Position = UDim2.fromOffset(0, (i - 1) * 24)
+			ob.Text = ""
+			local ol = label(ob, opt, "bodySm")
+			ol.Position = UDim2.fromOffset(8, 0)
+			ol.Size = UDim2.new(1, -12, 1, 0)
+			ol.ZIndex = 63
+			ob.MouseButton1Click:Connect(function()
+				current = opt
+				lbl.Text = opt
+				closePopup()
+				if cfg.onChange then cfg.onChange(opt) end
+			end)
+			ob.Parent = popup
+		end
+		openPopup = popup
+	end)
+
+	return { instance = btn, get = function() return current end }
+end
+
 -- ─────────────────────────── reusable list column (search + VirtualList) ───────────────────────────
 -- cfg: { parent, getKeys(query) -> array, labelFor(key) -> string, onSelect(key), rowHeight? }
 local function listColumn(cfg)
@@ -332,13 +427,19 @@ local function renderCountries()
 		refreshSwatch()
 		for _, b in ipairs(boxes) do b:GetPropertyChangedSignal("Text"):Connect(refreshSwatch) end
 
-		-- read-only definition fields (dropdown editing comes in a later slice); derived/runtime fields
-		-- (manpower, treasury, ...) are intentionally NOT shown -- they're recomputed, not definition data.
+		-- editable definition fields via dropdowns (options from the loaded snapshot). Capital stays
+		-- read-only (province-id picker = a later slice); derived/runtime fields (manpower, treasury, ...)
+		-- are intentionally omitted -- they're recomputed, not definition data.
 		readonlyRow(detail, "Capital", c.capitalProvinceId)
-		readonlyRow(detail, "Culture", c.primaryCulture)
-		readonlyRow(detail, "Religion", c.stateReligion)
-		readonlyRow(detail, "Government", c.governmentForm)
-		readonlyRow(detail, "Ideology", c.ideology)
+		local function ddRow(name, options, value)
+			local r = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 26) })
+			label(r, name, "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 90, 1, 0)
+			return dropdown({ parent = r, size = UDim2.new(1, -96, 1, 0), position = UDim2.fromOffset(96, 0), options = options, value = value })
+		end
+		local cultureDD = ddRow("Culture", sortedKeys(snap.cultures), c.primaryCulture)
+		local religionDD = ddRow("Religion", sortedKeys(snap.religions), c.stateReligion)
+		local govDD = ddRow("Government", sortedKeys(snap.governmentTypes), c.governmentForm)
+		local ideoDD = ddRow("Ideology", sortedKeys(snap.ideologies), c.ideology)
 
 		local saveBtn = Button.create({
 			parent = detail,
@@ -347,10 +448,22 @@ local function renderCountries()
 			width = 120,
 			onClick = function()
 				local newColor = { tonumber(boxes[1].Text) or 0, tonumber(boxes[2].Text) or 0, tonumber(boxes[3].Text) or 0 }
-				local res, err = editorCall("updateCountry", { tag = tag, opts = { displayName = nameBox.Text, color = newColor } })
+				local opts = {
+					displayName = nameBox.Text,
+					color = newColor,
+					primaryCulture = cultureDD.get(),
+					stateReligion = religionDD.get(),
+					governmentForm = govDD.get(),
+					ideology = ideoDD.get(),
+				}
+				local res, err = editorCall("updateCountry", { tag = tag, opts = opts })
 				if res then
-					c.displayName = nameBox.Text
-					c.color = newColor
+					c.displayName = opts.displayName
+					c.color = opts.color
+					c.primaryCulture = opts.primaryCulture
+					c.stateReligion = opts.stateReligion
+					c.governmentForm = opts.governmentForm
+					c.ideology = opts.ideology
 					setStatus("Saved " .. tostring(tag), Colors.Positive)
 				else
 					setStatus("Save failed: " .. tostring(err), Colors.Negative)

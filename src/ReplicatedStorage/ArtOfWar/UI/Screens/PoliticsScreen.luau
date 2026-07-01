@@ -4,6 +4,9 @@ local Button = require(Components.Button)
 local Modal = require(Components.Modal)
 local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
 local Colors = DesignSystem.Colors
+local aow = script.Parent.Parent.Parent -- ArtOfWar
+local Formables = require(aow.Data.Formables)
+local WorldConstants = require(aow.Shared.WorldConstants)
 
 local PoliticsScreen = {}
 
@@ -343,6 +346,71 @@ function PoliticsScreen.create(ctx)
 	end
 
 	local renderers = {
+		-- Releasables (Phase 4): release a nation from your cores as independent or puppet. Eligibility is
+		-- client-checked against the replicated cache; the server re-validates on ReleaseNation.
+		releasables = function(body)
+			if not WorldConstants.EnableFormables then
+				ScreenKit.note(body, "Releasing nations is not enabled.", 1)
+				return
+			end
+			local myTag = ctx.tag
+			local eligible = {}
+			for tag, def in pairs(Formables or {}) do
+				if def.canRelease ~= false
+					and def.requiredProvinceIds and #def.requiredProvinceIds > 0
+					and not (ctx.cache and ctx.cache.getCountry(tag)) then
+					local ownsAll = myTag ~= nil
+					for _, id in ipairs(def.requiredProvinceIds) do
+						local p = ctx.cache and ctx.cache.getProvince(id)
+						if not p or p.ownerTag ~= myTag then
+							ownsAll = false
+							break
+						end
+					end
+					if ownsAll then
+						eligible[#eligible + 1] = { tag = tag, def = def }
+					end
+				end
+			end
+			table.sort(eligible, function(a, b)
+				return (a.def.displayName or a.tag) < (b.def.displayName or b.tag)
+			end)
+
+			ScreenKit.section(body, "Releasable Nations", 1)
+			if #eligible == 0 then
+				ScreenKit.note(body, "No nations can be released \u{2014} you must hold a releasable's full core territory.", 2)
+				return
+			end
+			local order = 2
+			for _, e in ipairs(eligible) do
+				order += 1
+				local row = ScreenKit.stat(body, { icon = "Politics", label = e.def.displayName or e.tag, layoutOrder = order })
+				local puppetBtn = Button.create({
+					parent = row,
+					variant = "secondary",
+					text = "Puppet",
+					width = 84,
+					size = "sm",
+					onClick = function()
+						ctx.fire("ReleaseNation", e.tag, true)
+					end,
+				})
+				puppetBtn.AnchorPoint = Vector2.new(1, 0.5)
+				puppetBtn.Position = UDim2.new(1, -92, 0.5, 0)
+				local freeBtn = Button.create({
+					parent = row,
+					variant = "primary",
+					text = "Release",
+					width = 84,
+					size = "sm",
+					onClick = function()
+						ctx.fire("ReleaseNation", e.tag, false)
+					end,
+				})
+				freeBtn.AnchorPoint = Vector2.new(1, 0.5)
+				freeBtn.Position = UDim2.fromScale(1, 0.5)
+			end
+		end,
 		overview = function(body, c)
 			renderRulerCard(body, c)
 			ScreenKit.section(body, "Authority", 1)
@@ -1088,12 +1156,16 @@ function PoliticsScreen.create(ctx)
 	end
 
 	local c0 = country()
+	local tabs = table.clone(TABS)
+	if WorldConstants.EnableFormables then
+		table.insert(tabs, { key = "releasables", label = "Releasables" })
+	end
 	handle = ScreenKit.open(ctx, {
 		name = "PoliticsScreen",
 		title = "Government",
 		subtitle = ((c0 and c0.displayName) or ctx.tag or "Realm") .. "  \u{00B7}  " .. val(govName(c0)),
 		size = UDim2.new(0, 512, 1, -132),
-		tabs = TABS,
+		tabs = tabs,
 		activeTab = "overview",
 		onTab = function(key)
 			render(key)
