@@ -47,6 +47,27 @@ local function isShallowTable(v)
 	return true
 end
 
+local PEACE_TERM_TYPES = { white_peace = true, annex_occupied = true, annex_all = true, vassalize = true, conference = true }
+-- Peace terms: a known term type; a "conference" additionally carries a bounded list of demand tables
+-- {type=string, provinceId=number?}. The server recomputes all costs from the provinceIds, so any costs
+-- the client supplies are ignored -- this validator only gates the shape.
+local function isPeaceTerms(v)
+	if type(v) ~= "table" then return false end
+	if not isString(v.type) or not PEACE_TERM_TYPES[v.type] then return false end
+	if v.type == "conference" then
+		if type(v.demands) ~= "table" then return false end
+		local n = 0
+		for _, d in v.demands do
+			n += 1
+			if n > MAX_TABLE_ENTRIES then return false end
+			if type(d) ~= "table" then return false end
+			if not isString(d.type) then return false end
+			if d.provinceId ~= nil and type(d.provinceId) ~= "number" then return false end
+		end
+	end
+	return true
+end
+
 local function isOptionalString(v)
 	if v == nil then return true end
 	return type(v) == "string" and #v <= MAX_STRING_LENGTH
@@ -63,6 +84,7 @@ local validators = {
 	tradeGoodId = isString,
 	tradeOffer = isTradeOffer,
 	shallowTable = isShallowTable,
+	peaceTerms = isPeaceTerms,
 	any = function() return true end,
 }
 

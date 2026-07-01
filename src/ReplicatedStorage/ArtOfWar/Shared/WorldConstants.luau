@@ -20,6 +20,25 @@ WorldConstants.RenderDistanceDefaultDesktop = WorldConstants.RenderDistanceMax -
 WorldConstants.RenderDistanceDefaultTablet = 1400
 WorldConstants.RenderDistanceDefaultMobile = 900
 
+-- Dedicated "Map Editor" place (same universe). The Data Editor's config-driven access (managers +
+-- historians set in the "data_editor_access" config) unlocks ONLY on this place; every other place
+-- restricts the editor to the built-in dev managers. The Settings "Teleport to Map Editor" button and the
+-- Map Editor place's join gate both key off this id. Single source of truth (EditorAdmins reads it too).
+WorldConstants.MapEditorPlaceId = 104399454095233
+
+-- Feature kill-switches for the country/province restructure (v4). Each gates a phase's new behavior so it
+-- can be disabled at runtime without a code revert -- flip false to fall back to the old behavior.
+WorldConstants.EnableFullAnnex = true         -- Phase 1: full-annex peace term + defeated-country deletion + zombie cleanup
+WorldConstants.EnableCores = false            -- Phase 2: cores suppress unrest / non-core unrest pressure
+WorldConstants.EnablePeaceConference = false  -- Phase 3: war-score peace conference
+WorldConstants.EnableFormables = true         -- Phase 4: formable nations (Iberia is the first; no releasable defs yet)
+WorldConstants.EnableRebellions = false       -- Phase 4: rebellions flip provinces
+WorldConstants.EnableNewEditor = false        -- Phase 5: reserved. Both editors currently run (legacy=backtick, new=backslash)
+
+-- Phase 2: unrest added per owned province the nation holds NO core on (cores suppress unrest). Default 0
+-- (opt-in) -- raise once balanced. Gated by EnableCores; computed O(owned) in UnrestSystem.targetUnrest.
+WorldConstants.UnrestNonCorePressure = 0
+
 WorldConstants.ScenarioStartYear = 1750
 WorldConstants.ScenarioStartMonth = 1
 WorldConstants.ScenarioStartDay = 1
@@ -394,6 +413,10 @@ WorldConstants.PeaceAnnexPerProvinceCost = 10 -- + per annexed province
 WorldConstants.PeaceAIExhaustionWeight = 0.5 -- each exhaustion point adds this to willingness
 WorldConstants.PeaceAIAcceptMargin = 0 -- accept when willingness - cost >= this
 WorldConstants.PeaceVassalizeCost = 90 -- vassalize peace term: very high war-score cost (AI only when crushed)
+-- Phase 3 peace conference (gated by EnablePeaceConference): per-demand war-score costs.
+WorldConstants.PeaceTakeProvinceCost = 12   -- base cost to demand one province
+WorldConstants.PeaceCoreMultiplier = 1.5    -- x cost when the province is a CORE of the loser (homeland)
+WorldConstants.PeaceClaimCostDiscount = 0.7 -- x cost when the demander holds a CLAIM on the province
 WorldConstants.ReleaseSubjectOpinionBonus = 30 -- a freed subject's opinion of its former overlord
 
 -- =====================================================================

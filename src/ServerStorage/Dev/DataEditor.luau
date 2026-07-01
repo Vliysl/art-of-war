@@ -1335,6 +1335,21 @@ local function buildProvincesSource()
 			table.insert(parts, "goods = { " .. table.concat(goodParts, ", ") .. " }")
 		end
 		table.insert(parts, string.format("ownerTag = %q", p.ownerTag or "NONE"))
+		-- v4 province fields: emit cores/defaultCores/claims (arrays of country tags) when present so an
+		-- export captures the unified-store data rather than silently dropping it.
+		local function emitTagArray(field)
+			local arr = p[field]
+			if type(arr) == "table" and #arr > 0 then
+				local tags = {}
+				for _, tag in ipairs(arr) do
+					table.insert(tags, escapeString(tostring(tag)))
+				end
+				table.insert(parts, field .. " = { " .. table.concat(tags, ", ") .. " }")
+			end
+		end
+		emitTagArray("cores")
+		emitTagArray("defaultCores")
+		emitTagArray("claims")
 		if p.isCity ~= false then
 			table.insert(parts, "isCity = true")
 		end
@@ -2102,6 +2117,34 @@ function DataEditor.dumpDataStore(forceRefresh)
 	return overlay.snapshot(forceRefresh)
 end
 
+-- Named Save/Load map configs (RoN "Save/Load Map"). Thin wrappers over the DataOverlay implementation;
+-- loadConfig also reloads the editor model so the UI reflects the freshly-loaded world immediately.
+function DataEditor.saveConfig(name)
+	local overlay = overlayModule()
+	assert(overlay and overlay.saveNamedConfig, "DataOverlay.saveNamedConfig unavailable")
+	return overlay.saveNamedConfig(name)
+end
+
+function DataEditor.listConfigs()
+	local overlay = overlayModule()
+	assert(overlay and overlay.listNamedConfigs, "DataOverlay.listNamedConfigs unavailable")
+	return overlay.listNamedConfigs()
+end
+
+function DataEditor.deleteConfig(name)
+	local overlay = overlayModule()
+	assert(overlay and overlay.deleteNamedConfig, "DataOverlay.deleteNamedConfig unavailable")
+	return overlay.deleteNamedConfig(name)
+end
+
+function DataEditor.loadConfig(name)
+	local overlay = overlayModule()
+	assert(overlay and overlay.loadNamedConfig, "DataOverlay.loadNamedConfig unavailable")
+	local result = overlay.loadNamedConfig(name)
+	DataEditor.load() -- rebuild the editor model from the freshly-loaded overlay cache
+	return result
+end
+
 function DataEditor.migrateLegacy()
 	local overlay = overlayModule()
 	if not overlay or not overlay.migrateLegacy then
@@ -2706,6 +2749,98 @@ function DataEditor.rollbackCollapse()
 				and "Schema flag flipped back to v2. The serial-keyed data is authoritative again — re-publish the pre-collapse code."
 			or nil,
 	}
+end
+
+-- ─────────────────────────── Phase 1B: v3 -> v4 store migration + seed import ───────────────────────────
+-- Thin wrappers over the DataOverlay v4 machinery. ALL-OR-NOTHING + VERIFIED before the schema flag
+-- flips: migrateV3toV4 writes @v4 (additive, @v3 untouched), verifies, and only commits on pass.
+
+function DataEditor.migrateV3toV4(opts)
+	opts = opts or {}
+	local overlay = overlayModule()
+	if not overlay or not overlay.migrateV3toV4 then
+		return { ok = false, error = "DataOverlay.migrateV3toV4 unavailable (update DataOverlay first)" }
+	end
+
+	local write = overlay.migrateV3toV4()
+	if not write.ok then
+		return { ok = false, error = "@v4 write failed", write = write }
+	end
+
+	local verify = overlay.verifyMigrationSafe and overlay.verifyMigrationSafe() or nil
+	if not (verify and verify.ok) then
+		return {
+			ok = false,
+			error = "verify failed — partial @v4 keys were removed; @v3 is untouched",
+			write = write,
+			verify = verify,
+		}
+	end
+
+	local committed = false
+	if opts.commit == true then
+		local cOk, cErr = overlay.commitV4()
+		if not cOk then
+			return { ok = false, error = "commit (schema flip to v4) failed: " .. tostring(cErr), write = write, verify = verify }
+		end
+		committed = true
+		DataEditor.load() -- rebuild the editor model from the freshly-committed @v4 cache
+	end
+
+	return {
+		ok = true,
+		committed = committed,
+		write = write,
+		verify = verify,
+		message = committed
+				and string.format(
+					"Migrated to v4: %d provinces, %d countries. Schema flag flipped to v4 (acceptedCultures dropped; cores/defaultCores/claims defaulted).",
+					write.provinces.written,
+					write.countries.written
+				)
+			or string.format(
+				"Wrote + verified @v4 (additive, @v3 intact): %d provinces, %d countries. NOT committed — re-run with { commit = true } to flip the schema flag.",
+				write.provinces.written,
+				write.countries.written
+			),
+	}
+end
+
+function DataEditor.rollbackV4()
+	local overlay = overlayModule()
+	if not overlay or not overlay.rollbackV4 then
+		return { ok = false, error = "DataOverlay.rollbackV4 unavailable" }
+	end
+	local ok, err = overlay.rollbackV4()
+	if ok then
+		DataEditor.load() -- rebuild from the (frozen, untouched) @v3 cache
+	end
+	return {
+		ok = ok,
+		error = (not ok) and tostring(err) or nil,
+		message = ok and "Schema flag flipped back to v3. The frozen @v3 data is authoritative again — the world reverts." or nil,
+	}
+end
+
+-- First-boot seed: import the source Data/Countries + Data/Provinces modules into the @v4 keys.
+function DataEditor.importSeed(opts)
+	opts = opts or {}
+	local overlay = overlayModule()
+	if not overlay or not overlay.importSeed then
+		return { ok = false, error = "DataOverlay.importSeed unavailable (update DataOverlay first)" }
+	end
+	local data = dataFolder()
+	local sourceCountries = deepClone(loadClone(data:WaitForChild("Countries")))
+	local sourceProvinces = deepClone(loadClone(data:WaitForChild("Provinces")))
+	local result = overlay.importSeed(sourceCountries, sourceProvinces, { force = opts.force == true })
+	if result.ok then
+		result.message = string.format(
+			"Seeded @v4 from source: %d provinces, %d countries. NOT committed — run migrateV3toV4({ commit = true }) or commit the v4 schema to activate.",
+			result.provinces and result.provinces.written or 0,
+			result.countries and result.countries.written or 0
+		)
+	end
+	return result
 end
 
 function DataEditor.help()

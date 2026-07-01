@@ -12,6 +12,8 @@ local Components = script.Parent.Parent.Components
 local Button = require(Components.Button)
 local Modal = require(Components.Modal)
 local CountryBadge = require(Components.CountryBadge)
+local VirtualList = require(Components.VirtualList)
+local WorldConstants = require(script.Parent.Parent.Parent.Shared.WorldConstants)
 local SimClock = require(script.Parent.Parent.Parent.Modules.SimClock)
 
 local DiplomacyScreen = {}
@@ -20,6 +22,7 @@ local TERMS_LABEL = {
 	white_peace = "White Peace",
 	annex_occupied = "Demand Lands",
 	vassalize = "Vassalize",
+	conference = "Peace Conference",
 }
 
 -- Primary relation -> { label, color }. Priority resolved in relationStatus().
@@ -751,6 +754,148 @@ function DiplomacyScreen.create(ctx)
 			Button.create({ parent = act, variant = variant, text = text, size = "sm", onClick = onClick })
 		end
 
+		-- Phase 3 peace conference: pick provinces to demand (with preview costs) or annex-all / vassalize,
+		-- bounded by your war score. Costs are re-derived authoritatively by the server on ProposePeace.
+		local function openConference()
+			local w = activeWarWith(cache, mineTag, tag)
+			if not w then return end
+			local iAtt = w.attackerTag == mineTag
+			local myWarScore = iAtt and (w.score or 0) or -(w.score or 0)
+			local wc = WorldConstants
+
+			local rows, costById = {}, {}
+			for id, p in pairs(cache.allProvinces()) do
+				if p.ownerTag == tag then
+					local cost = wc.PeaceTakeProvinceCost or 12
+					-- Core surcharge / claim discount only apply while the cores phase is on (matches the
+					-- server's EnableCores gate in conferenceDemandCost), so the preview stays accurate.
+					if wc.EnableCores then
+						if p.cores and table.find(p.cores, tag) then
+							cost = cost * (wc.PeaceCoreMultiplier or 1.5)
+						end
+						if p.claims and mineTag and table.find(p.claims, mineTag) then
+							cost = cost * (wc.PeaceClaimCostDiscount or 0.7)
+						end
+					end
+					cost = math.floor(cost + 0.5)
+					costById[id] = cost
+					rows[#rows + 1] = { id = id, name = p.name or ("#" .. tostring(id)), cost = cost }
+				end
+			end
+			table.sort(rows, function(a, b) return a.name < b.name end)
+
+			local modal = Modal.create({
+				parent = ctx.modalLayer or ctx.parent,
+				title = "Peace Conference",
+				subtitle = string.format("%s  \u{00B7}  war score %d", nameOf(cache, tag), math.floor(myWarScore)),
+				width = 460,
+				height = 520,
+				footer = true,
+			})
+
+			local selected = {}
+			local proposeBtn
+
+			local totalLabel = Instance.new("TextLabel")
+			totalLabel.BackgroundTransparency = 1
+			totalLabel.Position = UDim2.fromOffset(4, 0)
+			totalLabel.Size = UDim2.new(1, -8, 0, 24)
+			totalLabel.TextXAlignment = Enum.TextXAlignment.Left
+			Typography.apply(totalLabel, "bodyMd")
+			totalLabel.Parent = modal.content
+
+			local holder = Instance.new("Frame")
+			holder.BackgroundTransparency = 1
+			holder.Position = UDim2.fromOffset(0, 30)
+			holder.Size = UDim2.new(1, 0, 1, -30)
+			holder.Parent = modal.content
+
+			local function refresh()
+				local t = 0
+				for id in pairs(selected) do
+					t += costById[id] or 0
+				end
+				totalLabel.Text = string.format("Selected: %d cost  /  %d war score", t, math.floor(myWarScore))
+				totalLabel.TextColor3 = (t > myWarScore) and Colors.Negative or Colors.TextPrimary
+				if proposeBtn then
+					proposeBtn.Active = (next(selected) ~= nil) and (t <= myWarScore)
+				end
+			end
+
+			VirtualList.create({
+				parent = holder,
+				rowHeight = 26,
+				getCount = function() return #rows end,
+				createRow = function()
+					local row = Instance.new("TextButton")
+					row.AutoButtonColor = false
+					row.BorderSizePixel = 0
+					row.Text = ""
+					local nl = Instance.new("TextLabel")
+					nl.Name = "N"
+					nl.BackgroundTransparency = 1
+					nl.Position = UDim2.fromOffset(8, 0)
+					nl.Size = UDim2.new(1, -70, 1, 0)
+					nl.TextXAlignment = Enum.TextXAlignment.Left
+					nl.TextColor3 = Colors.TextPrimary
+					Typography.apply(nl, "bodySm")
+					nl.Parent = row
+					local cl = Instance.new("TextLabel")
+					cl.Name = "C"
+					cl.BackgroundTransparency = 1
+					cl.AnchorPoint = Vector2.new(1, 0)
+					cl.Position = UDim2.fromScale(1, 0)
+					cl.Size = UDim2.new(0, 56, 1, 0)
+					cl.TextXAlignment = Enum.TextXAlignment.Right
+					cl.TextColor3 = Colors.TextSecondary
+					Typography.apply(cl, "bodySm")
+					cl.Parent = row
+					row.MouseButton1Click:Connect(function()
+						local id = row:GetAttribute("pid")
+						if id == nil then return end
+						selected[id] = (not selected[id]) or nil
+						row.BackgroundColor3 = selected[id] and Colors.SurfaceOverlay or Colors.SurfaceElevated
+						row.BackgroundTransparency = selected[id] and 0 or 0.4
+						refresh()
+					end)
+					return row
+				end,
+				bindRow = function(row, i)
+					local r = rows[i]
+					row:SetAttribute("pid", r.id)
+					row.BackgroundColor3 = selected[r.id] and Colors.SurfaceOverlay or Colors.SurfaceElevated
+					row.BackgroundTransparency = selected[r.id] and 0 or 0.4
+					row.N.Text = r.name
+					row.C.Text = tostring(r.cost)
+				end,
+			})
+
+			local function fireConf(demands)
+				ctx.fire("ProposePeace", tag, { type = "conference", demands = demands, proposerTag = mineTag })
+				modal.close()
+			end
+			Button.create({ parent = modal.footer, variant = "ghost", text = "Cancel", layoutOrder = 1, onClick = function() modal.close() end })
+			Button.create({ parent = modal.footer, variant = "secondary", text = "Vassalize", layoutOrder = 2, onClick = function() fireConf({ { type = "vassalize" } }) end })
+			Button.create({ parent = modal.footer, variant = "secondary", text = "Annex All", layoutOrder = 3, onClick = function() fireConf({ { type = "annex_all" } }) end })
+			proposeBtn = Button.create({
+				parent = modal.footer,
+				variant = "primary",
+				text = "Demand",
+				layoutOrder = 4,
+				disabled = true,
+				onClick = function()
+					local demands = {}
+					for id in pairs(selected) do
+						demands[#demands + 1] = { type = "take_province", provinceId = id }
+					end
+					if #demands > 0 then
+						fireConf(demands)
+					end
+				end,
+			})
+			refresh()
+		end
+
 		local meSubject = me and me.subjectOf ~= nil
 		if rel == "WAR" then
 			major(
@@ -776,6 +921,9 @@ function DiplomacyScreen.create(ctx)
 			major("primary", "Vassalize", "Vassalize", "Force them to become your subject?", "Vassalize", function()
 				proposePeace(tag, "vassalize")
 			end)
+			if WorldConstants.EnablePeaceConference then
+				minor("secondary", "Peace Conference", openConference)
+			end
 		elseif rel == "OVERLORD" then
 			minor("secondary", "Improve · 25 PP", function()
 				improveRelations(tag)

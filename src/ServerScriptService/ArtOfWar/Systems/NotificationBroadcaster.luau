@@ -227,6 +227,12 @@ local function onPeaceProposed(data)
 end
 
 local function onPeaceConcluded(data)
+	-- Annexation force-concludes the loser's side-wars, but that path already sends the affected human a
+	-- targeted "War Ended" notice (and the loser is being deleted). Skip the generic white_peace toast here
+	-- so those players don't get a second, misleading notification.
+	if data.peaceTerms and data.peaceTerms.reason == "annexed" then
+		return
+	end
 	local termType = data.peaceTerms and data.peaceTerms.type or "white_peace"
 	broadcast(makePayload("good", "Peace Concluded",
 		string.format("Peace with %s has been settled (%s).", displayName(data.defenderTag), termType),

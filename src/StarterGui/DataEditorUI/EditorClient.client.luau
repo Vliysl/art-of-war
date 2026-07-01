@@ -8,6 +8,9 @@ local screen = script.Parent
 
 local api = ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Remotes"):WaitForChild("DataEditorAPI")
 
+-- Phase 5: the rebuilt DesignSystem editor (EditorClientV2) runs alongside this legacy one during the
+-- rebuild -- legacy editor on the backtick key, the new one on backslash (\).
+
 local ProvinceInteraction
 do
 	local aow = ReplicatedStorage:FindFirstChild("ArtOfWar")
@@ -3979,6 +3982,15 @@ local function hideRoot()
 end
 closeBtn.MouseButton1Click:Connect(hideRoot)
 
+-- Server-authorization gate: the window opens only for editors. Read the server-authoritative, place-aware
+-- IsAdmin attribute (Bootstrap sets it = EditorAdmins.isAllowed for THIS place, and re-stamps it live when
+-- the access config loads) instead of probing the server — so config-driven editors (Historians) open
+-- reliably the moment their config lands, with no cache/latch quirks. The server rejects every command
+-- independently, so this attribute gate is UX only, not the security boundary.
+local function isEditorAuthorized()
+	return player:GetAttribute("IsAdmin") == true
+end
+
 UserInputService.InputBegan:Connect(function(input, processed)
 	if processed then
 		return
@@ -3986,7 +3998,7 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	if input.KeyCode == Enum.KeyCode.Backquote then
 		if root.Visible then
 			hideRoot()
-		else
+		elseif isEditorAuthorized() then
 			showRoot()
 		end
 		return

@@ -1,13 +1,18 @@
 local ProvinceRegistry = {}
 
 local ctx
-local byArea, byRegion, bySuperRegion, byOwner, byCulture, byReligion, byTradeGood
+local byArea, byRegion, bySuperRegion, byOwner, byController, byCulture, byReligion, byTradeGood
 local totals = { owner = {}, culture = {}, religion = {}, tradeGood = {} }
 local ownerOf = {}    -- S5: provinceId -> indexed owner (reverse of byOwner) for incremental updates
 -- perf: provinceId -> its index within byOwner[ownerOf[id]] so removal is O(1) swap-and-pop
 -- instead of an O(n) linear scan + table.remove shift. Kept in sync at every byOwner mutation
 -- site (rebuildOwnerIndex / updateOwnerFor / registerProvince).
 local ownerSlot = {}
+-- byController mirrors byOwner for the CONTROLLER tag (occupier), so annex/peace can iterate a winner's
+-- occupied provinces in O(controlled) instead of scanning the whole world. Same O(1) swap-and-pop
+-- bookkeeping (controllerOf reverse map + controllerSlot index).
+local controllerOf = {}
+local controllerSlot = {}
 
 -- perf: append id to its owner bucket and record its slot index. Mirror of table.insert.
 local function ownerBucketPush(bucket, id)
@@ -29,6 +34,25 @@ local function ownerBucketRemove(bucket, id)
 	end
 	bucket[n] = nil
 	ownerSlot[id] = nil
+end
+
+local function controllerBucketPush(bucket, id)
+	local n = #bucket + 1
+	bucket[n] = id
+	controllerSlot[id] = n
+end
+
+local function controllerBucketRemove(bucket, id)
+	local i = controllerSlot[id]
+	if i == nil then return end
+	local n = #bucket
+	local last = bucket[n]
+	if last ~= id then
+		bucket[i] = last
+		controllerSlot[last] = i
+	end
+	bucket[n] = nil
+	controllerSlot[id] = nil
 end
 
 local function rebuildOwnerIndex()
@@ -66,6 +90,35 @@ local function updateOwnerFor(provinceId)
 	ownerOf[provinceId] = newOwner
 end
 
+local function rebuildControllerIndex()
+	byController = {}
+	table.clear(controllerOf)
+	table.clear(controllerSlot)
+	for id, province in ctx.WorldState.allProvinces() do
+		local controller = province.controllerTag or province.ownerTag
+		local bucket = byController[controller] or {}
+		byController[controller] = bucket
+		controllerBucketPush(bucket, id)
+		controllerOf[id] = controller
+	end
+end
+
+-- Incrementally move a province between controller buckets on an occupation/ownership change. O(1).
+local function updateControllerFor(provinceId)
+	local province = ctx.WorldState.getProvince(provinceId)
+	if not province then return end
+	local newController = province.controllerTag or province.ownerTag
+	local oldController = controllerOf[provinceId]
+	if oldController == newController then return end
+	if oldController ~= nil and byController[oldController] then
+		controllerBucketRemove(byController[oldController], provinceId)
+	end
+	local nb = byController[newController] or {}
+	byController[newController] = nb
+	controllerBucketPush(nb, provinceId)
+	controllerOf[provinceId] = newController
+end
+
 local function rebuildSecondaryIndices()
 	byCulture, byReligion, byTradeGood = {}, {}, {}
 	local culture, religion, good = {}, {}, {}
@@ -100,6 +153,8 @@ local function registerProvince(id, record)
 	end
 	local clone = table.clone(record)
 	clone.cores = table.clone(record.cores or {})
+	clone.defaultCores = table.clone(record.defaultCores or record.cores or {})
+	clone.claims = table.clone(record.claims or {})
 	if clone.goods == nil then
 		local g = {}
 		local tg = clone.tradeGood
@@ -136,6 +191,13 @@ local function registerProvince(id, record)
 		byOwner[clone.ownerTag] = oBucket
 		ownerBucketPush(oBucket, id)
 	end
+	local controllerTag = clone.controllerTag or clone.ownerTag
+	if controllerTag ~= nil then
+		local cBucket = byController[controllerTag] or {}
+		byController[controllerTag] = cBucket
+		controllerBucketPush(cBucket, id)
+		controllerOf[id] = controllerTag
+	end
 	push(byCulture, clone.culture)
 	push(byReligion, clone.religion)
 	push(byTradeGood, clone.tradeGood)
@@ -151,6 +213,11 @@ local function bindOwnershipEvents()
 	ctx.EventBus.subscribe(ctx.Channels.ProvinceOwnershipChanged, function(payload)
 		if not payload or payload.provinceId == nil then return end
 		updateOwnerFor(payload.provinceId)
+		updateControllerFor(payload.provinceId) -- annex sets controller=winner too
+	end)
+	ctx.EventBus.subscribe(ctx.Channels.ProvinceOccupied, function(payload)
+		if not payload or payload.provinceId == nil then return end
+		updateControllerFor(payload.provinceId)
 	end)
 end
 
@@ -163,6 +230,7 @@ function ProvinceRegistry.register(context)
 		byRegion = function(regionId) return byRegion[regionId] or {} end,
 		bySuperRegion = function(superRegionId) return bySuperRegion[superRegionId] or {} end,
 		byOwner = function(tag) return byOwner[tag] or {} end,
+		byController = function(tag) return byController[tag] or {} end,
 		byCulture = function(cultureId) return byCulture[cultureId] or {} end,
 		byReligion = function(religionId) return byReligion[religionId] or {} end,
 		byTradeGood = function(tradeGoodId) return byTradeGood[tradeGoodId] or {} end,
@@ -180,6 +248,8 @@ function ProvinceRegistry.hydrate(provinces)
 	for id, record in provinces do
 		local clone = table.clone(record)
 		clone.cores = table.clone(record.cores)
+		clone.defaultCores = table.clone(record.defaultCores or record.cores or {})
+		clone.claims = table.clone(record.claims or {})
 		-- Multi-resource migration: synthesize province.goods from tradeGood + baseProduction
 		-- when not explicitly set on the data row. Provinces with tradeGood "none" / nil get an
 		-- empty map so they produce nothing (matches the spec).
@@ -208,6 +278,7 @@ function ProvinceRegistry.hydrate(provinces)
 		bySuperRegion[record.superRegionId] = sBucket
 	end
 	rebuildOwnerIndex()
+	rebuildControllerIndex()
 	rebuildSecondaryIndices()
 	bindOwnershipEvents()
 end

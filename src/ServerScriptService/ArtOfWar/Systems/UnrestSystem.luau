@@ -138,6 +138,20 @@ local function targetUnrest(tag, country)
 		pressure += wc.UnrestActiveTransitionFlat
 	end
 
+	-- Non-core territory pressure (Phase 2, opt-in): owning provinces the nation has no core on stokes
+	-- unrest. O(owned) via the byOwner index; gated by EnableCores + a >0 UnrestNonCorePressure.
+	local nonCorePer = wc.UnrestNonCorePressure
+	if wc.EnableCores and nonCorePer and nonCorePer > 0 and ctx.ProvinceRegistry and ctx.ProvinceRegistry.byOwner then
+		local nonCoreCount = 0
+		for _, id in ipairs(ctx.ProvinceRegistry.byOwner(tag)) do
+			local p = ctx.WorldState.getProvince(id)
+			if p and not (p.cores and table.find(p.cores, tag)) then
+				nonCoreCount += 1
+			end
+		end
+		pressure += nonCoreCount * nonCorePer
+	end
+
 	-- relief (lowers unrest)
 	local relief = wc.UnrestBaseDecay
 	relief += math.max(0, (legit - wc.UnrestLegitimacyPivot) / wc.UnrestLegitimacyPivot) * wc.UnrestGoodGovReliefWeight

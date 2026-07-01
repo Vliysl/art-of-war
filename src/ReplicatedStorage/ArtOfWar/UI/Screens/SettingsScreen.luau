@@ -1,4 +1,5 @@
 local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
 
 local ScreenKit = require(script.Parent.ScreenKit)
 local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
@@ -9,6 +10,7 @@ local Components = script.Parent.Parent.Components
 local Button = require(Components.Button)
 local Slider = require(Components.Slider)
 local WorldConstants = require(script.Parent.Parent.Parent.Shared.WorldConstants)
+local ClientSignals = require(script.Parent.Parent.Parent.Modules.ClientSignals)
 
 local SettingsScreen = {}
 
@@ -202,6 +204,43 @@ function SettingsScreen.create(ctx)
 					end
 				end,
 			})
+
+			-- Map Editor access. OFF the Map Editor place: authorized editors (MapEditorAuthorized, stamped
+			-- server-side place-independently) get a Teleport button. ON the Map Editor place: authorized editors
+			-- (IsAdmin = the effective, place-gated access) get an Open Data Editor button (same as the \ key).
+			if lp then
+				local onMapPlace = game.PlaceId == WorldConstants.MapEditorPlaceId
+				if not onMapPlace and lp:GetAttribute("MapEditorAuthorized") == true then
+					ScreenKit.section(body, "Map Editor", 30)
+					ScreenKit.note(body, "Enter the dedicated Map Editor place to edit the official world map.", 31)
+					local meRow = ScreenKit.buttonRow(body, 32)
+					Button.create({
+						parent = meRow,
+						variant = "primary",
+						text = "Teleport to Map Editor",
+						onClick = function()
+							local ok, err = pcall(function()
+								TeleportService:Teleport(WorldConstants.MapEditorPlaceId, lp)
+							end)
+							if not ok then
+								warn("[Settings] Map Editor teleport failed: " .. tostring(err))
+							end
+						end,
+					})
+				elseif onMapPlace and lp:GetAttribute("IsAdmin") == true then
+					ScreenKit.section(body, "Map Editor", 30)
+					ScreenKit.note(body, "Open the Data Editor to edit the world map. (Shortcut: the \\ key.)", 31)
+					local meRow = ScreenKit.buttonRow(body, 32)
+					Button.create({
+						parent = meRow,
+						variant = "primary",
+						text = "Open Data Editor",
+						onClick = function()
+							ClientSignals.fire("OpenDataEditor")
+						end,
+					})
+				end
+			end
 		end,
 		controls = function(body)
 			ScreenKit.section(body, "Menus", 1)
@@ -286,7 +325,9 @@ function SettingsScreen.create(ctx)
 		end,
 	}
 
+	local currentTab = "general"
 	local function render(tab)
+		currentTab = tab
 		handle.clearBody()
 		local fn = renderers[tab] or renderers.general
 		fn(handle.body)
@@ -303,9 +344,26 @@ function SettingsScreen.create(ctx)
 	})
 	render("general")
 
+	-- The Map Editor button appears/disappears with the player's editor access; refresh the general tab live
+	-- if it flips (MapEditorAuthorized drives the Teleport button off-place; IsAdmin drives the Open Data
+	-- Editor button on the Map Editor place, and lands a few seconds after joining once the config resolves).
+	local attrConns = {}
+	if lp then
+		local function refreshGeneral()
+			if currentTab == "general" then
+				render("general")
+			end
+		end
+		attrConns[#attrConns + 1] = lp:GetAttributeChangedSignal("MapEditorAuthorized"):Connect(refreshGeneral)
+		attrConns[#attrConns + 1] = lp:GetAttributeChangedSignal("IsAdmin"):Connect(refreshGeneral)
+	end
+
 	return {
 		root = handle.root,
 		destroy = function()
+			for _, c in ipairs(attrConns) do
+				c:Disconnect()
+			end
 			handle.destroy()
 		end,
 	}

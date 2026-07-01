@@ -49,7 +49,9 @@ export type ProvinceRecord = {
 	centerOfTrade: number,
 	ownerTag: CountryTag,
 	controllerTag: CountryTag,
-	cores: { CountryTag },
+	cores: { CountryTag }, -- all current cores (default + acquired); grows via forming/conquest
+	defaultCores: { CountryTag }, -- static homeland cores (seeded, never mutated at runtime); shown gold-outlined
+	claims: { CountryTag },
 	devTier: number,
 	infraTier: number,
 	fortTier: number,
@@ -73,7 +75,6 @@ export type CountryRecord = {
 	displayName: string,
 	capitalProvinceId: ProvinceId,
 	primaryCulture: CultureId,
-	acceptedCultures: { CultureId },
 	stateReligion: ReligionId,
 	governmentForm: GovernmentTypeId,
 	ideology: IdeologyId,
@@ -87,6 +88,7 @@ export type CountryRecord = {
 	historicalRivals: { CountryTag },
 	historicalFriends: { CountryTag },
 	color: { number },
+	flagAssetId: string?,
 	economyPolicy: EconomyPolicyId?,
 	consumerGoodsPriority: { [TradeGoodId]: number }?,
 	lastIncome: number?,
@@ -106,6 +108,7 @@ export type CountryRecord = {
 	expenseBreakdown: { [string]: number }?,
 	dailyConsumption: { [TradeGoodId]: number }?,
 	truces: { [CountryTag]: number }?,
+	formedTags: { [string]: boolean }?, -- formables already formed (one-time bonus guard)
 	-- Politics overhaul ("Authority & the Estates") — all optional, system-seeded, save-compatible
 	crownAuthority: number?,                                                    -- 0..cap, current Authority (Crown/Republican/Chiefly)
 	crownAuthorityCap: number?,                                                 -- 100 + Σ privilege.authorityCap (<=0 each)

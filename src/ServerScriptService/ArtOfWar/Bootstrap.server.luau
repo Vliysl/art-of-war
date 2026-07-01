@@ -633,7 +633,7 @@ InputValidator.register("DeclareWar", {
 InputValidator.register("ProposePeace", {
 	schema = {
 		{ name = "targetTag", type = "countryTag" },
-		{ name = "terms", type = "shallowTable" },
+		{ name = "terms", type = "peaceTerms" },
 	},
 	rate = { count = 4, window = 30 },
 })
@@ -686,6 +686,24 @@ InputValidator.register("ReleaseSubject", {
 InputValidator.register("AnnexSubject", {
 	schema = { { name = "subjectTag", type = "countryTag" } },
 	rate = { count = 4, window = 30 },
+})
+InputValidator.register("FormNation", {
+	schema = { { name = "formableTag", type = "string" } },
+	rate = { count = 4, window = 15 },
+})
+InputValidator.register("ReleaseNation", {
+	schema = { { name = "formableTag", type = "string" }, { name = "asPuppet", type = "any" } },
+	rate = { count = 4, window = 30 },
+})
+-- Owner-authored custom formables (Phase 6). Admin-gated in the handler (EditorAdmins, required above);
+-- def is validated server-side by FormableStore.
+InputValidator.register("SetFormable", {
+	schema = { { name = "tag", type = "string" }, { name = "def", type = "any" } },
+	rate = { count = 20, window = 30 },
+})
+InputValidator.register("RemoveFormable", {
+	schema = { { name = "tag", type = "string" } },
+	rate = { count = 20, window = 30 },
 })
 
 local function bindEvent(name, handler)
@@ -1381,6 +1399,34 @@ bindEvent("AnnexSubject", function(player, subjectTag)
 	system.annexSubject(tag, subjectTag)
 end)
 
+bindEvent("FormNation", function(player, formableTag)
+	local auth = authority()
+	local system = context.FormableSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.formNation(tag, formableTag)
+end)
+
+bindEvent("ReleaseNation", function(player, formableTag, asPuppet)
+	local auth = authority()
+	local system = loadedSystems.DiplomacySystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	system.releaseNation(tag, formableTag, asPuppet == true)
+end)
+
+bindEvent("SetFormable", function(player, tag, def)
+	if not EditorAdmins.isAllowed(player) then return end
+	if context.FormableStore then context.FormableStore.set(tag, def) end
+end)
+
+bindEvent("RemoveFormable", function(player, tag)
+	if not EditorAdmins.isAllowed(player) then return end
+	if context.FormableStore then context.FormableStore.remove(tag) end
+end)
+
 
 
 local mapModeSync = ensureEvent("MapModeSync")
@@ -1428,12 +1474,62 @@ context.isAdminPlayer = isAdminPlayer
 
 local function applyAdminAttribute(player)
 	player:SetAttribute("IsAdmin", isAdminPlayer(player))
+	-- Place-independent editor authorization — drives the Settings "Teleport to Map Editor" button. Distinct
+	-- from IsAdmin, which is the EFFECTIVE editor access in THIS place (config tiers only unlock on the Map
+	-- Editor place). A historian therefore has MapEditorAuthorized=true but IsAdmin=false in the main game.
+	local anywhere = EditorAdmins.isEditorAuthorizedAnywhere and EditorAdmins.isEditorAuthorizedAnywhere(player) or false
+	player:SetAttribute("MapEditorAuthorized", anywhere)
 end
 
 local Players = game:GetService("Players")
+
+-- Config-driven access loads async and can change live, so re-stamp IsAdmin/MapEditorAuthorized for everyone
+-- whenever the access lists change. Register this BEFORE the initial stamp below, so a config load that
+-- resolves mid-boot (firing accessChanged) always re-stamps players already present — otherwise a config-only
+-- mapper stamped before the snapshot landed would keep stale (false) attributes until the 5-min backstop.
+if EditorAdmins.onAccessChanged then
+	EditorAdmins.onAccessChanged(function()
+		for _, p in Players:GetPlayers() do
+			applyAdminAttribute(p)
+		end
+	end)
+end
+
 Players.PlayerAdded:Connect(applyAdminAttribute)
 for _, p in Players:GetPlayers() do
 	task.spawn(applyAdminAttribute, p)
+end
+
+-- Map Editor place is restricted: only authorized editors may remain. Because config access loads async,
+-- wait for the config to resolve (or a grace window) before kicking, and never kick an always-on manager.
+if game.PlaceId == WorldConstants.MapEditorPlaceId then
+	local function gateMapEditor(player)
+		local deadline = tick() + 60
+		while player.Parent do
+			if EditorAdmins.isEditorAuthorizedAnywhere(player) then
+				return -- authorized (official manager immediately, or config resolved in their favor)
+			end
+			local info = EditorAdmins.getAccessInfo and EditorAdmins.getAccessInfo() or {}
+			if info.configLoaded or info.configAvailable == false or tick() > deadline then
+				break -- config has had its chance; decide now
+			end
+			-- Actively drive the async config load so a legit historian isn't kicked while the module's own
+			-- slow retry cadence (5 tries, then a 5-min backstop) is still pending.
+			if EditorAdmins.reload then
+				pcall(EditorAdmins.reload)
+			end
+			task.wait(1)
+		end
+		if player.Parent and not EditorAdmins.isEditorAuthorizedAnywhere(player) then
+			player:Kick("The Map Editor is restricted to authorized editors.")
+		end
+	end
+	Players.PlayerAdded:Connect(function(p)
+		task.spawn(gateMapEditor, p)
+	end)
+	for _, p in Players:GetPlayers() do
+		task.spawn(gateMapEditor, p)
+	end
 end
 
 Players.PlayerRemoving:Connect(function(player)

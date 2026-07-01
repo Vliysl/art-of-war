@@ -37,6 +37,9 @@ local function syncProvinceToWorld(id)
 		if type(rec.cores) == "table" then
 			existing.cores = table.clone(rec.cores)
 		end
+		if type(rec.defaultCores) == "table" then
+			existing.defaultCores = table.clone(rec.defaultCores)
+		end
 		if type(rec.goods) == "table" then
 			existing.goods = table.clone(rec.goods)
 		end
@@ -45,6 +48,9 @@ local function syncProvinceToWorld(id)
 		local clone = table.clone(rec)
 		if type(rec.cores) == "table" then
 			clone.cores = table.clone(rec.cores)
+		end
+		if type(rec.defaultCores) == "table" then
+			clone.defaultCores = table.clone(rec.defaultCores)
 		end
 		if type(rec.goods) == "table" then
 			clone.goods = table.clone(rec.goods)
@@ -183,8 +189,21 @@ local WRITE_COMMANDS = {
 	save = true,
 	exportToLua = true,
 	migrateLegacy = true,
+	-- Phase 1B v3->v4 store migration + seed import — all write the DataStore.
+	migrateV3toV4 = true,
+	rollbackV4 = true,
+	importSeed = true,
 	undo = true,
 	redo = true,
+	-- Named Save/Load configs + staging/promote all write to the DataStore, so they belong under the
+	-- slower write cooldown, not the 0.2s call cooldown (avoids DataStore rate limits). listConfigs is a
+	-- single light read and stays on the default call cooldown.
+	saveConfig = true,
+	loadConfig = true,
+	deleteConfig = true,
+	promote = true,
+	saveDraft = true,
+	discardDraft = true,
 }
 
 local PAINT_COMMANDS = {
@@ -516,6 +535,19 @@ api.OnServerInvoke = function(player, command, payload)
 	end
 	if not isAuthorized(player) then
 		return { ok = false, error = "not authorized — only admins may use the data editor" }
+	end
+	-- authCheck is a trivial authorized-only probe the client uses to gate its window. Handle it BEFORE the
+	-- rate limiter: the window-open sequence fires authCheck immediately followed by loadState, and if
+	-- authCheck stamped the call cooldown, loadState would be rejected with "too many calls".
+	if command == "authCheck" then
+		return {
+			ok = true,
+			result = {
+				allowed = true,
+				canManage = EditorAdmins.canManage(player),
+				role = EditorAdmins.classify(player),
+			},
+		}
 	end
 	if payload ~= nil and not validatePayload(payload) then
 		return { ok = false, error = "payload rejected" }
@@ -1002,8 +1034,101 @@ api.OnServerInvoke = function(player, command, payload)
 	elseif command == "dumpDataStore" then
 		local force = type(payload) == "table" and payload.forceRefresh == true
 		return safeCall(Editor.dumpDataStore, force)
+	elseif command == "listConfigs" then
+		return safeCall(Editor.listConfigs)
+	elseif command == "saveConfig" then
+		if type(payload) ~= "table" then
+			return { ok = false, error = "payload required" }
+		end
+		-- Asymmetry is intentional: saveConfig + listConfigs are non-destructive (any authorized user),
+		-- but loadConfig/deleteConfig replace or delete the live world and are gated to the owner below.
+		return safeCall(Editor.saveConfig, payload.name)
+	elseif command == "loadConfig" then
+		if type(payload) ~= "table" then
+			return { ok = false, error = "payload required" }
+		end
+		if not EditorAdmins.canManage(player) then
+			return { ok = false, error = "only the owner can load/delete map configs" }
+		end
+		return safeCall(Editor.loadConfig, payload.name)
+	elseif command == "deleteConfig" then
+		if type(payload) ~= "table" then
+			return { ok = false, error = "payload required" }
+		end
+		if not EditorAdmins.canManage(player) then
+			return { ok = false, error = "only the owner can load/delete map configs" }
+		end
+		return safeCall(Editor.deleteConfig, payload.name)
+	elseif command == "listAccess" then
+		-- Current players + each one's tier, plus the config-driven access model (managers/historians are set
+		-- in the Creator Hub "data_editor_access" config — no republish). Any authorized user may view.
+		return safeCall(function()
+			local list = {}
+			for _, plr in ipairs(Players:GetPlayers()) do
+				list[#list + 1] = {
+					userId = plr.UserId,
+					name = plr.DisplayName or plr.Name,
+					role = EditorAdmins.classify(plr),
+					granted = EditorAdmins.isGranted(plr.UserId),
+					manager = EditorAdmins.canManage(plr),
+				}
+			end
+			return {
+				canManage = EditorAdmins.canManage(player),
+				players = list,
+				access = EditorAdmins.getAccessInfo(),
+			}
+		end)
+	elseif command == "grantAccess" then
+		if type(payload) ~= "table" then
+			return { ok = false, error = "payload required" }
+		end
+		if not EditorAdmins.canManage(player) then
+			return { ok = false, error = "only the server owner can grant editor access" }
+		end
+		local uid = tonumber(payload.userId)
+		if not uid then
+			return { ok = false, error = "userId required" }
+		end
+		EditorAdmins.grant(uid)
+		return { ok = true, result = { userId = uid } }
+	elseif command == "revokeAccess" then
+		if type(payload) ~= "table" then
+			return { ok = false, error = "payload required" }
+		end
+		if not EditorAdmins.canManage(player) then
+			return { ok = false, error = "only the server owner can revoke editor access" }
+		end
+		local uid = tonumber(payload.userId)
+		if not uid then
+			return { ok = false, error = "userId required" }
+		end
+		EditorAdmins.revoke(uid)
+		return { ok = true, result = { userId = uid } }
 	elseif command == "migrateLegacy" then
+		-- Destructive DataStore-writing migration — manager-only, like its v4 siblings below.
+		if not EditorAdmins.canManage(player) then
+			return { ok = false, error = "only the owner can run the legacy migration" }
+		end
 		return safeCall(Editor.migrateLegacy)
+	elseif command == "migrateV3toV4" then
+		-- Schema-flipping store migration (v3 -> v4). Owner-only, like load/delete config. Never auto.
+		if not EditorAdmins.canManage(player) then
+			return { ok = false, error = "only the owner can run the v4 store migration" }
+		end
+		local commit = type(payload) == "table" and payload.commit == true
+		return safeCall(Editor.migrateV3toV4, { commit = commit })
+	elseif command == "rollbackV4" then
+		if not EditorAdmins.canManage(player) then
+			return { ok = false, error = "only the owner can roll back the v4 store migration" }
+		end
+		return safeCall(Editor.rollbackV4)
+	elseif command == "importSeed" then
+		if not EditorAdmins.canManage(player) then
+			return { ok = false, error = "only the owner can import the first-boot seed" }
+		end
+		local force = type(payload) == "table" and payload.force == true
+		return safeCall(Editor.importSeed, { force = force })
 	elseif command == "undo" then
 		local result = safeCall(function()
 			local ok, label = Editor.undo()
@@ -1162,7 +1287,18 @@ local function adminSummary()
 	for _ in pairs(EditorAdmins.userIds) do
 		allowCount += 1
 	end
-	table.insert(parts, string.format("allowlist=%d", allowCount))
+	table.insert(parts, string.format("devlist=%d", allowCount))
+	local info = EditorAdmins.getAccessInfo()
+	table.insert(
+		parts,
+		string.format(
+			"config[%s]=%s (mgr=%d, hist=%d)",
+			info.configKey,
+			info.configAvailable and (info.configLoaded and "loaded" or "pending") or "unavailable",
+			#info.managers,
+			#info.historians
+		)
+	)
 	return table.concat(parts, " | ")
 end
 print(string.format("[DataEditorService] auth policy: %s", adminSummary()))

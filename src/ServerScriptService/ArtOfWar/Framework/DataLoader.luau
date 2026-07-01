@@ -695,6 +695,17 @@ function DataLoader.healBundle(bundle)
 				end
 				province.cores = kept
 			end
+
+			-- Homeland cores (static): default to the seed cores; prune tags for countries that no longer exist.
+			if type(province.defaultCores) ~= "table" then
+				province.defaultCores = table.clone(province.cores)
+			else
+				local keptDefault = {}
+				for _, coreTag in ipairs(province.defaultCores) do
+					if countries[coreTag] then table.insert(keptDefault, coreTag) end
+				end
+				province.defaultCores = keptDefault
+			end
 		end
 	end
 
