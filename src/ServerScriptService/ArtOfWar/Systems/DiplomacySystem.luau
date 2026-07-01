@@ -1457,6 +1457,34 @@ function annexCountry(winnerTag, loserTag, exceptWarId)
 			})
 		end
 	end
+	-- Releasable conquered nation (v1, in-memory/session-scoped): register the just-deleted loser as a
+	-- release-only formable definition so a later rebellion (civil war) in the conqueror can restore it.
+	-- Homeland = the provinces we just transferred (capital first if present). NOT persisted via
+	-- FormableStore to avoid replicating hundreds of dormant defs; gated by EnableFormables.
+	if ctx.WorldConstants.EnableFormables and ctx.FormableSystem and ctx.FormableSystem.addDefinition
+		and loserCountry and #ids > 0 then
+		local homeland = {}
+		local capital = loserCountry.capitalProvinceId
+		if capital ~= nil and table.find(ids, capital) then
+			homeland[#homeland + 1] = capital
+		end
+		for _, id in ipairs(ids) do
+			if id ~= capital then
+				homeland[#homeland + 1] = id
+			end
+		end
+		if #homeland > 0 then
+			ctx.FormableSystem.addDefinition(loserTag, {
+				displayName = loserName,
+				color = loserCountry.color,
+				flag = loserCountry.flagAssetId,
+				requiredProvinceIds = homeland,
+				canForm = false,
+				canRelease = true,
+				annexedBy = winnerTag,
+			})
+		end
+	end
 	ctx.WorldState.deleteCountry(loserTag)
 end
 

@@ -52,6 +52,18 @@ local COLLAPSED_KEYS = {
 local PROVMAP_KEY = "aggregate:provmap@v3" -- partId -> serialId (inverse lineage)
 local MIGRATION_META_KEY = "meta:migration@v3"
 
+-- Phase 1B — v3 -> v4 store migration. v4 is the unified province/country store: provinces gain
+-- cores/defaultCores/claims defaults and countries DROP the dormant acceptedCultures field. As with
+-- the v3 collapse, the v4 writers are ADDITIVE — they write parallel "@v4" keys and NEVER touch the
+-- @v3 keys, so the schema flag flip (commitV4) is the single atomic commit and rollbackV4 is a flip
+-- back to the frozen, untouched @v3 data. Non-province/country kinds keep their shared keys.
+local V4_VERSION = "v4"
+local V4_KEYS = {
+	[KIND_PROVINCES] = "aggregate:provinces@v4",
+	[KIND_COUNTRIES] = "aggregate:countries@v4",
+}
+local MIGRATION_META_KEY_V4 = "meta:migration@v4"
+
 local TOMBSTONE_MARKER = { __deleted = true }
 DataOverlay.TOMBSTONE = TOMBSTONE_MARKER
 
@@ -90,11 +102,16 @@ local cache = {
 	migrated = false,
 	migrating = false,
 	collapsed = false, -- true when schema == COLLAPSED_VERSION (part-id keyed world)
+	schemaVersion = nil, -- live schema flag as read by load() ("v2" / "v3" / "v4" / nil)
 }
 
--- Resolve the live DataStore key for a kind, honoring collapse mode. cache.collapsed is set by
--- load() (which reads the schema flag FIRST) before any readAggregate/writeAggregate runs.
+-- Resolve the live DataStore key for a kind, honoring the live schema. cache.schemaVersion /
+-- cache.collapsed are set by load() (which reads the schema flag FIRST) before any read/write runs.
+-- Precedence: v4 remaps provinces/countries to @v4; else v3 remaps them to @v3; else shared keys.
 local function keyFor(kind)
+	if cache.schemaVersion == V4_VERSION and V4_KEYS[kind] then
+		return V4_KEYS[kind]
+	end
 	if cache.collapsed and COLLAPSED_KEYS[kind] then
 		return COLLAPSED_KEYS[kind]
 	end
@@ -329,7 +346,10 @@ function DataOverlay.load()
 	-- Read the schema flag FIRST: cache.collapsed selects which key family every aggregate read
 	-- below uses (v2 serial keys vs the @v3 part-id keys). Committing to ONE family per boot.
 	local schema = readSchemaVersion()
-	cache.collapsed = (schema == COLLAPSED_VERSION)
+	cache.schemaVersion = schema
+	-- v4 is built on top of the part-id-keyed world, so it is "collapsed" in the applyTo sense
+	-- (provinces/countries are authoritative + part-id keyed, source is discarded) just like v3.
+	cache.collapsed = (schema == COLLAPSED_VERSION) or (schema == V4_VERSION)
 	cache.migrated = (schema == SCHEMA_VERSION) or cache.collapsed
 	local kinds = ALL_KINDS
 	for _, kind in ipairs(kinds) do
@@ -995,8 +1015,8 @@ local COUNTRY_REF_FIELDS = {
 }
 
 local PROVINCE_REF_ARRAY_FIELDS = { cores = "countries", defaultCores = "countries", claims = "countries" }
+-- acceptedCultures dropped in v4 (dormant field); no longer validated/self-healed.
 local COUNTRY_REF_ARRAY_FIELDS = {
-	acceptedCultures = "cultures",
 	historicalRivals = "countries",
 	historicalFriends = "countries",
 }
@@ -1621,6 +1641,246 @@ function DataOverlay.rollbackCollapse()
 		cache.loaded = false
 	end
 	return ok, err
+end
+
+-- ===========================================================================================
+-- Phase 1B — reversible v3 -> v4 store migration + first-boot seed import. Same safety contract as
+-- the collapse: every writer is ADDITIVE (writes @v4 keys, never SetAsync/mutates the @v3 keys),
+-- the migration is ALL-OR-NOTHING and VERIFIED before the schema flag is flipped, and rollback is a
+-- single flip back to the frozen @v3 data. Invoked as ADMIN commands only — never auto at boot.
+-- ===========================================================================================
+
+DataOverlay.V4_VERSION = V4_VERSION
+
+function DataOverlay.isV4()
+	ensureLoaded()
+	return cache.schemaVersion == V4_VERSION
+end
+
+-- Normalize a single province record for v4: ensure cores/defaultCores/claims defaults derived from
+-- the owner (mirrors the on-read healing in applyTo). Returns a fresh table; never mutates `rec`.
+local function normalizeProvinceV4(rec)
+	if type(rec) ~= "table" then
+		return rec
+	end
+	local out = table.clone(rec)
+	local owner = out.ownerTag
+	if out.controllerTag == nil then
+		out.controllerTag = owner
+	end
+	if type(out.cores) ~= "table" then
+		out.cores = (owner and owner ~= "NONE") and { owner } or {}
+	end
+	if type(out.defaultCores) ~= "table" then
+		out.defaultCores = table.clone(out.cores) -- homeland cores default to seed cores
+	end
+	if type(out.claims) ~= "table" then
+		out.claims = {}
+	end
+	return out
+end
+
+-- Copy a country record for v4, DROPPING the dormant acceptedCultures field. Fresh table.
+local function normalizeCountryV4(rec)
+	if type(rec) ~= "table" then
+		return rec
+	end
+	local out = table.clone(rec)
+	out.acceptedCultures = nil
+	return out
+end
+
+-- Read the CURRENT authoritative province/country aggregates (from whichever key family the live
+-- schema selects — normally @v3). Uses keyFor() so this respects the live schema at call time.
+local function readCurrentProvincesCountries()
+	local provinces, pStatus = rawReadKey(keyFor(KIND_PROVINCES))
+	local countries, cStatus = rawReadKey(keyFor(KIND_COUNTRIES))
+	-- readOk distinguishes a genuine empty source from a throttled/failed read, so callers never treat a
+	-- transient DataStore read failure as "source is empty" (which would wrongly wipe/skip @v4).
+	local readOk = pStatus ~= "read_failed" and cStatus ~= "read_failed"
+	return provinces or {}, countries or {}, readOk
+end
+
+-- Migrate the current @v3 provinces/countries into the @v4 keys. Purely ADDITIVE (never touches the
+-- @v3 keys). Idempotent: if @v4 already holds matching counts it is treated as done and skipped.
+-- Does NOT flip the schema flag (call verifyV4 then commitV4). Non-province/country kinds are shared.
+function DataOverlay.migrateV3toV4()
+	ensureLoaded()
+	local srcProvinces, srcCountries, readOk = readCurrentProvincesCountries()
+	if not readOk then
+		return { ok = false, error = "source (@v3) unreadable — DataStore throttled; retry", retryable = true }
+	end
+	local srcP, srcC = countOf(srcProvinces), countOf(srcCountries)
+
+	-- Idempotence: if @v4 already matches the source counts, do not re-write.
+	local liveV4P = rawReadKey(V4_KEYS[KIND_PROVINCES]) or {}
+	local liveV4C = rawReadKey(V4_KEYS[KIND_COUNTRIES]) or {}
+	if countOf(liveV4P) == srcP and countOf(liveV4C) == srcC and srcP > 0 then
+		return {
+			ok = true,
+			skipped = true,
+			provinces = { source = srcP, written = countOf(liveV4P) },
+			countries = { source = srcC, written = countOf(liveV4C) },
+			message = "@v4 already populated with matching counts — nothing to do",
+		}
+	end
+
+	local provincesV4 = {}
+	for id, rec in pairs(srcProvinces) do
+		provincesV4[id] = normalizeProvinceV4(rec)
+	end
+	local countriesV4 = {}
+	for tag, rec in pairs(srcCountries) do
+		countriesV4[tag] = normalizeCountryV4(rec)
+	end
+
+	local okP, errP = rawWriteKey(V4_KEYS[KIND_PROVINCES], provincesV4)
+	local okC, errC = rawWriteKey(V4_KEYS[KIND_COUNTRIES], countriesV4)
+	local stamp = {
+		startedAt = os.time(),
+		completedAt = os.time(),
+		sourceProvinces = srcP,
+		sourceCountries = srcC,
+		writtenProvinces = countOf(provincesV4),
+		writtenCountries = countOf(countriesV4),
+	}
+	if okP and okC then
+		-- Only stamp the migration meta once BOTH @v4 writes actually landed.
+		rawWriteKey(MIGRATION_META_KEY_V4, stamp)
+	end
+
+	return {
+		ok = okP and okC,
+		skipped = false,
+		provinces = { source = srcP, written = countOf(provincesV4), err = errP },
+		countries = { source = srcC, written = countOf(countriesV4), err = errC },
+		meta = stamp,
+	}
+end
+
+-- Re-read the @v4 keys and confirm they match the current @v3 source by count, AND confirm the @v3
+-- keys are UNTOUCHED (their counts still match what migrateV3toV4 saw). On any mismatch this REMOVES
+-- the partial @v4 keys (so a failed migration leaves no half-written v4 store) and returns ok=false.
+function DataOverlay.verifyV4()
+	local srcProvinces, srcCountries, readOk = readCurrentProvincesCountries()
+	if not readOk then
+		-- A throttled @v3 read must NOT be treated as "source empty" — that would delete good @v4. Abort.
+		return { ok = false, error = "source (@v3) unreadable — DataStore throttled; retry", retryable = true, removedPartial = false }
+	end
+	local srcP, srcC = countOf(srcProvinces), countOf(srcCountries)
+
+	local liveV4P = rawReadKey(V4_KEYS[KIND_PROVINCES]) or {}
+	local liveV4C = rawReadKey(V4_KEYS[KIND_COUNTRIES]) or {}
+	local v4P, v4C = countOf(liveV4P), countOf(liveV4C)
+
+	local function presenceMissing(expected, live)
+		local missing = 0
+		for k in pairs(expected or {}) do
+			if live[tostring(k)] == nil and live[tonumber(k) or k] == nil then
+				missing += 1
+			end
+		end
+		return missing
+	end
+	local pMissing = presenceMissing(srcProvinces, liveV4P)
+	local cMissing = presenceMissing(srcCountries, liveV4C)
+
+	local ok = srcP > 0 and v4P == srcP and v4C == srcC and pMissing == 0 and cMissing == 0
+
+	if not ok then
+		-- All-or-nothing: never leave a partial @v4 store behind. Remove both @v4 keys. The @v3 keys
+		-- are never touched by this whole flow, so removing @v4 is a full, safe undo of the write.
+		local ds = store()
+		withRetry(function()
+			ds:RemoveAsync(V4_KEYS[KIND_PROVINCES])
+		end, "RemoveAsync partial " .. V4_KEYS[KIND_PROVINCES], 3)
+		withRetry(function()
+			ds:RemoveAsync(V4_KEYS[KIND_COUNTRIES])
+		end, "RemoveAsync partial " .. V4_KEYS[KIND_COUNTRIES], 3)
+	end
+
+	return {
+		ok = ok,
+		provinces = { source = srcP, actual = v4P, missing = pMissing },
+		countries = { source = srcC, actual = v4C, missing = cMissing },
+		removedPartial = not ok,
+	}
+end
+
+-- verifyMigrationSafe is the caller-facing verify: it captures the @v3 counts, runs verifyV4, and
+-- returns its report (verifyV4 already RemoveAsyncs the partial @v4 keys on mismatch).
+function DataOverlay.verifyMigrationSafe()
+	return DataOverlay.verifyV4()
+end
+
+-- Flip the schema flag to v4 — the atomic commit point. ONLY call after verifyV4().ok. Invalidates
+-- the cache so the next read reloads from the @v4 key family.
+function DataOverlay.commitV4()
+	local ok, err = writeSchemaVersion(V4_VERSION)
+	if ok then
+		cache.schemaVersion = V4_VERSION
+		cache.collapsed = true
+		cache.loaded = false -- next read reloads aggregates from the @v4 key family
+	end
+	return ok, err
+end
+
+-- Roll the schema flag back to v3. The frozen @v3 data (never touched by the migration) becomes
+-- authoritative again, so the world reverts. Does not remove the @v4 keys (re-running migrate is a
+-- no-op via idempotence); the flip is the whole rollback.
+function DataOverlay.rollbackV4()
+	local ok, err = writeSchemaVersion(COLLAPSED_VERSION)
+	if ok then
+		cache.schemaVersion = COLLAPSED_VERSION
+		cache.collapsed = true
+		cache.loaded = false
+	end
+	return ok, err
+end
+
+-- First-boot seed import: write the source Data/Countries + Data/Provinces bundles straight into the
+-- @v4 keys. ADDITIVE (never touches @v3). Countries drop acceptedCultures; provinces get v4 defaults.
+-- Idempotent guard: refuses to overwrite a NON-EMPTY @v4 store (so a real world is never clobbered by
+-- a re-seed) unless opts.force is set. Does NOT flip the schema flag — commit separately.
+function DataOverlay.importSeed(sourceCountries, sourceProvinces, opts)
+	opts = opts or {}
+	assert(type(sourceCountries) == "table", "sourceCountries table required")
+	assert(type(sourceProvinces) == "table", "sourceProvinces table required")
+
+	local liveV4P = rawReadKey(V4_KEYS[KIND_PROVINCES]) or {}
+	local liveV4C = rawReadKey(V4_KEYS[KIND_COUNTRIES]) or {}
+	if not opts.force and (countOf(liveV4P) > 0 or countOf(liveV4C) > 0) then
+		return {
+			ok = false,
+			error = "refusing to seed: @v4 already holds data (pass { force = true } to overwrite)",
+			provinces = { existing = countOf(liveV4P) },
+			countries = { existing = countOf(liveV4C) },
+		}
+	end
+
+	local provincesV4 = {}
+	for id, rec in pairs(sourceProvinces) do
+		provincesV4[tonumber(id) or id] = normalizeProvinceV4(rec)
+	end
+	local countriesV4 = {}
+	for tag, rec in pairs(sourceCountries) do
+		countriesV4[tag] = normalizeCountryV4(rec)
+	end
+
+	local okP, errP = rawWriteKey(V4_KEYS[KIND_PROVINCES], provincesV4)
+	local okC, errC = rawWriteKey(V4_KEYS[KIND_COUNTRIES], countriesV4)
+	rawWriteKey(MIGRATION_META_KEY_V4, {
+		seededAt = os.time(),
+		writtenProvinces = countOf(provincesV4),
+		writtenCountries = countOf(countriesV4),
+		source = "importSeed",
+	})
+
+	return {
+		ok = okP and okC,
+		provinces = { written = countOf(provincesV4), err = errP },
+		countries = { written = countOf(countriesV4), err = errC },
+	}
 end
 
 function DataOverlay.invalidate()

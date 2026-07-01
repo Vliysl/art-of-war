@@ -52,8 +52,37 @@ local function editorCall(command, payload)
 	return true
 end
 
-local state = { snapshot = nil, tab = "countries", selected = nil, loaded = false }
+local state = { snapshot = nil, tab = "countries", selected = nil, loaded = false, dirty = false }
 local formablesConn -- live-refresh subscription for the Formables tab (disconnected on tab change)
+
+-- Dirty tracking + a lowercased search cache. The dirty flag flips whenever an in-memory edit succeeds
+-- (edits live only in the snapshot until "Save to DataStore"); the header shows an "Unsaved changes" marker
+-- and Close/Reload confirm before discarding. markDirty()/clearDirty() are wired to the footer marker below.
+local setDirty -- fwd (defined once the header marker exists)
+local function markDirty()
+	state.dirty = true
+	if setDirty then setDirty() end
+end
+local function clearDirty()
+	state.dirty = false
+	if setDirty then setDirty() end
+end
+
+-- Search cache: precompute one lowercased "id + display name" string per country/province ONCE when a
+-- snapshot loads, so the per-keystroke filter is a plain table lookup instead of re-lowercasing all ~5713
+-- entries every time. Keyed by the dict's own keys (tag / province id). Rebuilt on every applySnapshot.
+local searchCache = { countries = {}, provinces = {} }
+local function buildSearchCache(snap)
+	local cc = {}
+	for tag, c in pairs(snap.countries or {}) do
+		cc[tag] = string.lower(tostring(tag) .. " " .. (c.displayName or ""))
+	end
+	local pc = {}
+	for id, p in pairs(snap.provinces or {}) do
+		pc[id] = string.lower(tostring(id) .. " " .. (p.name or ""))
+	end
+	searchCache = { countries = cc, provinces = pc }
+end
 
 -- ─────────────────────────── small styled builders ───────────────────────────
 local function frame(props)
@@ -141,17 +170,82 @@ local function setStatus(text, color)
 	status.TextColor3 = color or Colors.TextSecondary
 end
 
-local closeBtn = Button.create({
+-- Unsaved-changes marker (hidden until an edit flips the dirty flag; sits just left of the Close button).
+local dirtyMarker = label(header, "● Unsaved changes", "bodySm", Colors.Warning or Colors.Negative)
+dirtyMarker.AnchorPoint = Vector2.new(1, 0.5)
+dirtyMarker.Position = UDim2.new(1, -112, 0.5, 0)
+dirtyMarker.Size = UDim2.fromOffset(150, 40)
+dirtyMarker.TextXAlignment = Enum.TextXAlignment.Right
+dirtyMarker.Visible = false
+setDirty = function()
+	dirtyMarker.Visible = state.dirty
+end
+
+-- Close: confirms (two-click) when there are unsaved changes so an in-memory edit isn't discarded silently.
+local closeArmed = false
+local closeBtn
+closeBtn = Button.create({
 	parent = header,
 	variant = "ghost",
 	text = "Close (\\)",
 	width = 92,
 	onClick = function()
+		if state.dirty and not closeArmed then
+			closeArmed = true
+			closeBtn.Text = "Discard?"
+			setStatus("Unsaved changes — click again to close without saving", Colors.Negative)
+			return
+		end
+		closeArmed = false
+		closeBtn.Text = "Close (\\)"
 		gui.Enabled = false
 	end,
 })
 closeBtn.AnchorPoint = Vector2.new(1, 0.5)
 closeBtn.Position = UDim2.new(1, -10, 0.5, 0)
+
+-- ─────────────────────────── draggable window (drag the header like a title bar) ───────────────────────────
+-- Translate root.Position by the pointer delta. Drags that begin on a button (Close, tabs live under the
+-- header row, not on it) are ignored so clicks still register. Works for mouse (MouseButton1) and touch.
+do
+	local dragging = false
+	local dragStart, startPos
+	local function beginDrag(input)
+		-- Ignore drags that start over the Close button so its click still works.
+		if closeBtn and closeBtn.Visible then
+			local bp, bs = closeBtn.AbsolutePosition, closeBtn.AbsoluteSize
+			local px, py = input.Position.X, input.Position.Y
+			if px >= bp.X and px <= bp.X + bs.X and py >= bp.Y and py <= bp.Y + bs.Y then
+				return
+			end
+		end
+		dragging = true
+		dragStart = input.Position
+		startPos = root.Position
+	end
+	header.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			beginDrag(input)
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					dragging = false
+				end
+			end)
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if not dragging then return end
+		if input.UserInputType == Enum.UserInputType.MouseMovement
+			or input.UserInputType == Enum.UserInputType.Touch then
+			local delta = input.Position - dragStart
+			root.Position = UDim2.new(
+				startPos.X.Scale, startPos.X.Offset + delta.X,
+				startPos.Y.Scale, startPos.Y.Offset + delta.Y
+			)
+		end
+	end)
+end
 
 -- tab row
 local TABS = {
@@ -209,6 +303,13 @@ end
 -- The everyday editor operations. Save persists to the DataStore (publishes to the live map); Reload pulls
 -- a fresh server snapshot; Undo/Redo return an updated snapshot the server rebuilds from its history.
 local footer = frame({ parent = root, transparent = true, size = UDim2.new(1, -20, 0, 30), position = UDim2.new(0, 10, 1, -38) })
+-- Undo/Redo depth labels: the undo/redo command responses carry historyDepth/redoDepth so the buttons can
+-- read "Undo (3)". applyDepths() (defined once both buttons exist) is called from applySnapshot too.
+local applyDepths
+local undoBtn, redoBtn
+-- Reload: confirms (two-click) when there are unsaved in-memory changes so they aren't discarded silently.
+local reloadArmed = false
+local reloadBtn
 do
 	local x = 0
 	local saveBtn = Button.create({
@@ -220,6 +321,11 @@ do
 			setStatus("Saving…", Colors.TextSecondary)
 			local res, err = editorCall("save")
 			if res then
+				clearDirty()
+				closeArmed = false
+				closeBtn.Text = "Close (\\)"
+				reloadArmed = false
+				if reloadBtn then reloadBtn.Text = "Reload" end
 				setStatus((type(res) == "table" and res.message) or "Saved", Colors.Positive)
 			else
 				setStatus("Save failed: " .. tostring(err), Colors.Negative)
@@ -229,15 +335,24 @@ do
 	saveBtn.Position = UDim2.fromOffset(x, 0)
 	x += 164
 
-	local reloadBtn = Button.create({
+	reloadBtn = Button.create({
 		parent = footer,
 		variant = "ghost",
 		text = "Reload",
 		width = 90,
 		onClick = function()
+			if state.dirty and not reloadArmed then
+				reloadArmed = true
+				reloadBtn.Text = "Discard & reload?"
+				setStatus("Unsaved changes — click Reload again to discard them", Colors.Negative)
+				return
+			end
+			reloadArmed = false
+			reloadBtn.Text = "Reload"
 			local snap, err = editorCall("reloadState")
 			if snap and type(snap) == "table" and snap.countries then
 				state.selected = nil
+				clearDirty()
 				applySnapshot(snap)
 				setStatus("Reloaded from server", Colors.Positive)
 			else
@@ -248,14 +363,15 @@ do
 	reloadBtn.Position = UDim2.fromOffset(x, 0)
 	x += 98
 
-	local undoBtn = Button.create({
+	undoBtn = Button.create({
 		parent = footer,
 		variant = "ghost",
 		text = "Undo",
-		width = 80,
+		width = 90,
 		onClick = function()
 			local snap, err = editorCall("undo")
 			if snap and type(snap) == "table" and snap.countries then
+				markDirty()
 				applySnapshot(snap)
 				setStatus("Undo: " .. tostring(snap.undoLabel or "✓"), Colors.Positive)
 			else
@@ -264,16 +380,17 @@ do
 		end,
 	})
 	undoBtn.Position = UDim2.fromOffset(x, 0)
-	x += 88
+	x += 98
 
-	local redoBtn = Button.create({
+	redoBtn = Button.create({
 		parent = footer,
 		variant = "ghost",
 		text = "Redo",
-		width = 80,
+		width = 90,
 		onClick = function()
 			local snap, err = editorCall("redo")
 			if snap and type(snap) == "table" and snap.countries then
+				markDirty()
 				applySnapshot(snap)
 				setStatus("Redo: " .. tostring(snap.redoLabel or "✓"), Colors.Positive)
 			else
@@ -282,7 +399,23 @@ do
 		end,
 	})
 	redoBtn.Position = UDim2.fromOffset(x, 0)
-	x += 88
+	x += 98
+
+	-- Reflect the history depths (and last labels) on the buttons; safe to call with a nil snapshot.
+	applyDepths = function(snap)
+		local ud = snap and snap.historyDepth
+		local rd = snap and snap.redoDepth
+		local ul = snap and snap.undoLabel
+		local rl = snap and snap.redoLabel
+		local ubtn = undoBtn:FindFirstChildWhichIsA("TextLabel")
+		local rbtn = redoBtn:FindFirstChildWhichIsA("TextLabel")
+		if ubtn then
+			ubtn.Text = ud and (ul and string.format("Undo %s (%d)", tostring(ul), ud) or ("Undo (" .. ud .. ")")) or "Undo"
+		end
+		if rbtn then
+			rbtn.Text = rd and (rl and string.format("Redo %s (%d)", tostring(rl), rd) or ("Redo (" .. rd .. ")")) or "Redo"
+		end
+	end
 end
 
 -- sorted array of a dict's keys (as strings), for dropdown option lists.
@@ -518,18 +651,34 @@ local function listColumn(cfg)
 		keys = cfg.getKeys(search.Text)
 		vlist.refresh()
 	end
-	search:GetPropertyChangedSignal("Text"):Connect(rebuild)
+	-- Debounce (~0.15s): a fast typist otherwise re-filters the whole dict on every character. Each keystroke
+	-- bumps a token; only the last scheduled pass (whose token still matches) actually rebuilds.
+	local debounceToken = 0
+	search:GetPropertyChangedSignal("Text"):Connect(function()
+		debounceToken += 1
+		local myToken = debounceToken
+		task.delay(0.15, function()
+			if myToken == debounceToken and search.Parent then
+				rebuild()
+			end
+		end)
+	end)
 	rebuild()
-	return col
+	return col, rebuild
 end
 
 -- ─────────────────────────── Countries tab ───────────────────────────
-local function sortedMatching(dict, query, keyToText)
+-- Filter + sort a dict's keys by a query. Pass `cache` (id -> precomputed lowercased search string) to skip
+-- re-lowercasing every entry per keystroke; otherwise falls back to keyToText (used by the smaller dicts).
+local function sortedMatching(dict, query, keyToText, cache, filterFn)
 	query = string.lower(query or "")
 	local out = {}
 	for k, v in pairs(dict or {}) do
-		if query == "" or string.find(string.lower(keyToText(k, v)), query, 1, true) then
-			out[#out + 1] = k
+		if filterFn == nil or filterFn(k, v) then
+			local text = cache and cache[k] or string.lower(keyToText(k, v))
+			if query == "" or string.find(text, query, 1, true) then
+				out[#out + 1] = k
+			end
 		end
 	end
 	table.sort(out, function(a, b) return tostring(a) < tostring(b) end)
@@ -570,9 +719,65 @@ local function readonlyRow(detail, name, value)
 	v.Size = UDim2.new(1, -96, 1, 0)
 end
 
+-- Faceted culture/religion filter for Countries (combined with the text search). state.countryCultureFilter
+-- / state.countryReligionFilter hold the sentinel or a chosen key; countryFilter() -> filterFn or nil.
+local ALL_FILTER = "\u{2014} all \u{2014}"
+local countryFilter -- fwd (returns a per-render filterFn built from the two dropdowns' state)
+
 local function renderCountries()
 	local snap = state.snapshot
-	local columns = frame({ parent = body, transparent = true })
+	local listCol -- fwd (culture/religion dropdowns re-filter this column's list)
+
+	countryFilter = function()
+		local cul = state.countryCultureFilter
+		local rel = state.countryReligionFilter
+		local hasCul = cul and cul ~= ALL_FILTER
+		local hasRel = rel and rel ~= ALL_FILTER
+		if not hasCul and not hasRel then return nil end
+		return function(_, c)
+			if hasCul and c.primaryCulture ~= cul then return false end
+			if hasRel and c.stateReligion ~= rel then return false end
+			return true
+		end
+	end
+
+	-- Filter row: culture + religion dropdowns above the list/detail columns.
+	local filterRow = frame({ parent = body, transparent = true, size = UDim2.fromOffset(300, 28) })
+	label(filterRow, "Culture:", "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 54, 1, 0)
+	do
+		local culOptions = { ALL_FILTER }
+		for _, k in ipairs(sortedKeys(snap.cultures)) do culOptions[#culOptions + 1] = k end
+		dropdown({
+			parent = filterRow,
+			size = UDim2.fromOffset(190, 28),
+			position = UDim2.fromOffset(54, 0),
+			options = culOptions,
+			value = state.countryCultureFilter or ALL_FILTER,
+			onChange = function(sel)
+				state.countryCultureFilter = sel
+				if listCol then listCol() end
+			end,
+		})
+	end
+	local filterRow2 = frame({ parent = body, transparent = true, size = UDim2.fromOffset(300, 28), position = UDim2.fromOffset(0, 30) })
+	label(filterRow2, "Religion:", "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 54, 1, 0)
+	do
+		local relOptions = { ALL_FILTER }
+		for _, k in ipairs(sortedKeys(snap.religions)) do relOptions[#relOptions + 1] = k end
+		dropdown({
+			parent = filterRow2,
+			size = UDim2.fromOffset(190, 28),
+			position = UDim2.fromOffset(54, 0),
+			options = relOptions,
+			value = state.countryReligionFilter or ALL_FILTER,
+			onChange = function(sel)
+				state.countryReligionFilter = sel
+				if listCol then listCol() end
+			end,
+		})
+	end
+
+	local columns = frame({ parent = body, transparent = true, size = UDim2.new(1, 0, 1, -62), position = UDim2.fromOffset(0, 62) })
 	-- Detail pane is built once; only its contents refresh on selection, so the list column's search box
 	-- and scroll position persist across clicks.
 	local detail = makeDetailPane(columns)
@@ -652,13 +857,55 @@ local function renderCountries()
 		local govDD = ddRow("Government", sortedKeys(snap.governmentTypes), c and c.governmentForm)
 		local ideoDD = ddRow("Ideology", sortedKeys(snap.ideologies), c and c.ideology)
 
+		-- Inline validation error text (hidden until a validate() failure), shown just above the Save button.
+		local errLabel = label(detail, "", "bodySm", Colors.Negative)
+		errLabel.LayoutOrder = 98
+		errLabel.TextWrapped = true
+		errLabel.Size = UDim2.new(1, 0, 0, 20)
+		errLabel.Visible = false
+		local function showError(msg)
+			errLabel.Text = msg
+			errLabel.Visible = true
+			setStatus(msg, Colors.Negative)
+		end
+
+		-- Validate the form: tag length >=2 (create only), RGB channels present & 0-255, and (create only) the
+		-- capital province id must exist in the snapshot. Returns newColor on success, or nil + shows the error.
+		local function validate()
+			local rgb = {}
+			for i = 1, 3 do
+				local n = tonumber(boxes[i].Text)
+				if not n or n < 0 or n > 255 or n ~= math.floor(n) then
+					showError("Colour channels must be whole numbers 0-255")
+					return nil
+				end
+				rgb[i] = n
+			end
+			if isNew then
+				local newTag = (tagBox.Text or ""):gsub("%s", "")
+				if #newTag < 2 then
+					showError("Tag needs 2+ characters")
+					return nil
+				end
+				local capText = (capBox.Text or ""):gsub("%s", "")
+				local capId = tonumber(capText)
+				if capText ~= "" and (not capId or not snap.provinces[capId]) then
+					showError("Capital prov ID must be an existing province")
+					return nil
+				end
+			end
+			errLabel.Visible = false
+			return rgb
+		end
+
 		local saveBtn = Button.create({
 			parent = detail,
 			variant = "primary",
 			text = isNew and "Create" or "Save",
 			width = 120,
 			onClick = function()
-				local newColor = { tonumber(boxes[1].Text) or 0, tonumber(boxes[2].Text) or 0, tonumber(boxes[3].Text) or 0 }
+				local newColor = validate()
+				if not newColor then return end
 				local opts = {
 					displayName = nameBox.Text,
 					color = newColor,
@@ -669,16 +916,14 @@ local function renderCountries()
 				}
 				if isNew then
 					local newTag = (tagBox.Text or ""):gsub("%s", "")
-					if #newTag < 2 then
-						setStatus("Tag needs 2+ characters", Colors.Negative)
-						return
-					end
 					opts.capitalProvinceId = tonumber(capBox.Text)
 					local res, err = editorCall("addCountry", { tag = newTag, opts = opts })
 					if res then
 						opts.tag = newTag
 						snap.countries[newTag] = opts
+						searchCache.countries[newTag] = string.lower(newTag .. " " .. (opts.displayName or ""))
 						state.selected = newTag
+						markDirty()
 						setStatus("Created " .. newTag, Colors.Positive)
 						showDetail(newTag)
 					else
@@ -693,6 +938,8 @@ local function renderCountries()
 						c.stateReligion = opts.stateReligion
 						c.governmentForm = opts.governmentForm
 						c.ideology = opts.ideology
+						searchCache.countries[tag] = string.lower(tostring(tag) .. " " .. (opts.displayName or ""))
+						markDirty()
 						setStatus("Saved " .. tostring(tag), Colors.Positive)
 					else
 						setStatus("Save failed: " .. tostring(err), Colors.Negative)
@@ -703,12 +950,12 @@ local function renderCountries()
 		saveBtn.LayoutOrder = 99
 	end
 
-	listColumn({
+	local _, rebuildList = listColumn({
 		parent = columns,
 		getKeys = function(q)
 			return sortedMatching(snap.countries, q, function(tag, c)
 				return tostring(tag) .. " " .. (c.displayName or "")
-			end)
+			end, searchCache.countries, countryFilter and countryFilter())
 		end,
 		labelFor = function(tag)
 			local c = snap.countries[tag]
@@ -719,13 +966,19 @@ local function renderCountries()
 			showDetail(tag)
 		end,
 	})
+	listCol = rebuildList
 
 	showDetail(state.selected)
 end
 
 -- ─────────────────────────── Provinces tab (virtualized; owner + cores/claims editor + map painting) ───────────────────────────
+-- Faceted owner-filter sentinels (combined with the text search): "All" = no filter, "— none —" = unowned.
+local ALL_OWNERS = "\u{2014} all \u{2014}"
+local NO_OWNER = "\u{2014} none (unowned) \u{2014}"
+
 local function renderProvinces()
 	local snap = state.snapshot
+	local listCol -- fwd (owner filter dropdown re-filters this column's list)
 
 	-- Paint control row: pick an owner, then click land tiles on the map to assign it (Phase 6 painting).
 	-- The click hook lives at module scope (below) and reads state.paintOwner.
@@ -807,6 +1060,7 @@ local function renderProvinces()
 					end
 				end
 				setStatus(string.format("Assigned %d tiles → %s", #items, owner), Colors.Positive)
+				markDirty()
 				if paintInteraction.clearMultiSelection then
 					paintInteraction.clearMultiSelection()
 				end
@@ -830,7 +1084,26 @@ local function renderProvinces()
 	bulkCountLabel.Position = UDim2.fromOffset(512, 0)
 	bulkCountLabel.Size = UDim2.new(0, 84, 1, 0)
 
-	local columns = frame({ parent = body, transparent = true, size = UDim2.new(1, 0, 1, -36), position = UDim2.fromOffset(0, 36) })
+	-- Faceted owner filter (combined with the list's text search). Options: All / none(unowned) / each country.
+	local filterRow = frame({ parent = body, transparent = true, size = UDim2.fromOffset(300, 28), position = UDim2.fromOffset(0, 36) })
+	label(filterRow, "Owner:", "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 48, 1, 0)
+	do
+		local ownerOptions = { ALL_OWNERS, NO_OWNER }
+		for _, t in ipairs(sortedKeys(snap.countries)) do ownerOptions[#ownerOptions + 1] = t end
+		dropdown({
+			parent = filterRow,
+			size = UDim2.new(1, -52, 1, 0),
+			position = UDim2.fromOffset(52, 0),
+			options = ownerOptions,
+			value = state.provOwnerFilter or ALL_OWNERS,
+			onChange = function(sel)
+				state.provOwnerFilter = sel
+				if listCol then listCol() end -- re-run the list's getKeys with the new filter
+			end,
+		})
+	end
+
+	local columns = frame({ parent = body, transparent = true, size = UDim2.new(1, 0, 1, -68), position = UDim2.fromOffset(0, 68) })
 	local detail = makeDetailPane(columns)
 
 	local function showDetail(id)
@@ -883,6 +1156,7 @@ local function renderProvinces()
 						p.ownerTag = opts.ownerTag
 						p.controllerTag = opts.controllerTag
 					end
+					markDirty()
 					setStatus("Saved province #" .. tostring(id), Colors.Positive)
 				else
 					setStatus("Save failed: " .. tostring(err), Colors.Negative)
@@ -892,12 +1166,18 @@ local function renderProvinces()
 		saveBtn.LayoutOrder = 99
 	end
 
-	listColumn({
+	local _, rebuildList = listColumn({
 		parent = columns,
 		getKeys = function(q)
+			local ownerSel = state.provOwnerFilter
+			local filterFn = nil
+			if ownerSel and ownerSel ~= ALL_OWNERS then
+				local want = (ownerSel == NO_OWNER) and nil or ownerSel
+				filterFn = function(_, p) return (p.ownerTag or nil) == want end
+			end
 			return sortedMatching(snap.provinces, q, function(id, p)
 				return tostring(id) .. " " .. (p.name or "")
-			end)
+			end, searchCache.provinces, filterFn)
 		end,
 		labelFor = function(id)
 			local p = snap.provinces[id]
@@ -908,6 +1188,7 @@ local function renderProvinces()
 			showDetail(id)
 		end,
 	})
+	listCol = rebuildList
 
 	showDetail(state.selected)
 end
@@ -998,6 +1279,7 @@ local function renderFormables()
 				end
 				fireRemote("SetFormable", newTag, newDef)
 				state.selected = newTag
+				markDirty()
 				setStatus("Saved formable " .. newTag .. " (replicating\u{2026})", Colors.Positive)
 			end,
 		})
@@ -1012,6 +1294,7 @@ local function renderFormables()
 				onClick = function()
 					fireRemote("RemoveFormable", tag)
 					state.selected = nil
+					markDirty()
 					setStatus("Removed custom formable " .. tag, Colors.Positive)
 				end,
 			})
@@ -1161,6 +1444,7 @@ local function renderIdentity()
 					if res then
 						store[newId] = { id = newId, displayName = opts.displayName }
 						state.selected = newId
+						markDirty()
 						setStatus("Created " .. newId, Colors.Positive)
 						showDetail(newId)
 					else
@@ -1170,6 +1454,7 @@ local function renderIdentity()
 					local res, err = editorCall(reg.update, { id = id, opts = opts })
 					if res then
 						rec.displayName = opts.displayName
+						markDirty()
 						setStatus("Saved " .. tostring(id), Colors.Positive)
 					else
 						setStatus("Save failed: " .. tostring(err), Colors.Negative)
@@ -1190,6 +1475,7 @@ local function renderIdentity()
 					if res then
 						store[id] = nil
 						state.selected = nil
+						markDirty()
 						setStatus("Removed " .. tostring(id), Colors.Positive)
 						showDetail(nil)
 					else
@@ -1479,10 +1765,13 @@ end
 
 applySnapshot = function(snap)
 	state.snapshot = snap
+	buildSearchCache(snap)
+	if applyDepths then applyDepths(snap) end
 	local cn, pn = 0, 0
 	for _ in pairs(snap.countries or {}) do cn += 1 end
 	for _ in pairs(snap.provinces or {}) do pn += 1 end
-	setStatus(string.format("%d countries  •  %d provinces", cn, pn))
+	local extra = state.dirty and "  •  unsaved" or ""
+	setStatus(string.format("%d countries  •  %d provinces%s", cn, pn, extra))
 	render()
 end
 
@@ -1533,6 +1822,7 @@ do
 							local p = snap.provinces[pid]
 							p.ownerTag = owner
 							p.controllerTag = owner
+							markDirty()
 							setStatus(string.format("Painted #%s → %s", tostring(pid), owner), Colors.Positive)
 						else
 							setStatus("Paint failed: " .. tostring(err), Colors.Negative)

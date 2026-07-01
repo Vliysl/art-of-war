@@ -189,6 +189,10 @@ local WRITE_COMMANDS = {
 	save = true,
 	exportToLua = true,
 	migrateLegacy = true,
+	-- Phase 1B v3->v4 store migration + seed import — all write the DataStore.
+	migrateV3toV4 = true,
+	rollbackV4 = true,
+	importSeed = true,
 	undo = true,
 	redo = true,
 	-- Named Save/Load configs + staging/promote all write to the DataStore, so they belong under the
@@ -1090,6 +1094,24 @@ api.OnServerInvoke = function(player, command, payload)
 		return { ok = true, result = { userId = uid } }
 	elseif command == "migrateLegacy" then
 		return safeCall(Editor.migrateLegacy)
+	elseif command == "migrateV3toV4" then
+		-- Schema-flipping store migration (v3 -> v4). Owner-only, like load/delete config. Never auto.
+		if not EditorAdmins.canManage(player) then
+			return { ok = false, error = "only the owner can run the v4 store migration" }
+		end
+		local commit = type(payload) == "table" and payload.commit == true
+		return safeCall(Editor.migrateV3toV4, { commit = commit })
+	elseif command == "rollbackV4" then
+		if not EditorAdmins.canManage(player) then
+			return { ok = false, error = "only the owner can roll back the v4 store migration" }
+		end
+		return safeCall(Editor.rollbackV4)
+	elseif command == "importSeed" then
+		if not EditorAdmins.canManage(player) then
+			return { ok = false, error = "only the owner can import the first-boot seed" }
+		end
+		local force = type(payload) == "table" and payload.force == true
+		return safeCall(Editor.importSeed, { force = force })
 	elseif command == "undo" then
 		local result = safeCall(function()
 			local ok, label = Editor.undo()
