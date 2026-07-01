@@ -7,18 +7,20 @@ local WorldConstants = require(aow.Shared.WorldConstants)
 
 local MissionsScreen = {}
 
--- Does `tag` own every province in `ids`? (client-side eligibility from the replicated cache)
-local function ownsAll(cache, tag, ids)
-	if not cache or not tag or not ids or #ids == 0 then
-		return false
+-- How many of `ids` does `tag` own, and how many are there? (client-side, from the replicated cache)
+local function countHeld(cache, tag, ids)
+	local total = (ids and #ids) or 0
+	if not cache or not tag or total == 0 then
+		return 0, total
 	end
+	local held = 0
 	for _, id in ipairs(ids) do
 		local p = cache.getProvince(id)
-		if not p or p.ownerTag ~= tag then
-			return false
+		if p and p.ownerTag == tag then
+			held += 1
 		end
 	end
-	return true
+	return held, total
 end
 
 function MissionsScreen.create(ctx)
@@ -36,14 +38,21 @@ function MissionsScreen.create(ctx)
 			-- former-tag whitelist: if the def names formerTags, only those countries may form it (empty = any)
 			local formerOk = not (type(def.formerTags) == "table" and #def.formerTags > 0)
 				or (ctx.tag and table.find(def.formerTags, ctx.tag) ~= nil)
-			if def.canForm ~= false
-				and formerOk
-				and not (ctx.cache and ctx.cache.getCountry(tag))
-				and ownsAll(ctx.cache, ctx.tag, def.requiredProvinceIds) then
-				eligible[#eligible + 1] = { tag = tag, def = def }
+			local exists = ctx.cache and ctx.cache.getCountry(tag)
+			if def.canForm ~= false and formerOk and not exists then
+				local held, total = countHeld(ctx.cache, ctx.tag, def.requiredProvinceIds)
+				local ready = total > 0 and held == total
+				-- SECRET formables appear only once you already hold the whole territory; the rest show to
+				-- eligible formers as a goal (with province progress) even before the land is fully held.
+				if ready or not def.secret then
+					eligible[#eligible + 1] = { tag = tag, def = def, held = held, total = total, ready = ready }
+				end
 			end
 		end
 		table.sort(eligible, function(a, b)
+			if a.ready ~= b.ready then
+				return a.ready -- formable-now entries first
+			end
 			return (a.def.displayName or a.tag) < (b.def.displayName or b.tag)
 		end)
 
@@ -52,24 +61,34 @@ function MissionsScreen.create(ctx)
 		ScreenKit.section(body, "Formable Nations", order)
 		if #eligible == 0 then
 			order += 1
-			ScreenKit.note(body, "No nations can be formed yet \u{2014} hold a formable's full territory to unlock it.", order)
+			ScreenKit.note(body, "No formable nations available to you.", order)
 			return order
 		end
 		for _, e in ipairs(eligible) do
 			order += 1
-			local row = ScreenKit.stat(body, { icon = "Star", label = e.def.displayName or e.tag, layoutOrder = order })
-			local btn = Button.create({
-				parent = row,
-				variant = "primary",
-				text = "Form",
-				width = 96,
-				size = "sm",
-				onClick = function()
-					ctx.fire("FormNation", e.tag)
-				end,
-			})
-			btn.AnchorPoint = Vector2.new(1, 0.5)
-			btn.Position = UDim2.fromScale(1, 0.5)
+			if e.ready then
+				local row = ScreenKit.stat(body, { icon = "Star", label = e.def.displayName or e.tag, layoutOrder = order })
+				local btn = Button.create({
+					parent = row,
+					variant = "primary",
+					text = "Form",
+					width = 96,
+					size = "sm",
+					onClick = function()
+						ctx.fire("FormNation", e.tag)
+					end,
+				})
+				btn.AnchorPoint = Vector2.new(1, 0.5)
+				btn.Position = UDim2.fromScale(1, 0.5)
+			else
+				-- a goal: show progress toward holding the full territory
+				ScreenKit.stat(body, {
+					icon = "Star",
+					label = e.def.displayName or e.tag,
+					value = string.format("%d / %d provinces", e.held, e.total),
+					layoutOrder = order,
+				})
+			end
 		end
 		return order
 	end

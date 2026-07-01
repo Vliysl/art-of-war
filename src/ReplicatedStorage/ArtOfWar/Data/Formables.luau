@@ -18,6 +18,9 @@
 --     formBonuses         = { stability = n? }?,  -- applied to the former on formation
 --     canForm             = boolean?,             -- default true
 --     canRelease          = boolean?,             -- default true
+--     secret              = boolean?,             -- if true, hidden from the Missions tab until a nation
+--                                                 --   holds the FULL territory; else shown to eligible
+--                                                 --   formers as a goal (with progress). default false
 --   }
 --
 -- Example (fill requiredProvinceIds with real map-part numbers via the Data Editor / Phase 6 suite):

@@ -1273,6 +1273,9 @@ local function renderFormables()
 		local bonusBox = field("Form bonus: stability", def and def.formBonuses and tostring(def.formBonuses.stability or "") or "")
 		local canFormDD = ddYesNo("Can form", def == nil or def.canForm ~= false)
 		local canReleaseDD = ddYesNo("Can release", def == nil or def.canRelease ~= false)
+		-- Secret: hide from the Missions tab until a nation already holds the full territory (otherwise
+		-- eligible formers see it as a goal with progress). Default No (visible as a goal).
+		local secretDD = ddYesNo("Secret formable", def ~= nil and def.secret == true)
 
 		local saveBtn = Button.create({
 			parent = detail,
@@ -1313,6 +1316,7 @@ local function renderFormables()
 					formerTags = (#formers > 0) and formers or nil,
 					canForm = canFormDD.get() == "Yes",
 					canRelease = canReleaseDD.get() == "Yes",
+					secret = (secretDD.get() == "Yes") or nil,
 				}
 				if flagBox.Text ~= "" then
 					newDef.flag = flagBox.Text
