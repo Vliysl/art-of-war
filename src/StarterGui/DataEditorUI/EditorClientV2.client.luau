@@ -160,6 +160,7 @@ local TABS = {
 	{ key = "identity", label = "Identity" },
 	{ key = "formables", label = "Formables" },
 	{ key = "saves", label = "Saves" },
+	{ key = "access", label = "Access" },
 }
 local tabRow = frame({ parent = root, transparent = true, size = UDim2.new(1, 0, 0, 34), position = UDim2.fromOffset(0, 40) })
 local tabButtons = {}
@@ -1293,6 +1294,91 @@ local function renderSaves()
 	showDetail(state.selected)
 end
 
+-- ─────────────────────────── Access tab (RoN-style: owner grants editor access, Phase 6) ───────────────────────────
+-- Lists online players + their access tier. Managers (owner/dev) get Grant/Revoke buttons; everyone else
+-- sees it read-only. Grants are session-scoped on the server (reset on restart, no DataStore writes).
+local function renderAccess()
+	local res = editorCall("listAccess")
+	local canManage = type(res) == "table" and res.canManage == true
+	local players = (type(res) == "table" and res.players) or {}
+
+	local note = label(
+		body,
+		canManage and "Grant other players editor access for this session (resets on server restart)."
+			or "Only the server owner / a dev can manage editor access.",
+		"bodyMd",
+		Colors.TextSecondary
+	)
+	note.Position = UDim2.fromOffset(4, 2)
+	note.Size = UDim2.new(1, -8, 0, 22)
+
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.BackgroundColor3 = Colors.SurfaceBase
+	scroll.BorderSizePixel = 0
+	scroll.ScrollBarThickness = 6
+	scroll.Position = UDim2.fromOffset(0, 30)
+	scroll.Size = UDim2.new(1, 0, 1, -30)
+	scroll.CanvasSize = UDim2.fromOffset(0, #players * 38 + 16) -- rows are 34px + 4px layout padding
+	scroll.Parent = body
+	do
+		local s = Instance.new("UIStroke")
+		s.Color = Colors.BorderSubtle
+		s.Thickness = 1
+		s.Parent = scroll
+	end
+	local layout = Instance.new("UIListLayout")
+	layout.Padding = UDim.new(0, 4)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = scroll
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 6)
+	pad.PaddingRight = UDim.new(0, 6)
+	pad.PaddingTop = UDim.new(0, 6)
+	pad.PaddingBottom = UDim.new(0, 6)
+	pad.Parent = scroll
+
+	if #players == 0 then
+		label(scroll, "No players online.", "bodySm", Colors.TextSecondary).Size = UDim2.new(1, 0, 0, 24)
+		return
+	end
+
+	for i, p in ipairs(players) do
+		local row = frame({ parent = scroll, color = Colors.SurfaceElevated, size = UDim2.new(1, 0, 0, 34) })
+		row.LayoutOrder = i
+		local nameLbl = label(row, string.format("%s  (%d)", p.name or "?", p.userId), "bodyMd")
+		nameLbl.Position = UDim2.fromOffset(10, 0)
+		nameLbl.Size = UDim2.new(1, -260, 1, 0)
+
+		local statusText = p.manager and "Owner / dev" or (p.granted and "Granted" or "No access")
+		local statusColor = p.manager and Colors.Accent or (p.granted and Colors.Positive or Colors.TextSecondary)
+		local statusLbl = label(row, statusText, "bodySm", statusColor)
+		statusLbl.Position = UDim2.new(1, -240, 0, 0)
+		statusLbl.Size = UDim2.fromOffset(120, 34)
+		statusLbl.TextXAlignment = Enum.TextXAlignment.Right
+
+		if canManage and not p.manager then
+			local btn = Button.create({
+				parent = row,
+				variant = p.granted and "danger" or "primary",
+				text = p.granted and "Revoke" or "Grant",
+				width = 100,
+				onClick = function()
+					local cmd = p.granted and "revokeAccess" or "grantAccess"
+					local r, err = editorCall(cmd, { userId = p.userId })
+					if r then
+						setStatus((p.granted and "Revoked " or "Granted ") .. (p.name or tostring(p.userId)), Colors.Positive)
+						render()
+					else
+						setStatus("Failed: " .. tostring(err), Colors.Negative)
+					end
+				end,
+			})
+			btn.AnchorPoint = Vector2.new(1, 0.5)
+			btn.Position = UDim2.new(1, -10, 0.5, 0)
+		end
+	end
+end
+
 render = function()
 	if formablesConn then
 		formablesConn:Disconnect()
@@ -1315,6 +1401,8 @@ render = function()
 		renderFormables()
 	elseif state.tab == "saves" then
 		renderSaves()
+	elseif state.tab == "access" then
+		renderAccess()
 	end
 end
 

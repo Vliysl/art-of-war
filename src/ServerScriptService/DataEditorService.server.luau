@@ -1025,6 +1025,40 @@ api.OnServerInvoke = function(player, command, payload)
 		return safeCall(Editor.loadConfig, payload.name)
 	elseif command == "deleteConfig" then
 		return safeCall(Editor.deleteConfig, payload.name)
+	elseif command == "listAccess" then
+		-- Current players + who is a manager / granted. Any authorized user may view; only managers act.
+		return safeCall(function()
+			local list = {}
+			for _, plr in ipairs(Players:GetPlayers()) do
+				list[#list + 1] = {
+					userId = plr.UserId,
+					name = plr.DisplayName or plr.Name,
+					granted = EditorAdmins.isGranted(plr.UserId),
+					manager = EditorAdmins.canManage(plr),
+				}
+			end
+			return { canManage = EditorAdmins.canManage(player), players = list }
+		end)
+	elseif command == "grantAccess" then
+		if not EditorAdmins.canManage(player) then
+			return { ok = false, error = "only the server owner can grant editor access" }
+		end
+		local uid = tonumber(payload.userId)
+		if not uid then
+			return { ok = false, error = "userId required" }
+		end
+		EditorAdmins.grant(uid)
+		return { ok = true, result = { userId = uid } }
+	elseif command == "revokeAccess" then
+		if not EditorAdmins.canManage(player) then
+			return { ok = false, error = "only the server owner can revoke editor access" }
+		end
+		local uid = tonumber(payload.userId)
+		if not uid then
+			return { ok = false, error = "userId required" }
+		end
+		EditorAdmins.revoke(uid)
+		return { ok = true, result = { userId = uid } }
 	elseif command == "migrateLegacy" then
 		return safeCall(Editor.migrateLegacy)
 	elseif command == "undo" then
