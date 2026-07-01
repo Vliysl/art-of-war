@@ -37,6 +37,9 @@ local function syncProvinceToWorld(id)
 		if type(rec.cores) == "table" then
 			existing.cores = table.clone(rec.cores)
 		end
+		if type(rec.defaultCores) == "table" then
+			existing.defaultCores = table.clone(rec.defaultCores)
+		end
 		if type(rec.goods) == "table" then
 			existing.goods = table.clone(rec.goods)
 		end
@@ -45,6 +48,9 @@ local function syncProvinceToWorld(id)
 		local clone = table.clone(rec)
 		if type(rec.cores) == "table" then
 			clone.cores = table.clone(rec.cores)
+		end
+		if type(rec.defaultCores) == "table" then
+			clone.defaultCores = table.clone(rec.defaultCores)
 		end
 		if type(rec.goods) == "table" then
 			clone.goods = table.clone(rec.goods)

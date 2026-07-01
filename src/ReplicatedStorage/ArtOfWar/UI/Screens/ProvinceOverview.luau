@@ -452,10 +452,10 @@ function ProvinceOverview.create(ctx)
 			code = prov.ownerTag or "\u{2014}",
 			countryColor = prov.ownerColor,
 			size = "md",
-			layoutOrder = 1,
+			layoutOrder = 0,
 			parent = body,
 		})
-		badge.LayoutOrder = 1
+		badge.LayoutOrder = 0
 		-- Clicking the owner crest deep-links to that country's diplomacy profile.
 		if prov.ownerTag and ctx.openCountryProfile then
 			badge.Active = true
@@ -467,6 +467,64 @@ function ProvinceOverview.create(ctx)
 					ctx.openCountryProfile(prov.ownerTag)
 				end
 			end)
+		end
+
+		-- Cores row (RoN-style): a small crest per core, GOLD-outlined for default/homeland cores and
+		-- un-outlined for acquired ones. Read from the live replicated record (prov lacks cores/claims).
+		local live = liveProvince()
+		local cores = (live and live.cores) or {}
+		local defaultCores = (live and live.defaultCores) or {}
+		if #cores > 0 then
+			local coresRow = Instance.new("Frame")
+			coresRow.Name = "CoresRow"
+			coresRow.BackgroundTransparency = 1
+			coresRow.Size = UDim2.new(1, 0, 0, 28)
+			coresRow.LayoutOrder = 1
+			coresRow.Parent = body
+			local hl = Instance.new("UIListLayout")
+			hl.FillDirection = Enum.FillDirection.Horizontal
+			hl.Padding = UDim.new(0, 4)
+			hl.VerticalAlignment = Enum.VerticalAlignment.Center
+			hl.SortOrder = Enum.SortOrder.LayoutOrder
+			hl.Parent = coresRow
+
+			local lbl = Instance.new("TextLabel")
+			lbl.Name = "CoresLabel"
+			lbl.BackgroundTransparency = 1
+			lbl.Text = "Cores"
+			lbl.TextXAlignment = Enum.TextXAlignment.Left
+			lbl.TextColor3 = Colors.TextSecondary
+			lbl.Size = UDim2.fromOffset(52, 28)
+			lbl.LayoutOrder = 0
+			Typography.apply(lbl, "label")
+			lbl.Parent = coresRow
+
+			local defaultSet = {}
+			for _, t in ipairs(defaultCores) do
+				defaultSet[t] = true
+			end
+
+			for i, tag in ipairs(cores) do
+				local cc = ctx.cache and ctx.cache.getCountry and ctx.cache.getCountry(tag)
+				local flagBadge = CountryBadge.create({
+					code = tag,
+					countryColor = cc and cc.color,
+					px = 24,
+					size = "sm",
+					layoutOrder = i,
+					parent = coresRow,
+				})
+				local stroke = flagBadge:FindFirstChildOfClass("UIStroke")
+				if stroke then
+					if defaultSet[tag] then
+						stroke.Color = Color3.fromRGB(212, 175, 55) -- gold: default / homeland core
+						stroke.Thickness = 2
+						stroke.Transparency = 0
+					else
+						stroke.Enabled = false -- acquired core: no outline
+					end
+				end
+			end
 		end
 
 		ScreenKit.section(body, "Land", 2)

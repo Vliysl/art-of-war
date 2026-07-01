@@ -1,6 +1,7 @@
 local function province(id, data)
 	data.id = id
 	data.cores = data.cores or { data.ownerTag }
+	data.defaultCores = data.defaultCores or table.clone(data.cores) -- homeland cores (static); default = seed cores
 	data.controllerTag = data.controllerTag or data.ownerTag
 	data.isCity = data.isCity or false
 	data.centerOfTrade = data.centerOfTrade or 0

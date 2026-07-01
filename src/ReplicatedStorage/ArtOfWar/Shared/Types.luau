@@ -49,7 +49,8 @@ export type ProvinceRecord = {
 	centerOfTrade: number,
 	ownerTag: CountryTag,
 	controllerTag: CountryTag,
-	cores: { CountryTag },
+	cores: { CountryTag }, -- all current cores (default + acquired); grows via forming/conquest
+	defaultCores: { CountryTag }, -- static homeland cores (seeded, never mutated at runtime); shown gold-outlined
 	claims: { CountryTag },
 	devTier: number,
 	infraTier: number,

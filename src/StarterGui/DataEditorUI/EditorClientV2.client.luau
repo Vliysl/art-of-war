@@ -785,9 +785,12 @@ local function renderProvinces()
 		readonlyRow(detail, "Culture", p.culture)
 		readonlyRow(detail, "Religion", p.religion)
 
-		-- Cores / claims -- the v4 data, edited as chip lists (single source of truth: the province).
+		-- Cores / default cores / claims -- edited as chip lists (single source of truth: the province).
+		-- Default cores = homeland cores shown GOLD-outlined in the province panel; other cores show plain.
 		label(detail, "Cores", "bodySm", Colors.TextSecondary).Size = UDim2.new(1, 0, 0, 18)
 		local coresEd = tagListEditor(detail, p.cores, countryTags)
+		label(detail, "Default cores (gold)", "bodySm", Colors.TextSecondary).Size = UDim2.new(1, 0, 0, 18)
+		local defaultCoresEd = tagListEditor(detail, p.defaultCores, countryTags)
 		label(detail, "Claims", "bodySm", Colors.TextSecondary).Size = UDim2.new(1, 0, 0, 18)
 		local claimsEd = tagListEditor(detail, p.claims, countryTags)
 
@@ -797,7 +800,7 @@ local function renderProvinces()
 			text = "Save",
 			width = 120,
 			onClick = function()
-				local opts = { cores = coresEd.get(), claims = claimsEd.get() }
+				local opts = { cores = coresEd.get(), defaultCores = defaultCoresEd.get(), claims = claimsEd.get() }
 				local newOwner = ownerDD.get()
 				if newOwner and newOwner ~= p.ownerTag then
 					opts.ownerTag = newOwner
@@ -806,6 +809,7 @@ local function renderProvinces()
 				local res, err = editorCall("updateProvince", { id = id, opts = opts })
 				if res then
 					p.cores = opts.cores
+					p.defaultCores = opts.defaultCores
 					p.claims = opts.claims
 					if opts.ownerTag then
 						p.ownerTag = opts.ownerTag
