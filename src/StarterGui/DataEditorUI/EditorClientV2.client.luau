@@ -1,11 +1,12 @@
 -- EditorClientV2 -- the rebuilt Data Editor on the DesignSystem (Phase 5). Opens with the backslash (\)
 -- key, running alongside the legacy EditorClient (backtick) during the rebuild.
 --
--- This is the SHELL + first tabs slice: a themed window, the (unchanged) DataEditorService command
--- protocol client, virtualized + searchable Countries and Provinces lists, and a Countries detail form
--- with edit + Save. It shows only authoritative DEFINITION fields (no derived/runtime noise like manpower).
--- Remaining slices layer on: identity tabs, cores/claims/releasable editing, the peace-conference modal,
--- and the owner suite (Phase 6). Toggle with the backslash (\) key.
+-- A themed window on the (unchanged) DataEditorService command protocol. Tabs: Countries (create/edit
+-- definition fields), Provinces (virtualized list, owner + cores/claims chip editors), Identity
+-- (cultures/religions/ideologies/governments create/edit/delete), Formables (author custom formable /
+-- releasable definitions). Shows only authoritative DEFINITION fields (no derived/runtime noise like
+-- manpower). Remaining: the owner suite (Phase 6 -- province painting, named Save/Load map configs).
+-- Toggle with the backslash (\) key.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -156,6 +157,7 @@ closeBtn.Position = UDim2.new(1, -10, 0.5, 0)
 local TABS = {
 	{ key = "countries", label = "Countries" },
 	{ key = "provinces", label = "Provinces" },
+	{ key = "identity", label = "Identity" },
 	{ key = "formables", label = "Formables" },
 }
 local tabRow = frame({ parent = root, transparent = true, size = UDim2.new(1, 0, 0, 34), position = UDim2.fromOffset(0, 40) })
@@ -855,6 +857,176 @@ local function renderFormables()
 	showDetail(state.selected)
 end
 
+-- ─────────────────────────── Identity tab (cultures / religions / ideologies / governments) ───────────────────────────
+-- One tab with a kind selector; each kind maps to its snapshot dict + add/update/remove commands.
+-- Editing is displayName + create/delete (universal & safe); other scalar fields show read-only. Modifier
+-- maps stay seed-file authored for now.
+local REGISTRIES = {
+	{ kind = "cultures", label = "Cultures", singular = "Culture", key = "cultures", add = "addCulture", update = "updateCulture", remove = "removeCulture" },
+	{ kind = "religions", label = "Religions", singular = "Religion", key = "religions", add = "addReligion", update = "updateReligion", remove = "removeReligion" },
+	{ kind = "ideologies", label = "Ideologies", singular = "Ideology", key = "ideologies", add = "addIdeology", update = "updateIdeology", remove = "removeIdeology" },
+	{ kind = "governments", label = "Governments", singular = "Government", key = "governmentTypes", add = "addGovernmentType", update = "updateGovernmentType", remove = "removeGovernmentType" },
+}
+
+local function currentRegistry()
+	local kind = state.registryKind or "cultures"
+	for _, r in ipairs(REGISTRIES) do
+		if r.kind == kind then return r end
+	end
+	return REGISTRIES[1]
+end
+
+local function renderIdentity()
+	local snap = state.snapshot
+	local reg = currentRegistry()
+
+	-- kind selector row (primary = active, ghost = inactive)
+	local kindRow = frame({ parent = body, transparent = true, size = UDim2.new(1, 0, 0, 30) })
+	local x = 0
+	for _, r in ipairs(REGISTRIES) do
+		local b = Button.create({
+			parent = kindRow,
+			variant = (r.kind == reg.kind) and "primary" or "ghost",
+			text = r.label,
+			width = 116,
+			onClick = function()
+				state.registryKind = r.kind
+				state.selected = nil
+				render()
+			end,
+		})
+		b.Position = UDim2.fromOffset(x, 0)
+		x += 122
+	end
+
+	local columns = frame({ parent = body, transparent = true, size = UDim2.new(1, 0, 1, -36), position = UDim2.fromOffset(0, 36) })
+	local detail = makeDetailPane(columns)
+	local store = snap[reg.key] or {}
+
+	local function showDetail(id)
+		clearDetail(detail)
+		local rec = id and store[id] or nil
+		local isNew = (id == nil)
+
+		local newBtn = Button.create({
+			parent = detail,
+			variant = "ghost",
+			text = "+ New " .. reg.singular,
+			width = 160,
+			onClick = function()
+				state.selected = nil
+				showDetail(nil)
+			end,
+		})
+		newBtn.LayoutOrder = -1
+
+		if not isNew and not rec then
+			label(detail, "Select an entry", "bodyMd", Colors.TextSecondary)
+			return
+		end
+		label(detail, isNew and ("New " .. reg.singular) or tostring(id), "displayLg").Size = UDim2.new(1, 0, 0, 26)
+
+		local function field(name, value, placeholder)
+			local r = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 28) })
+			label(r, name, "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 90, 1, 0)
+			local tb = textbox(r, placeholder or "")
+			tb.Size = UDim2.new(1, -96, 1, 0)
+			tb.Position = UDim2.fromOffset(96, 0)
+			tb.Text = value or ""
+			return tb
+		end
+
+		local idBox = isNew and field("ID", "", "e.g. french") or nil
+		local nameBox = field("Display name", rec and rec.displayName or "", "display name")
+
+		-- Any other scalar fields shown read-only (modifier maps are seed-file authored for now).
+		if rec then
+			for _, k in ipairs(sortedKeys(rec)) do
+				local v = rec[k]
+				if k ~= "id" and k ~= "displayName"
+					and (type(v) == "string" or type(v) == "number" or type(v) == "boolean") then
+					readonlyRow(detail, k, v)
+				end
+			end
+		end
+
+		local saveBtn = Button.create({
+			parent = detail,
+			variant = "primary",
+			text = isNew and "Create" or "Save",
+			width = 120,
+			onClick = function()
+				local opts = { displayName = nameBox.Text }
+				if isNew then
+					local newId = (idBox.Text or ""):gsub("%s", "")
+					if newId == "" then
+						setStatus("ID required", Colors.Negative)
+						return
+					end
+					local res, err = editorCall(reg.add, { id = newId, opts = opts })
+					if res then
+						store[newId] = { id = newId, displayName = opts.displayName }
+						state.selected = newId
+						setStatus("Created " .. newId, Colors.Positive)
+						showDetail(newId)
+					else
+						setStatus("Create failed: " .. tostring(err), Colors.Negative)
+					end
+				else
+					local res, err = editorCall(reg.update, { id = id, opts = opts })
+					if res then
+						rec.displayName = opts.displayName
+						setStatus("Saved " .. tostring(id), Colors.Positive)
+					else
+						setStatus("Save failed: " .. tostring(err), Colors.Negative)
+					end
+				end
+			end,
+		})
+		saveBtn.LayoutOrder = 98
+
+		if not isNew then
+			local delBtn = Button.create({
+				parent = detail,
+				variant = "danger",
+				text = "Delete",
+				width = 110,
+				onClick = function()
+					local res, err = editorCall(reg.remove, { id = id })
+					if res then
+						store[id] = nil
+						state.selected = nil
+						setStatus("Removed " .. tostring(id), Colors.Positive)
+						showDetail(nil)
+					else
+						setStatus("Delete failed: " .. tostring(err), Colors.Negative)
+					end
+				end,
+			})
+			delBtn.LayoutOrder = 99
+		end
+	end
+
+	listColumn({
+		parent = columns,
+		getKeys = function(q)
+			return sortedMatching(store, q, function(id, r)
+				return tostring(id) .. " " .. (r.displayName or "")
+			end)
+		end,
+		labelFor = function(id)
+			local r = store[id]
+			return string.format("%s  \u{2014}  %s", tostring(id), (r and r.displayName) or "?")
+		end,
+		onSelect = function(id)
+			state.selected = id
+			showDetail(id)
+		end,
+	})
+
+	showDetail(state.selected)
+end
+
 render = function()
 	if formablesConn then
 		formablesConn:Disconnect()
@@ -871,6 +1043,8 @@ render = function()
 		renderCountries()
 	elseif state.tab == "provinces" then
 		renderProvinces()
+	elseif state.tab == "identity" then
+		renderIdentity()
 	elseif state.tab == "formables" then
 		renderFormables()
 	end
