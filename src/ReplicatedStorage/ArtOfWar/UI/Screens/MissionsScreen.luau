@@ -2,7 +2,7 @@ local ScreenKit = require(script.Parent.ScreenKit)
 local Components = script.Parent.Parent.Components
 local Button = require(Components.Button)
 local aow = script.Parent.Parent.Parent -- ArtOfWar
-local Formables = require(aow.Data.Formables)
+local FormablesClient = require(aow.Modules.FormablesClient)
 local WorldConstants = require(aow.Shared.WorldConstants)
 
 local MissionsScreen = {}
@@ -32,7 +32,7 @@ function MissionsScreen.create(ctx)
 			return startOrder
 		end
 		local eligible = {}
-		for tag, def in pairs(Formables or {}) do
+		for tag, def in pairs(FormablesClient.getAll()) do
 			if def.canForm ~= false
 				and not (ctx.cache and ctx.cache.getCountry(tag))
 				and ownsAll(ctx.cache, ctx.tag, def.requiredProvinceIds) then

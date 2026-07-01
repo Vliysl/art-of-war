@@ -695,6 +695,16 @@ InputValidator.register("ReleaseNation", {
 	schema = { { name = "formableTag", type = "string" }, { name = "asPuppet", type = "any" } },
 	rate = { count = 4, window = 30 },
 })
+-- Owner-authored custom formables (Phase 6). Admin-gated in the handler (EditorAdmins, required above);
+-- def is validated server-side by FormableStore.
+InputValidator.register("SetFormable", {
+	schema = { { name = "tag", type = "string" }, { name = "def", type = "any" } },
+	rate = { count = 20, window = 30 },
+})
+InputValidator.register("RemoveFormable", {
+	schema = { { name = "tag", type = "string" } },
+	rate = { count = 20, window = 30 },
+})
 
 local function bindEvent(name, handler)
 	local remote = ensureEvent(name)
@@ -1405,6 +1415,16 @@ bindEvent("ReleaseNation", function(player, formableTag, asPuppet)
 	local tag = auth.tagFor(player)
 	if not tag then return end
 	system.releaseNation(tag, formableTag, asPuppet == true)
+end)
+
+bindEvent("SetFormable", function(player, tag, def)
+	if not EditorAdmins.isAllowed(player) then return end
+	if context.FormableStore then context.FormableStore.set(tag, def) end
+end)
+
+bindEvent("RemoveFormable", function(player, tag)
+	if not EditorAdmins.isAllowed(player) then return end
+	if context.FormableStore then context.FormableStore.remove(tag) end
 end)
 
 
