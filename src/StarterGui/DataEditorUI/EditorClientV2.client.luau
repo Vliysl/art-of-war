@@ -1254,6 +1254,23 @@ local function renderFormables()
 			tb.Text = value or ""
 			return tb
 		end
+		-- A tall, wrapping text field for long values (e.g. a big province-id list) so the text WRAPS inside
+		-- the box instead of overflowing the window; it scrolls to the cursor while editing.
+		local function bigField(name, value, h)
+			h = h or 92
+			local r = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, h) })
+			label(r, name, "bodySm", Colors.TextSecondary).Size = UDim2.fromOffset(120, 26)
+			local tb = textbox(r, "")
+			tb.Size = UDim2.new(1, -126, 1, 0)
+			tb.Position = UDim2.fromOffset(126, 0)
+			tb.Text = value or ""
+			tb.MultiLine = true
+			tb.TextWrapped = true
+			tb.ClipsDescendants = true
+			tb.TextXAlignment = Enum.TextXAlignment.Left
+			tb.TextYAlignment = Enum.TextYAlignment.Top
+			return tb
+		end
 		local function ddYesNo(name, isYes)
 			local r = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 26) })
 			label(r, name, "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 120, 1, 0)
@@ -1267,7 +1284,7 @@ local function renderFormables()
 		local nameBox = field("Display name", def and def.displayName or "")
 		local formerBox = field("Formed by (tags)", def and def.formerTags and table.concat(def.formerTags, ", ") or "")
 		local col3 = (def and def.color) or { 150, 150, 150 }
-		local reqBox = field("Required province IDs", def and def.requiredProvinceIds and table.concat(def.requiredProvinceIds, ", ") or "")
+		local reqBox = bigField("Required province IDs", def and def.requiredProvinceIds and table.concat(def.requiredProvinceIds, ", ") or "")
 		local colorBox = field("Colour (r,g,b)", string.format("%d, %d, %d", col3[1] or 0, col3[2] or 0, col3[3] or 0))
 		local flagBox = field("Flag (rbxassetid)", (def and def.flag) or "")
 		local bonusBox = field("Form bonus: stability", def and def.formBonuses and tostring(def.formBonuses.stability or "") or "")
