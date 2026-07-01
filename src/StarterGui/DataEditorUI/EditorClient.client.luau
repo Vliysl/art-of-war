@@ -3982,6 +3982,16 @@ local function hideRoot()
 end
 closeBtn.MouseButton1Click:Connect(hideRoot)
 
+-- Server-authorization gate (cached): regular players get nothing on backtick. The server also rejects
+-- every command, so this just keeps the window from opening for non-editors.
+local authorizedProbe = nil
+local function isEditorAuthorized()
+	if authorizedProbe == nil then
+		authorizedProbe = call("authCheck") ~= nil
+	end
+	return authorizedProbe
+end
+
 UserInputService.InputBegan:Connect(function(input, processed)
 	if processed then
 		return
@@ -3989,7 +3999,7 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	if input.KeyCode == Enum.KeyCode.Backquote then
 		if root.Visible then
 			hideRoot()
-		else
+		elseif isEditorAuthorized() then
 			showRoot()
 		end
 		return

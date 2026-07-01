@@ -544,7 +544,10 @@ api.OnServerInvoke = function(player, command, payload)
 		pcall(Editor.setActiveUser, player.UserId)
 	end
 
-	if command == "loadState" then
+	if command == "authCheck" then
+		-- Only reached if isAuthorized passed above, so the client can gate its window on this.
+		return { ok = true, result = { allowed = true, canManage = EditorAdmins.canManage(player) } }
+	elseif command == "loadState" then
 		return safeCall(snapshotState)
 	elseif command == "reloadState" then
 		Editor.load()

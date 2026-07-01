@@ -1477,6 +1477,14 @@ selectTab("countries")
 UserInputService.InputBegan:Connect(function(input, gpe)
 	if gpe then return end
 	if input.KeyCode == Enum.KeyCode.BackSlash then
+		-- Gate the window on server authorization: regular players get nothing (the editor never opens).
+		-- Probed once and cached; the server also rejects every command, so this is defence-in-depth.
+		if state.authorized == nil then
+			state.authorized = editorCall("authCheck") ~= nil
+		end
+		if not state.authorized then
+			return
+		end
 		gui.Enabled = not gui.Enabled
 		if gui.Enabled then
 			ensureLoaded()
