@@ -1482,19 +1482,22 @@ local function applyAdminAttribute(player)
 end
 
 local Players = game:GetService("Players")
-Players.PlayerAdded:Connect(applyAdminAttribute)
-for _, p in Players:GetPlayers() do
-	task.spawn(applyAdminAttribute, p)
-end
 
--- Config-driven access loads async and can change live, so re-stamp IsAdmin for everyone whenever the
--- access lists change (a config-only manager/mapper who joined before the snapshot landed gets it then).
+-- Config-driven access loads async and can change live, so re-stamp IsAdmin/MapEditorAuthorized for everyone
+-- whenever the access lists change. Register this BEFORE the initial stamp below, so a config load that
+-- resolves mid-boot (firing accessChanged) always re-stamps players already present — otherwise a config-only
+-- mapper stamped before the snapshot landed would keep stale (false) attributes until the 5-min backstop.
 if EditorAdmins.onAccessChanged then
 	EditorAdmins.onAccessChanged(function()
 		for _, p in Players:GetPlayers() do
 			applyAdminAttribute(p)
 		end
 	end)
+end
+
+Players.PlayerAdded:Connect(applyAdminAttribute)
+for _, p in Players:GetPlayers() do
+	task.spawn(applyAdminAttribute, p)
 end
 
 -- Map Editor place is restricted: only authorized editors may remain. Because config access loads async,

@@ -29,17 +29,20 @@ end
 
 local EditorAdmins = {}
 
--- ACCESS IS CONFIG-DRIVEN. To grant/revoke Data Editor access you edit ONE JSON config in the Creator Hub
--- (Configs & Experiments) named CONFIG_KEY and press Publish — NO place republish is required (changes reach
--- live servers within ~5 min, and this module also refreshes automatically). The config value is a JSON
--- object of two user-id lists:
+-- ACCESS IS CONFIG-DRIVEN. To grant/revoke Data Editor access, edit ONE config in the Creator Hub (Configs &
+-- Experiments) named exactly CONFIG_KEY below, then press Publish — NO place republish is required (changes
+-- reach live servers within ~5 min; this module also refreshes automatically). Create it as a **JSON** config
+-- whose value is an object of two user-id lists:
 --     { "managers": [111, 222], "historians": [333, 444] }
---   * historians  -> mapper tier: may use the editor, paint the map, edit provinces/countries/identity, and
---                    author formables, and Save. This is the tier for our dedicated mappers.
---   * managers    -> full tier: everything a historian can do PLUS the destructive/admin actions
---                    (v3->v4 migration, named-config load/delete, granting session access). Optional — the
---                    dev team below already has this. Grant it sparingly; those actions can replace the world.
--- Ids may be numbers or numeric strings, and each list may instead be a map form { ["111"] = true }.
+--   * historians -> mapper tier: use the editor, paint the map, edit provinces/countries/identity, author
+--                   formables, and Save. This is the tier for our dedicated mappers.
+--   * managers   -> full tier: everything a historian can do PLUS destructive/admin actions (v3->v4
+--                   migration, named-config load/delete, granting). Optional — the dev list below already has
+--                   this; grant it sparingly (those actions can replace the world).
+-- Ids are numeric Roblox user ids. The parser is forgiving (see extractAccessLists): ids may be numbers or
+-- numeric strings, field names may vary in case/plurality, and a bare JSON array is treated as the historian
+-- list — but the object form above is the canonical shape. On load the server logs the raw value + parsed
+-- counts (grep the log for "[EditorAdmins] config") so a wrong shape/key/type is easy to spot.
 EditorAdmins.CONFIG_KEY = "data_editor_access"
 
 -- MASTER GATE for the legacy RoN-style owner suite (VIP private-server owners + in-game session grants).
@@ -115,24 +118,109 @@ local function normalize(raw)
 	return raw
 end
 
+local function countSet(set)
+	local n = 0
+	for _ in pairs(set) do
+		n += 1
+	end
+	return n
+end
+
+-- Sorted-id signature of a set, for change-detected logging (so a refresh that finds the same config doesn't
+-- re-spam the log — the join gate can call reload() every second while a mapper waits to be authorized).
+local function setSignature(set)
+	local ids = {}
+	for id in pairs(set) do
+		ids[#ids + 1] = id
+	end
+	table.sort(ids)
+	return table.concat(ids, ",")
+end
+
+-- Pull a list field from a config table, tolerating case + singular/plural naming variants.
+local function pickList(t, names)
+	for _, n in ipairs(names) do
+		if t[n] ~= nil then
+			return t[n]
+		end
+	end
+	return nil
+end
+
+-- Extract the manager + historian id-sets from whatever shape the config value arrived in. Deliberately
+-- forgiving (non-dev mappers edit this config): accepts the canonical { managers=[], historians=[] } object,
+-- a redundant { data_editor_access = {...} } wrapper, obvious field-name variants, and a bare array (treated
+-- as the historian/mapper list). Returns two id-sets (both empty on anything unrecognized).
+local function extractAccessLists(raw)
+	local data = normalize(raw)
+	if type(data) ~= "table" then
+		return {}, {}
+	end
+	if type(data[EditorAdmins.CONFIG_KEY]) == "table" then
+		data = data[EditorAdmins.CONFIG_KEY] -- unwrap a redundant top-level wrapper keyed by the config name
+	end
+	local mgr = pickList(data, { "managers", "Managers", "manager" })
+	local hist = pickList(data, { "historians", "Historians", "historian", "mappers" })
+	if mgr == nil and hist == nil and #data > 0 then
+		hist = data -- neither field present but it's a bare array -> treat it as the historian/mapper list
+	end
+	return toIdSet(mgr), toIdSet(hist)
+end
+
+local lastLogSig -- suppresses repeat logging of an unchanged config across refreshes
+
 -- Re-read the cached snapshot into the manager/historian sets. Never throws; on any failure the sets stay
--- empty and only the hardcoded dev list / Studio / creator remain (fail-closed for everyone else).
+-- empty and only the hardcoded dev list / Studio / creator remain (fail-closed for everyone else). On first
+-- load and whenever the parsed sets change, log the raw config value + parsed counts so a wrong shape/key/
+-- type is immediately visible in the server log (and warn if it loaded but parsed to nobody).
 local function applySnapshot()
 	local managers, historians = {}, {}
+	local rawForLog, gotRaw = nil, false
 	if snapshot then
 		local ok, raw = pcall(function()
 			return snapshot:GetValue(EditorAdmins.CONFIG_KEY)
 		end)
 		if ok then
-			local data = normalize(raw)
-			if type(data) == "table" then
-				managers = toIdSet(data.managers)
-				historians = toIdSet(data.historians)
-			end
+			rawForLog, gotRaw = raw, true
+			managers, historians = extractAccessLists(raw)
 		end
 	end
 	configManagers = managers
 	configHistorians = historians
+
+	if snapshot then
+		local sig = setSignature(managers) .. "|" .. setSignature(historians)
+		if sig ~= lastLogSig then
+			lastLogSig = sig
+			local preview = "<unreadable>"
+			if gotRaw then
+				local okEnc, enc = pcall(function()
+					return HttpService:JSONEncode(rawForLog)
+				end)
+				preview = okEnc and enc or ("<" .. typeof(rawForLog) .. ">")
+				if #preview > 300 then
+					preview = string.sub(preview, 1, 300) .. "..."
+				end
+			end
+			print(string.format(
+				"[EditorAdmins] config '%s' raw(%s)=%s -> managers=%d historians=%d",
+				EditorAdmins.CONFIG_KEY,
+				typeof(rawForLog),
+				preview,
+				countSet(managers),
+				countSet(historians)
+			))
+			if gotRaw and countSet(managers) == 0 and countSet(historians) == 0 then
+				warn(
+					"[EditorAdmins] config '"
+						.. EditorAdmins.CONFIG_KEY
+						.. "' loaded but parsed 0 managers/historians — expected a JSON object like "
+						.. '{ "managers": [userId,...], "historians": [userId,...] } with numeric user ids.'
+				)
+			end
+		end
+	end
+
 	fireAccessChanged()
 end
 
