@@ -1260,11 +1260,12 @@ local function renderFormables()
 			return dropdown({ parent = r, size = UDim2.new(0, 90, 1, 0), position = UDim2.fromOffset(126, 0), options = YESNO, value = isYes and "Yes" or "No" })
 		end
 
-		-- "Formable tag" is the formable's OWN tag/identity (e.g. IBE). "Formed by (tags)" is the
-		-- comma-separated whitelist of countries that may form it (e.g. POR, SPA); empty = any holder.
-		local tagBox = field("Formable tag", tag or "")
-		local formerBox = field("Formed by (tags)", def and def.formerTags and table.concat(def.formerTags, ", ") or "")
+		-- The forming nation KEEPS its own tag (HoI4-style); a formable is just an identity (name/colour/
+		-- flag) it ADOPTS on formation — so there's no "formable tag" to enter. The internal id is derived
+		-- from the name on create (kept as-is when editing). "Formed by (tags)" is the comma-separated
+		-- whitelist of countries that may form it (e.g. POR, SPA for Iberia); empty = any holder.
 		local nameBox = field("Display name", def and def.displayName or "")
+		local formerBox = field("Formed by (tags)", def and def.formerTags and table.concat(def.formerTags, ", ") or "")
 		local col3 = (def and def.color) or { 150, 150, 150 }
 		local reqBox = field("Required province IDs", def and def.requiredProvinceIds and table.concat(def.requiredProvinceIds, ", ") or "")
 		local colorBox = field("Colour (r,g,b)", string.format("%d, %d, %d", col3[1] or 0, col3[2] or 0, col3[3] or 0))
@@ -1279,9 +1280,17 @@ local function renderFormables()
 			text = "Save",
 			width = 120,
 			onClick = function()
-				local newTag = (tagBox.Text or ""):gsub("%s", "")
+				local displayName = (nameBox.Text or ""):match("^%s*(.-)%s*$") or ""
+				if displayName == "" then
+					setStatus("A display name is required", Colors.Negative)
+					return
+				end
+				-- Keep the existing id when editing; otherwise derive a tag-like id from the name
+				-- (the forming nation keeps its own tag — this id is only the definition key).
+				local newTag = (tag ~= nil and tag ~= "") and tag
+					or (displayName:upper():gsub("[^%w]+", "_"):gsub("^_+", ""):gsub("_+$", ""))
 				if newTag == "" then
-					setStatus("A tag is required", Colors.Negative)
+					setStatus("Could not derive an id from the name", Colors.Negative)
 					return
 				end
 				local ids = {}
@@ -1298,7 +1307,7 @@ local function renderFormables()
 					formers[#formers + 1] = s
 				end
 				local newDef = {
-					displayName = nameBox.Text,
+					displayName = displayName,
 					color = { rgb[1] or 150, rgb[2] or 150, rgb[3] or 150 },
 					requiredProvinceIds = ids,
 					formerTags = (#formers > 0) and formers or nil,

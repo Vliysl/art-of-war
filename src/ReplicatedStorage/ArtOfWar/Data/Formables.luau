@@ -4,7 +4,9 @@
 -- Custom definitions authored in the owner suite (Phase 6) are stored in DataStore and merged on top of
 -- these at runtime via FormableSystem.addDefinition.
 --
--- Schema (keyed by formable tag):
+-- Schema (keyed by an internal id/tag). NOTE: the FORMING nation keeps its OWN tag — forming only
+-- adopts this definition's identity (name/colour/flag). The key is just the definition id (and the tag a
+-- RELEASED nation is created under); the editor derives it from the display name, so it isn't authored.
 --   [tag] = {
 --     displayName         = string,             -- name shown once formed / released
 --     color               = { r, g, b },        -- 0-255 map colour
