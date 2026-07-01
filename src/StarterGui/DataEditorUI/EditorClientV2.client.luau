@@ -5,7 +5,7 @@
 -- protocol client, virtualized + searchable Countries and Provinces lists, and a Countries detail form
 -- with edit + Save. It shows only authoritative DEFINITION fields (no derived/runtime noise like manpower).
 -- Remaining slices layer on: identity tabs, cores/claims/releasable editing, the peace-conference modal,
--- and the owner suite (Phase 6). Toggle with the backtick key.
+-- and the owner suite (Phase 6). Toggle with the backslash (\) key.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -147,7 +147,7 @@ end
 local closeBtn = Button.create({
 	parent = header,
 	variant = "ghost",
-	text = "Close (`)",
+	text = "Close (\\)",
 	width = 92,
 	onClick = function()
 		gui.Enabled = false
@@ -495,23 +495,43 @@ local function renderCountries()
 
 	local function showDetail(tag)
 		clearDetail(detail)
-		local c = tag and snap.countries[tag]
-		if not c then
+		local c = tag and snap.countries[tag] or nil
+		local isNew = (tag == nil)
+
+		local newBtn = Button.create({
+			parent = detail,
+			variant = "ghost",
+			text = "+ New Country",
+			width = 140,
+			onClick = function()
+				state.selected = nil
+				showDetail(nil)
+			end,
+		})
+		newBtn.LayoutOrder = -1
+
+		if not isNew and not c then
 			label(detail, "Select a country", "bodyMd", Colors.TextSecondary)
 			return
 		end
-		label(detail, tostring(tag), "displayLg").Size = UDim2.new(1, 0, 0, 26)
+		label(detail, isNew and "New Country" or tostring(tag), "displayLg").Size = UDim2.new(1, 0, 0, 26)
 
-		local nameRow = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 28) })
-		label(nameRow, "Name", "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 90, 1, 0)
-		local nameBox = textbox(nameRow, "display name")
-		nameBox.Size = UDim2.new(1, -96, 1, 0)
-		nameBox.Position = UDim2.fromOffset(96, 0)
-		nameBox.Text = c.displayName or ""
+		local function field(name, value, placeholder)
+			local r = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 28) })
+			label(r, name, "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 90, 1, 0)
+			local tb = textbox(r, placeholder or "")
+			tb.Size = UDim2.new(1, -96, 1, 0)
+			tb.Position = UDim2.fromOffset(96, 0)
+			tb.Text = value or ""
+			return tb
+		end
+
+		local tagBox = isNew and field("Tag", "", "e.g. FRA") or nil
+		local nameBox = field("Name", c and c.displayName or "", "display name")
 
 		local colorRow = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 28) })
 		label(colorRow, "Colour", "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 90, 1, 0)
-		local col3 = c.color or { 150, 150, 150 }
+		local col3 = (c and c.color) or { 150, 150, 150 }
 		local boxes = {}
 		for i = 1, 3 do
 			local b = textbox(colorRow, tostring(col3[i] or 0))
@@ -529,24 +549,29 @@ local function renderCountries()
 		refreshSwatch()
 		for _, b in ipairs(boxes) do b:GetPropertyChangedSignal("Text"):Connect(refreshSwatch) end
 
-		-- editable definition fields via dropdowns (options from the loaded snapshot). Capital stays
-		-- read-only (province-id picker = a later slice); derived/runtime fields (manpower, treasury, ...)
-		-- are intentionally omitted -- they're recomputed, not definition data.
-		readonlyRow(detail, "Capital", c.capitalProvinceId)
+		-- Capital: editable province id when creating (must be an existing province); read-only otherwise.
+		-- Compose the nation's territory afterward by setting province owners in the Provinces tab.
+		local capBox = isNew and field("Capital prov ID", "", "province id") or nil
+		if not isNew then
+			readonlyRow(detail, "Capital", c.capitalProvinceId)
+		end
+
+		-- editable definition fields via dropdowns (options from the snapshot); derived/runtime fields
+		-- (manpower, treasury, ...) are intentionally omitted -- they're recomputed, not definition data.
 		local function ddRow(name, options, value)
 			local r = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 26) })
 			label(r, name, "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 90, 1, 0)
 			return dropdown({ parent = r, size = UDim2.new(1, -96, 1, 0), position = UDim2.fromOffset(96, 0), options = options, value = value })
 		end
-		local cultureDD = ddRow("Culture", sortedKeys(snap.cultures), c.primaryCulture)
-		local religionDD = ddRow("Religion", sortedKeys(snap.religions), c.stateReligion)
-		local govDD = ddRow("Government", sortedKeys(snap.governmentTypes), c.governmentForm)
-		local ideoDD = ddRow("Ideology", sortedKeys(snap.ideologies), c.ideology)
+		local cultureDD = ddRow("Culture", sortedKeys(snap.cultures), c and c.primaryCulture)
+		local religionDD = ddRow("Religion", sortedKeys(snap.religions), c and c.stateReligion)
+		local govDD = ddRow("Government", sortedKeys(snap.governmentTypes), c and c.governmentForm)
+		local ideoDD = ddRow("Ideology", sortedKeys(snap.ideologies), c and c.ideology)
 
 		local saveBtn = Button.create({
 			parent = detail,
 			variant = "primary",
-			text = "Save",
+			text = isNew and "Create" or "Save",
 			width = 120,
 			onClick = function()
 				local newColor = { tonumber(boxes[1].Text) or 0, tonumber(boxes[2].Text) or 0, tonumber(boxes[3].Text) or 0 }
@@ -558,17 +583,36 @@ local function renderCountries()
 					governmentForm = govDD.get(),
 					ideology = ideoDD.get(),
 				}
-				local res, err = editorCall("updateCountry", { tag = tag, opts = opts })
-				if res then
-					c.displayName = opts.displayName
-					c.color = opts.color
-					c.primaryCulture = opts.primaryCulture
-					c.stateReligion = opts.stateReligion
-					c.governmentForm = opts.governmentForm
-					c.ideology = opts.ideology
-					setStatus("Saved " .. tostring(tag), Colors.Positive)
+				if isNew then
+					local newTag = (tagBox.Text or ""):gsub("%s", "")
+					if #newTag < 2 then
+						setStatus("Tag needs 2+ characters", Colors.Negative)
+						return
+					end
+					opts.capitalProvinceId = tonumber(capBox.Text)
+					local res, err = editorCall("addCountry", { tag = newTag, opts = opts })
+					if res then
+						opts.tag = newTag
+						snap.countries[newTag] = opts
+						state.selected = newTag
+						setStatus("Created " .. newTag, Colors.Positive)
+						showDetail(newTag)
+					else
+						setStatus("Create failed: " .. tostring(err), Colors.Negative)
+					end
 				else
-					setStatus("Save failed: " .. tostring(err), Colors.Negative)
+					local res, err = editorCall("updateCountry", { tag = tag, opts = opts })
+					if res then
+						c.displayName = opts.displayName
+						c.color = opts.color
+						c.primaryCulture = opts.primaryCulture
+						c.stateReligion = opts.stateReligion
+						c.governmentForm = opts.governmentForm
+						c.ideology = opts.ideology
+						setStatus("Saved " .. tostring(tag), Colors.Positive)
+					else
+						setStatus("Save failed: " .. tostring(err), Colors.Negative)
+					end
 				end
 			end,
 		})
@@ -856,7 +900,7 @@ selectTab("countries")
 
 UserInputService.InputBegan:Connect(function(input, gpe)
 	if gpe then return end
-	if input.KeyCode == Enum.KeyCode.Backquote then
+	if input.KeyCode == Enum.KeyCode.BackSlash then
 		gui.Enabled = not gui.Enabled
 		if gui.Enabled then
 			ensureLoaded()
