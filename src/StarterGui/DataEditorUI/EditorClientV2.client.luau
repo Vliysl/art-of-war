@@ -163,11 +163,12 @@ local TABS = {
 local tabRow = frame({ parent = root, transparent = true, size = UDim2.new(1, 0, 0, 34), position = UDim2.fromOffset(0, 40) })
 local tabButtons = {}
 
--- body
-local body = frame({ parent = root, transparent = true, size = UDim2.new(1, -20, 1, -84), position = UDim2.fromOffset(10, 78) })
+-- body (leaves room for the global action footer at the bottom)
+local body = frame({ parent = root, transparent = true, size = UDim2.new(1, -20, 1, -124), position = UDim2.fromOffset(10, 78) })
 body.Name = "Body"
 
 local render -- fwd
+local applySnapshot -- fwd (set snapshot + status + re-render; used by loadState / reload / undo / redo)
 
 local function selectTab(key)
 	state.tab = key
@@ -197,6 +198,86 @@ do
 		tabButtons[def.key] = b
 		x += 128
 	end
+end
+
+-- ─────────────────────────── global action footer (Save / Reload / Undo / Redo) ───────────────────────────
+-- The everyday editor operations. Save persists to the DataStore (publishes to the live map); Reload pulls
+-- a fresh server snapshot; Undo/Redo return an updated snapshot the server rebuilds from its history.
+local footer = frame({ parent = root, transparent = true, size = UDim2.new(1, -20, 0, 30), position = UDim2.new(0, 10, 1, -38) })
+do
+	local x = 0
+	local saveBtn = Button.create({
+		parent = footer,
+		variant = "primary",
+		text = "Save to DataStore",
+		width = 156,
+		onClick = function()
+			setStatus("Saving…", Colors.TextSecondary)
+			local res, err = editorCall("save")
+			if res then
+				setStatus((type(res) == "table" and res.message) or "Saved", Colors.Positive)
+			else
+				setStatus("Save failed: " .. tostring(err), Colors.Negative)
+			end
+		end,
+	})
+	saveBtn.Position = UDim2.fromOffset(x, 0)
+	x += 164
+
+	local reloadBtn = Button.create({
+		parent = footer,
+		variant = "ghost",
+		text = "Reload",
+		width = 90,
+		onClick = function()
+			local snap, err = editorCall("reloadState")
+			if snap and type(snap) == "table" and snap.countries then
+				state.selected = nil
+				applySnapshot(snap)
+				setStatus("Reloaded from server", Colors.Positive)
+			else
+				setStatus("Reload failed: " .. tostring(err), Colors.Negative)
+			end
+		end,
+	})
+	reloadBtn.Position = UDim2.fromOffset(x, 0)
+	x += 98
+
+	local undoBtn = Button.create({
+		parent = footer,
+		variant = "ghost",
+		text = "Undo",
+		width = 80,
+		onClick = function()
+			local snap, err = editorCall("undo")
+			if snap and type(snap) == "table" and snap.countries then
+				applySnapshot(snap)
+				setStatus("Undo: " .. tostring(snap.undoLabel or "✓"), Colors.Positive)
+			else
+				setStatus("Nothing to undo" .. (err and (" (" .. err .. ")") or ""), Colors.TextSecondary)
+			end
+		end,
+	})
+	undoBtn.Position = UDim2.fromOffset(x, 0)
+	x += 88
+
+	local redoBtn = Button.create({
+		parent = footer,
+		variant = "ghost",
+		text = "Redo",
+		width = 80,
+		onClick = function()
+			local snap, err = editorCall("redo")
+			if snap and type(snap) == "table" and snap.countries then
+				applySnapshot(snap)
+				setStatus("Redo: " .. tostring(snap.redoLabel or "✓"), Colors.Positive)
+			else
+				setStatus("Nothing to redo" .. (err and (" (" .. err .. ")") or ""), Colors.TextSecondary)
+			end
+		end,
+	})
+	redoBtn.Position = UDim2.fromOffset(x, 0)
+	x += 88
 end
 
 -- sorted array of a dict's keys (as strings), for dropdown option lists.
@@ -1050,6 +1131,15 @@ render = function()
 	end
 end
 
+applySnapshot = function(snap)
+	state.snapshot = snap
+	local cn, pn = 0, 0
+	for _ in pairs(snap.countries or {}) do cn += 1 end
+	for _ in pairs(snap.provinces or {}) do pn += 1 end
+	setStatus(string.format("%d countries  •  %d provinces", cn, pn))
+	render()
+end
+
 local function ensureLoaded()
 	if state.loaded then return end
 	local snap, err = editorCall("loadState")
@@ -1057,13 +1147,8 @@ local function ensureLoaded()
 		setStatus("Load failed: " .. tostring(err), Colors.Negative)
 		return
 	end
-	state.snapshot = snap
 	state.loaded = true
-	local cn, pn = 0, 0
-	for _ in pairs(snap.countries or {}) do cn += 1 end
-	for _ in pairs(snap.provinces or {}) do pn += 1 end
-	setStatus(string.format("%d countries  •  %d provinces", cn, pn))
-	render()
+	applySnapshot(snap)
 end
 
 selectTab("countries")
