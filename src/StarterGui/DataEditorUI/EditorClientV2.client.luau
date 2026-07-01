@@ -173,6 +173,7 @@ local applySnapshot -- fwd (set snapshot + status + re-render; used by loadState
 local function selectTab(key)
 	state.tab = key
 	state.selected = nil
+	state.paintOwner = nil -- disarm map painting when leaving the Provinces tab
 	for k, b in pairs(tabButtons) do
 		local labelChild = b:FindFirstChildWhichIsA("TextLabel")
 		b.BackgroundColor3 = (k == key) and Colors.SurfaceOverlay or Colors.SurfaceElevated
@@ -718,10 +719,49 @@ local function renderCountries()
 	showDetail(state.selected)
 end
 
--- ─────────────────────────── Provinces tab (virtualized; read-only detail this slice) ───────────────────────────
+-- ─────────────────────────── Provinces tab (virtualized; owner + cores/claims editor + map painting) ───────────────────────────
 local function renderProvinces()
 	local snap = state.snapshot
-	local columns = frame({ parent = body, transparent = true })
+
+	-- Paint control row: pick an owner, then click land tiles on the map to assign it (Phase 6 painting).
+	-- The click hook lives at module scope (below) and reads state.paintOwner.
+	local paintRow = frame({ parent = body, transparent = true, size = UDim2.new(1, 0, 0, 30) })
+	label(paintRow, "Paint owner:", "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 90, 1, 0)
+	local paintHint = label(
+		paintRow,
+		state.paintOwner and ("Painting → " .. state.paintOwner .. "  (click land tiles)")
+			or "Pick an owner, then click land tiles on the map",
+		"bodySm",
+		state.paintOwner and Colors.Positive or Colors.TextSecondary
+	)
+	paintHint.Position = UDim2.fromOffset(360, 0)
+	paintHint.Size = UDim2.new(1, -360, 1, 0)
+	dropdown({
+		parent = paintRow,
+		size = UDim2.fromOffset(150, 26),
+		position = UDim2.fromOffset(96, 2),
+		options = sortedKeys(snap.countries),
+		value = state.paintOwner or "— pick —",
+		onChange = function(tag)
+			state.paintOwner = tag
+			paintHint.Text = "Painting → " .. tag .. "  (click land tiles)"
+			paintHint.TextColor3 = Colors.Positive
+		end,
+	})
+	local stopBtn = Button.create({
+		parent = paintRow,
+		variant = "ghost",
+		text = "Stop paint",
+		width = 100,
+		onClick = function()
+			state.paintOwner = nil
+			paintHint.Text = "Paint off"
+			paintHint.TextColor3 = Colors.TextSecondary
+		end,
+	})
+	stopBtn.Position = UDim2.fromOffset(256, 2)
+
+	local columns = frame({ parent = body, transparent = true, size = UDim2.new(1, 0, 1, -36), position = UDim2.fromOffset(0, 36) })
 	local detail = makeDetailPane(columns)
 
 	local function showDetail(id)
@@ -1149,6 +1189,46 @@ local function ensureLoaded()
 	end
 	state.loaded = true
 	applySnapshot(snap)
+end
+
+-- ─────────────────────────── map-click painting (Phase 6) ───────────────────────────
+-- A single global select listener. It only acts while the editor is open, on the Provinces tab, with an
+-- armed paint owner -- otherwise it no-ops so normal gameplay selection is untouched. Assigns via
+-- updateProvince (owner+controller), which the server syncs live to the map.
+do
+	local modules = aow:FindFirstChild("Modules")
+	local piMod = modules and modules:FindFirstChild("ProvinceInteraction")
+	if piMod then
+		local ok, PI = pcall(require, piMod)
+		if ok and PI and PI.addSelectListener then
+			PI.addSelectListener(function(part)
+				if not gui.Enabled or state.tab ~= "provinces" or not state.paintOwner or not part then
+					return
+				end
+				local parent = part.Parent
+				if parent and parent.Name == "Sea" then
+					setStatus("Sea tiles can't be assigned", Colors.Negative)
+					return
+				end
+				local pid = part:GetAttribute("province_id")
+				local snap = state.snapshot
+				if not (pid and snap and snap.provinces and snap.provinces[pid]) then
+					setStatus("That tile isn't a seeded province yet", Colors.TextSecondary)
+					return
+				end
+				local owner = state.paintOwner
+				local res, err = editorCall("updateProvince", { id = pid, opts = { ownerTag = owner, controllerTag = owner } })
+				if res then
+					local p = snap.provinces[pid]
+					p.ownerTag = owner
+					p.controllerTag = owner
+					setStatus(string.format("Painted #%s → %s", tostring(pid), owner), Colors.Positive)
+				else
+					setStatus("Paint failed: " .. tostring(err), Colors.Negative)
+				end
+			end)
+		end
+	end
 end
 
 selectTab("countries")
