@@ -10,6 +10,8 @@
 --     color               = { r, g, b },        -- 0-255 map colour
 --     flag                = string?,             -- "rbxassetid://..." crest (optional)
 --     requiredProvinceIds = { ProvinceId },      -- provinces that must be held to form; also become its cores
+--     formerTags          = { CountryTag }?,      -- whitelist of tags that may form it (e.g. {"POR","SPA"}
+--                                                 --   for Iberia); nil/empty = any country holding the territory
 --     formReqs            = { ... }?,             -- reserved for extra conditions (tech/culture/...); nil = none
 --     formBonuses         = { stability = n? }?,  -- applied to the former on formation
 --     canForm             = boolean?,             -- default true

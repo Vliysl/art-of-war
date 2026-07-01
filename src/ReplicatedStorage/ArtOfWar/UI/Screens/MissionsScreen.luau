@@ -33,7 +33,11 @@ function MissionsScreen.create(ctx)
 		end
 		local eligible = {}
 		for tag, def in pairs(FormablesClient.getAll()) do
+			-- former-tag whitelist: if the def names formerTags, only those countries may form it (empty = any)
+			local formerOk = not (type(def.formerTags) == "table" and #def.formerTags > 0)
+				or (ctx.tag and table.find(def.formerTags, ctx.tag) ~= nil)
 			if def.canForm ~= false
+				and formerOk
 				and not (ctx.cache and ctx.cache.getCountry(tag))
 				and ownsAll(ctx.cache, ctx.tag, def.requiredProvinceIds) then
 				eligible[#eligible + 1] = { tag = tag, def = def }

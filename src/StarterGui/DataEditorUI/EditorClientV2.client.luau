@@ -670,7 +670,7 @@ end
 -- ─────────────────────────── Countries tab ───────────────────────────
 -- Filter + sort a dict's keys by a query. Pass `cache` (id -> precomputed lowercased search string) to skip
 -- re-lowercasing every entry per keystroke; otherwise falls back to keyToText (used by the smaller dicts).
-local function sortedMatching(dict, query, keyToText, cache, filterFn)
+local function sortedMatching(dict, query, keyToText, cache, filterFn, sortFn)
 	query = string.lower(query or "")
 	local out = {}
 	for k, v in pairs(dict or {}) do
@@ -681,7 +681,7 @@ local function sortedMatching(dict, query, keyToText, cache, filterFn)
 			end
 		end
 	end
-	table.sort(out, function(a, b) return tostring(a) < tostring(b) end)
+	table.sort(out, sortFn or function(a, b) return tostring(a) < tostring(b) end)
 	return out
 end
 
@@ -986,11 +986,11 @@ local function renderProvinces()
 	label(paintRow, "Paint owner:", "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 90, 1, 0)
 	local paintHint = label(
 		paintRow,
-		state.paintOwner and ("Painting → " .. state.paintOwner .. "  (click tiles)")
-			or "Click a tile to select · pick an owner to paint · shift-click to multi-select",
+		state.paintOwner and ("Painting → " .. state.paintOwner) or "",
 		"bodySm",
 		state.paintOwner and Colors.Positive or Colors.TextSecondary
 	)
+	paintHint.TextTruncate = Enum.TextTruncate.AtEnd -- never let a long status overflow the window edge
 	paintHint.Position = UDim2.fromOffset(600, 0)
 	paintHint.Size = UDim2.new(1, -600, 1, 0)
 	dropdown({
@@ -1001,7 +1001,7 @@ local function renderProvinces()
 		value = state.paintOwner or "— pick —",
 		onChange = function(tag)
 			state.paintOwner = tag
-			paintHint.Text = "Painting → " .. tag .. "  (click land tiles)"
+			paintHint.Text = "Painting → " .. tag
 			paintHint.TextColor3 = Colors.Positive
 		end,
 	})
@@ -1012,7 +1012,7 @@ local function renderProvinces()
 		width = 100,
 		onClick = function()
 			state.paintOwner = nil
-			paintHint.Text = "Paint off"
+			paintHint.Text = ""
 			paintHint.TextColor3 = Colors.TextSecondary
 		end,
 	})
@@ -1103,6 +1103,22 @@ local function renderProvinces()
 		})
 	end
 
+	-- Sort toggle: Numeric (by #id, so #1..#2..#10 not #1..#10..#100) or Alphabetical (by name).
+	local sortLbl = label(body, "Sort:", "bodySm", Colors.TextSecondary)
+	sortLbl.Position = UDim2.fromOffset(316, 36)
+	sortLbl.Size = UDim2.fromOffset(38, 28)
+	dropdown({
+		parent = body,
+		size = UDim2.fromOffset(150, 26),
+		position = UDim2.fromOffset(356, 37),
+		options = { "Numeric", "Alphabetical" },
+		value = ((state.provSort or "numeric") == "alpha") and "Alphabetical" or "Numeric",
+		onChange = function(sel)
+			state.provSort = (sel == "Alphabetical") and "alpha" or "numeric"
+			if listCol then listCol() end
+		end,
+	})
+
 	local columns = frame({ parent = body, transparent = true, size = UDim2.new(1, 0, 1, -68), position = UDim2.fromOffset(0, 68) })
 	local detail = makeDetailPane(columns)
 
@@ -1110,7 +1126,9 @@ local function renderProvinces()
 		clearDetail(detail)
 		local p = id and snap.provinces[id]
 		if not p then
-			label(detail, "Select a province", "bodyMd", Colors.TextSecondary)
+			local ph = label(detail, "Select a province from the list — or click a tile on the map (shift-click to multi-select).", "bodyMd", Colors.TextSecondary)
+			ph.TextWrapped = true
+			ph.Size = UDim2.new(1, 0, 0, 48)
 			return
 		end
 		label(detail, string.format("#%s  %s", tostring(id), p.name or "?"), "displayLg").Size = UDim2.new(1, 0, 0, 26)
@@ -1175,9 +1193,17 @@ local function renderProvinces()
 				local want = (ownerSel == NO_OWNER) and nil or ownerSel
 				filterFn = function(_, p) return (p.ownerTag or nil) == want end
 			end
+			local sortFn
+			if (state.provSort or "numeric") == "alpha" then
+				sortFn = function(a, b)
+					return ((snap.provinces[a] and snap.provinces[a].name) or "") < ((snap.provinces[b] and snap.provinces[b].name) or "")
+				end
+			else
+				sortFn = function(a, b) return (tonumber(a) or 0) < (tonumber(b) or 0) end
+			end
 			return sortedMatching(snap.provinces, q, function(id, p)
 				return tostring(id) .. " " .. (p.name or "")
-			end, searchCache.provinces, filterFn)
+			end, searchCache.provinces, filterFn, sortFn)
 		end,
 		labelFor = function(id)
 			local p = snap.provinces[id]
@@ -1234,7 +1260,10 @@ local function renderFormables()
 			return dropdown({ parent = r, size = UDim2.new(0, 90, 1, 0), position = UDim2.fromOffset(126, 0), options = YESNO, value = isYes and "Yes" or "No" })
 		end
 
-		local tagBox = field("Tag", tag or "")
+		-- "Formable tag" is the formable's OWN tag/identity (e.g. IBE). "Formed by (tags)" is the
+		-- comma-separated whitelist of countries that may form it (e.g. POR, SPA); empty = any holder.
+		local tagBox = field("Formable tag", tag or "")
+		local formerBox = field("Formed by (tags)", def and def.formerTags and table.concat(def.formerTags, ", ") or "")
 		local nameBox = field("Display name", def and def.displayName or "")
 		local col3 = (def and def.color) or { 150, 150, 150 }
 		local reqBox = field("Required province IDs", def and def.requiredProvinceIds and table.concat(def.requiredProvinceIds, ", ") or "")
@@ -1263,10 +1292,16 @@ local function renderFormables()
 				for s in string.gmatch(colorBox.Text or "", "%d+") do
 					rgb[#rgb + 1] = tonumber(s)
 				end
+				-- Parse the comma/space-separated former tags (uppercased), e.g. "POR, SPA" -> {"POR","SPA"}.
+				local formers = {}
+				for s in string.gmatch((formerBox.Text or ""):upper(), "[%w_]+") do
+					formers[#formers + 1] = s
+				end
 				local newDef = {
 					displayName = nameBox.Text,
 					color = { rgb[1] or 150, rgb[2] or 150, rgb[3] or 150 },
 					requiredProvinceIds = ids,
+					formerTags = (#formers > 0) and formers or nil,
 					canForm = canFormDD.get() == "Yes",
 					canRelease = canReleaseDD.get() == "Yes",
 				}

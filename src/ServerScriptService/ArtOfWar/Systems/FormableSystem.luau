@@ -48,6 +48,10 @@ local function canForm(tag, formableTag)
 	if not country then return false end
 	-- One-time only: refuse if this tag already formed this formable (bonus already granted).
 	if country.formedTags and country.formedTags[formableTag] then return false end
+	-- Former-tag whitelist: if the def names formerTags, only those countries may form it. Empty/nil = any holder.
+	if type(def.formerTags) == "table" and #def.formerTags > 0 and not table.find(def.formerTags, tag) then
+		return false
+	end
 	return ownsAll(tag, def.requiredProvinceIds)
 end
 
