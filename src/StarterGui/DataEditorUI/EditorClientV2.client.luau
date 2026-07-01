@@ -284,6 +284,96 @@ local function dropdown(cfg)
 	return { instance = btn, get = function() return current end }
 end
 
+-- Editable set of tags shown as removable chips + a "+ add" dropdown of the remaining options.
+-- Returns { get } -> sorted array of the current tags. Used for province cores/claims editing.
+local function tagListEditor(parent, currentList, allTags)
+	local container = frame({ parent = parent, transparent = true, size = UDim2.fromScale(1, 0) })
+	container.AutomaticSize = Enum.AutomaticSize.Y
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.Wraps = true
+	layout.Padding = UDim.new(0, 4)
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = container
+
+	local set = {}
+	for _, t in ipairs(currentList or {}) do
+		set[t] = true
+	end
+
+	local rebuild
+	local function chip(tag)
+		local c = frame({ parent = container, color = Colors.SurfaceOverlay, size = UDim2.fromOffset(0, 22) })
+		c.AutomaticSize = Enum.AutomaticSize.X
+		local pad = Instance.new("UIPadding")
+		pad.PaddingLeft = UDim.new(0, 6)
+		pad.PaddingRight = UDim.new(0, 2)
+		pad.Parent = c
+		local h = Instance.new("UIListLayout")
+		h.FillDirection = Enum.FillDirection.Horizontal
+		h.VerticalAlignment = Enum.VerticalAlignment.Center
+		h.Padding = UDim.new(0, 2)
+		h.Parent = c
+		local tl = Instance.new("TextLabel")
+		tl.BackgroundTransparency = 1
+		tl.Text = tag
+		tl.TextColor3 = Colors.TextPrimary
+		tl.AutomaticSize = Enum.AutomaticSize.X
+		tl.Size = UDim2.fromOffset(0, 22)
+		Typography.apply(tl, "bodySm")
+		tl.Parent = c
+		local x = Instance.new("TextButton")
+		x.BackgroundTransparency = 1
+		x.Text = "\u{00D7}"
+		x.TextColor3 = Colors.TextSecondary
+		x.Size = UDim2.fromOffset(16, 22)
+		Typography.apply(x, "bodyMd")
+		x.Parent = c
+		x.MouseButton1Click:Connect(function()
+			set[tag] = nil
+			rebuild()
+		end)
+	end
+
+	rebuild = function()
+		for _, ch in container:GetChildren() do
+			if ch:IsA("GuiObject") then ch:Destroy() end
+		end
+		local tags = {}
+		for t in pairs(set) do tags[#tags + 1] = t end
+		table.sort(tags)
+		for _, t in ipairs(tags) do chip(t) end
+		local avail = {}
+		for _, t in ipairs(allTags) do
+			if not set[t] then avail[#avail + 1] = t end
+		end
+		if #avail > 0 then
+			dropdown({
+				parent = container,
+				size = UDim2.fromOffset(72, 22),
+				position = UDim2.new(),
+				options = avail,
+				value = "+ add",
+				onChange = function(t)
+					set[t] = true
+					rebuild()
+				end,
+			})
+		end
+	end
+	rebuild()
+
+	return {
+		get = function()
+			local out = {}
+			for t in pairs(set) do out[#out + 1] = t end
+			table.sort(out)
+			return out
+		end,
+	}
+end
+
 -- ─────────────────────────── reusable list column (search + VirtualList) ───────────────────────────
 -- cfg: { parent, getKeys(query) -> array, labelFor(key) -> string, onSelect(key), rowHeight? }
 local function listColumn(cfg)
@@ -507,12 +597,51 @@ local function renderProvinces()
 			return
 		end
 		label(detail, string.format("#%s  %s", tostring(id), p.name or "?"), "displayLg").Size = UDim2.new(1, 0, 0, 26)
-		readonlyRow(detail, "Owner", p.ownerTag)
+
+		local countryTags = sortedKeys(snap.countries)
+
+		-- Owner (editable; controller follows owner on an ownership edit).
+		local ownerRow = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 26) })
+		label(ownerRow, "Owner", "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 90, 1, 0)
+		local ownerDD = dropdown({ parent = ownerRow, size = UDim2.new(1, -96, 1, 0), position = UDim2.fromOffset(96, 0), options = countryTags, value = p.ownerTag })
+
 		readonlyRow(detail, "Controller", p.controllerTag)
 		readonlyRow(detail, "Culture", p.culture)
 		readonlyRow(detail, "Religion", p.religion)
-		readonlyRow(detail, "Cores", p.cores and table.concat(p.cores, ", ") or "")
-		readonlyRow(detail, "Claims", p.claims and table.concat(p.claims, ", ") or "")
+
+		-- Cores / claims -- the v4 data, edited as chip lists (single source of truth: the province).
+		label(detail, "Cores", "bodySm", Colors.TextSecondary).Size = UDim2.new(1, 0, 0, 18)
+		local coresEd = tagListEditor(detail, p.cores, countryTags)
+		label(detail, "Claims", "bodySm", Colors.TextSecondary).Size = UDim2.new(1, 0, 0, 18)
+		local claimsEd = tagListEditor(detail, p.claims, countryTags)
+
+		local saveBtn = Button.create({
+			parent = detail,
+			variant = "primary",
+			text = "Save",
+			width = 120,
+			onClick = function()
+				local opts = { cores = coresEd.get(), claims = claimsEd.get() }
+				local newOwner = ownerDD.get()
+				if newOwner and newOwner ~= p.ownerTag then
+					opts.ownerTag = newOwner
+					opts.controllerTag = newOwner
+				end
+				local res, err = editorCall("updateProvince", { id = id, opts = opts })
+				if res then
+					p.cores = opts.cores
+					p.claims = opts.claims
+					if opts.ownerTag then
+						p.ownerTag = opts.ownerTag
+						p.controllerTag = opts.controllerTag
+					end
+					setStatus("Saved province #" .. tostring(id), Colors.Positive)
+				else
+					setStatus("Save failed: " .. tostring(err), Colors.Negative)
+				end
+			end,
+		})
+		saveBtn.LayoutOrder = 99
 	end
 
 	listColumn({
