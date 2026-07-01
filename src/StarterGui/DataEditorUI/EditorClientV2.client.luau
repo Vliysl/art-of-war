@@ -1,5 +1,5 @@
--- EditorClientV2 -- the rebuilt Data Editor on the DesignSystem (Phase 5). Runs only when
--- WorldConstants.EnableNewEditor is true (the legacy EditorClient stands down; exactly one runs).
+-- EditorClientV2 -- the rebuilt Data Editor on the DesignSystem (Phase 5). Opens with the backslash (\)
+-- key, running alongside the legacy EditorClient (backtick) during the rebuild.
 --
 -- This is the SHELL + first tabs slice: a themed window, the (unchanged) DataEditorService command
 -- protocol client, virtualized + searchable Countries and Provinces lists, and a Countries detail form
@@ -12,10 +12,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 
 local aow = ReplicatedStorage:WaitForChild("ArtOfWar")
-local WorldConstants = require(aow:WaitForChild("Shared"):WaitForChild("WorldConstants"))
-if not WorldConstants.EnableNewEditor then
-	return
-end
 
 local DesignSystem = require(aow:WaitForChild("DesignSystem"))
 local Colors = DesignSystem.Colors

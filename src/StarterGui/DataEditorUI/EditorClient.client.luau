@@ -8,16 +8,8 @@ local screen = script.Parent
 
 local api = ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Remotes"):WaitForChild("DataEditorAPI")
 
--- Phase 5: the rebuilt DesignSystem editor (EditorClientV2) supersedes this legacy one. Exactly one
--- editor runs at a time -- stand down when the flag is on.
-do
-	local ok, wc = pcall(function()
-		return require(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Shared"):WaitForChild("WorldConstants"))
-	end)
-	if ok and wc and wc.EnableNewEditor then
-		return
-	end
-end
+-- Phase 5: the rebuilt DesignSystem editor (EditorClientV2) runs alongside this legacy one during the
+-- rebuild -- legacy editor on the backtick key, the new one on backslash (\).
 
 local ProvinceInteraction
 do
