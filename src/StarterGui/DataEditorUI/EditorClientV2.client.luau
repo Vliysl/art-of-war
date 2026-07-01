@@ -25,8 +25,18 @@ local Button = require(Components:WaitForChild("Button"))
 local VirtualList = require(Components:WaitForChild("VirtualList"))
 
 local api = aow:WaitForChild("Remotes"):WaitForChild("DataEditorAPI")
+local remotesFolder = aow:WaitForChild("Remotes")
+local FormablesClient = require(aow:WaitForChild("Modules"):WaitForChild("FormablesClient"))
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
+
+-- Fire a Bootstrap RemoteEvent (custom formables use SetFormable/RemoveFormable, not the editor API).
+local function fireRemote(name, ...)
+	local r = remotesFolder:FindFirstChild(name)
+	if r then
+		r:FireServer(...)
+	end
+end
 
 -- ─────────────────────────── protocol client (same commands as DataEditorService) ───────────────────────────
 local function editorCall(command, payload)
@@ -46,6 +56,7 @@ local function editorCall(command, payload)
 end
 
 local state = { snapshot = nil, tab = "countries", selected = nil, loaded = false }
+local formablesConn -- live-refresh subscription for the Formables tab (disconnected on tab change)
 
 -- ─────────────────────────── small styled builders ───────────────────────────
 local function frame(props)
@@ -149,6 +160,7 @@ closeBtn.Position = UDim2.new(1, -10, 0.5, 0)
 local TABS = {
 	{ key = "countries", label = "Countries" },
 	{ key = "provinces", label = "Provinces" },
+	{ key = "formables", label = "Formables" },
 }
 local tabRow = frame({ parent = root, transparent = true, size = UDim2.new(1, 0, 0, 34), position = UDim2.fromOffset(0, 40) })
 local tabButtons = {}
@@ -664,7 +676,150 @@ local function renderProvinces()
 	showDetail(state.selected)
 end
 
+-- Formables authoring (Phase 6): create/edit custom formable/releasable definitions. Saves fire the
+-- admin-gated SetFormable remote -> FormableStore (persist + replicate); the list live-refreshes when the
+-- replicated set changes. Lists the merged static+custom set; editing any tag writes a custom override.
+local function renderFormables()
+	local columns = frame({ parent = body, transparent = true })
+	local detail = makeDetailPane(columns)
+	local YESNO = { "Yes", "No" }
+
+	local function showDetail(tag)
+		clearDetail(detail)
+		local def = tag and FormablesClient.getAll()[tag] or nil
+
+		local newBtn = Button.create({
+			parent = detail,
+			variant = "ghost",
+			text = "+ New Formable",
+			width = 150,
+			onClick = function()
+				state.selected = nil
+				showDetail(nil)
+			end,
+		})
+		newBtn.LayoutOrder = -1
+
+		label(detail, tag and ("Edit " .. tag) or "New Formable", "displayLg").Size = UDim2.new(1, 0, 0, 26)
+
+		local function field(name, value)
+			local r = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 26) })
+			label(r, name, "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 120, 1, 0)
+			local tb = textbox(r, "")
+			tb.Size = UDim2.new(1, -126, 1, 0)
+			tb.Position = UDim2.fromOffset(126, 0)
+			tb.Text = value or ""
+			return tb
+		end
+		local function ddYesNo(name, isYes)
+			local r = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 26) })
+			label(r, name, "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 120, 1, 0)
+			return dropdown({ parent = r, size = UDim2.new(0, 90, 1, 0), position = UDim2.fromOffset(126, 0), options = YESNO, value = isYes and "Yes" or "No" })
+		end
+
+		local tagBox = field("Tag", tag or "")
+		local nameBox = field("Display name", def and def.displayName or "")
+		local col3 = (def and def.color) or { 150, 150, 150 }
+		local reqBox = field("Required province IDs", def and def.requiredProvinceIds and table.concat(def.requiredProvinceIds, ", ") or "")
+		local colorBox = field("Colour (r,g,b)", string.format("%d, %d, %d", col3[1] or 0, col3[2] or 0, col3[3] or 0))
+		local flagBox = field("Flag (rbxassetid)", (def and def.flag) or "")
+		local bonusBox = field("Form bonus: stability", def and def.formBonuses and tostring(def.formBonuses.stability or "") or "")
+		local canFormDD = ddYesNo("Can form", def == nil or def.canForm ~= false)
+		local canReleaseDD = ddYesNo("Can release", def == nil or def.canRelease ~= false)
+
+		local saveBtn = Button.create({
+			parent = detail,
+			variant = "primary",
+			text = "Save",
+			width = 120,
+			onClick = function()
+				local newTag = (tagBox.Text or ""):gsub("%s", "")
+				if newTag == "" then
+					setStatus("A tag is required", Colors.Negative)
+					return
+				end
+				local ids = {}
+				for s in string.gmatch(reqBox.Text or "", "%d+") do
+					ids[#ids + 1] = tonumber(s)
+				end
+				local rgb = {}
+				for s in string.gmatch(colorBox.Text or "", "%d+") do
+					rgb[#rgb + 1] = tonumber(s)
+				end
+				local newDef = {
+					displayName = nameBox.Text,
+					color = { rgb[1] or 150, rgb[2] or 150, rgb[3] or 150 },
+					requiredProvinceIds = ids,
+					canForm = canFormDD.get() == "Yes",
+					canRelease = canReleaseDD.get() == "Yes",
+				}
+				if flagBox.Text ~= "" then
+					newDef.flag = flagBox.Text
+				end
+				local stab = tonumber(bonusBox.Text)
+				if stab then
+					newDef.formBonuses = { stability = stab }
+				end
+				fireRemote("SetFormable", newTag, newDef)
+				state.selected = newTag
+				setStatus("Saved formable " .. newTag .. " (replicating\u{2026})", Colors.Positive)
+			end,
+		})
+		saveBtn.LayoutOrder = 98
+
+		if tag then
+			local delBtn = Button.create({
+				parent = detail,
+				variant = "danger",
+				text = "Delete custom",
+				width = 130,
+				onClick = function()
+					fireRemote("RemoveFormable", tag)
+					state.selected = nil
+					setStatus("Removed custom formable " .. tag, Colors.Positive)
+				end,
+			})
+			delBtn.LayoutOrder = 99
+		end
+	end
+
+	listColumn({
+		parent = columns,
+		getKeys = function(q)
+			local defs = FormablesClient.getAll()
+			q = string.lower(q or "")
+			local out = {}
+			for tag, d in pairs(defs) do
+				if q == "" or string.find(string.lower(tag .. " " .. (d.displayName or "")), q, 1, true) then
+					out[#out + 1] = tag
+				end
+			end
+			table.sort(out)
+			return out
+		end,
+		labelFor = function(tag)
+			local d = FormablesClient.getAll()[tag]
+			return string.format("%s  \u{2014}  %s", tag, (d and d.displayName) or "?")
+		end,
+		onSelect = function(tag)
+			state.selected = tag
+			showDetail(tag)
+		end,
+	})
+
+	-- Live-refresh when the replicated custom set changes (after a Save/Delete round-trips the server).
+	formablesConn = FormablesClient.onChanged(function()
+		render()
+	end)
+
+	showDetail(state.selected)
+end
+
 render = function()
+	if formablesConn then
+		formablesConn:Disconnect()
+		formablesConn = nil
+	end
 	for _, child in body:GetChildren() do
 		if child:IsA("GuiObject") then child:Destroy() end
 	end
@@ -676,6 +831,8 @@ render = function()
 		renderCountries()
 	elseif state.tab == "provinces" then
 		renderProvinces()
+	elseif state.tab == "formables" then
+		renderFormables()
 	end
 end
 
