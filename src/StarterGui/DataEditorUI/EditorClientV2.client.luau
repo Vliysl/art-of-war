@@ -1360,7 +1360,9 @@ do
 					return
 				end
 				local owner = state.paintOwner
-				local res, err = editorCall("updateProvince", { id = pid, opts = { ownerTag = owner, controllerTag = owner } })
+				-- assignProvince (not updateProvince): it sets owner+controller AND is in the paint-cooldown
+				-- class (0.05s), so painting many tiles isn't throttled by the 2.5s write cooldown.
+				local res, err = editorCall("assignProvince", { id = pid, ownerTag = owner })
 				if res then
 					local p = snap.provinces[pid]
 					p.ownerTag = owner

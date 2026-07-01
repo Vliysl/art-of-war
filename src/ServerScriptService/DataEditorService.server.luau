@@ -185,6 +185,15 @@ local WRITE_COMMANDS = {
 	migrateLegacy = true,
 	undo = true,
 	redo = true,
+	-- Named Save/Load configs + staging/promote all write to the DataStore, so they belong under the
+	-- slower write cooldown, not the 0.2s call cooldown (avoids DataStore rate limits). listConfigs is a
+	-- single light read and stays on the default call cooldown.
+	saveConfig = true,
+	loadConfig = true,
+	deleteConfig = true,
+	promote = true,
+	saveDraft = true,
+	discardDraft = true,
 }
 
 local PAINT_COMMANDS = {
