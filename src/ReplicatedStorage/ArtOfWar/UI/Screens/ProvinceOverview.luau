@@ -448,26 +448,8 @@ function ProvinceOverview.create(ctx)
 	local renderers = {}
 
 	function renderers.information(body)
-		local badge = CountryBadge.create({
-			code = prov.ownerTag or "\u{2014}",
-			countryColor = prov.ownerColor,
-			size = "md",
-			layoutOrder = 0,
-			parent = body,
-		})
-		badge.LayoutOrder = 0
-		-- Clicking the owner crest deep-links to that country's diplomacy profile.
-		if prov.ownerTag and ctx.openCountryProfile then
-			badge.Active = true
-			badge.InputBegan:Connect(function(input)
-				if
-					input.UserInputType == Enum.UserInputType.MouseButton1
-					or input.UserInputType == Enum.UserInputType.Touch
-				then
-					ctx.openCountryProfile(prov.ownerTag)
-				end
-			end)
-		end
+		-- The owner crest now sits in the shell header, left of the title (added after ScreenKit.open,
+		-- mirroring the army panel) -- so the Information body leads with the Cores row.
 
 		-- Cores row (RoN-style): a small crest per core, GOLD-outlined for default/homeland cores and
 		-- un-outlined for acquired ones. Read from the live replicated record (prov lacks cores/claims).
@@ -479,7 +461,7 @@ function ProvinceOverview.create(ctx)
 			coresRow.Name = "CoresRow"
 			coresRow.BackgroundTransparency = 1
 			coresRow.Size = UDim2.new(1, 0, 0, 28)
-			coresRow.LayoutOrder = 1
+			coresRow.LayoutOrder = 0
 			coresRow.Parent = body
 			local hl = Instance.new("UIListLayout")
 			hl.FillDirection = Enum.FillDirection.Horizontal
@@ -933,6 +915,41 @@ function ProvinceOverview.create(ctx)
 			lastSig = contentSignature(key)
 		end or nil,
 	})
+
+	-- Owner crest tucked into the shell header, left of the title (mirrors the army panel; the Information
+	-- body no longer carries one). Clicking it deep-links to the country's diplomacy profile.
+	if prov.ownerTag and handle.header then
+		local crest = CountryBadge.create({
+			code = prov.ownerTag or "\u{2014}",
+			countryColor = prov.ownerColor,
+			size = "sm",
+			parent = handle.header,
+		})
+		crest.AnchorPoint = Vector2.new(0, 0)
+		crest.Position = UDim2.fromOffset(0, 0)
+		crest.ZIndex = 3
+		local title = handle.header:FindFirstChild("Title")
+		local sub = handle.header:FindFirstChild("Subtitle")
+		if title then
+			title.Position = UDim2.fromOffset(52, 0)
+			title.Size = UDim2.new(1, -36 - 52, 0, 28)
+		end
+		if sub then
+			sub.Position = UDim2.fromOffset(52, 28)
+			sub.Size = UDim2.new(1, -36 - 52, 0, 16)
+		end
+		if ctx.openCountryProfile then
+			crest.Active = true
+			crest.InputBegan:Connect(function(input)
+				if
+					input.UserInputType == Enum.UserInputType.MouseButton1
+					or input.UserInputType == Enum.UserInputType.Touch
+				then
+					ctx.openCountryProfile(prov.ownerTag)
+				end
+			end)
+		end
+	end
 
 	if owns then
 		local function scheduleRefresh()

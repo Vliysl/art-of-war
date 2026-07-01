@@ -171,6 +171,8 @@ body.Name = "Body"
 
 local render -- fwd
 local applySnapshot -- fwd (set snapshot + status + re-render; used by loadState / reload / undo / redo)
+local paintInteraction -- ProvinceInteraction ref (map-click select/paint + bulk assign), set at module scope below
+local bulkApplyBtn, bulkCountLabel -- Provinces-tab bulk-assign controls, kept live by the multi-select listener
 
 local function selectTab(key)
 	state.tab = key
@@ -731,13 +733,13 @@ local function renderProvinces()
 	label(paintRow, "Paint owner:", "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 90, 1, 0)
 	local paintHint = label(
 		paintRow,
-		state.paintOwner and ("Painting → " .. state.paintOwner .. "  (click land tiles)")
-			or "Pick an owner, then click land tiles on the map",
+		state.paintOwner and ("Painting → " .. state.paintOwner .. "  (click tiles)")
+			or "Click a tile to select · pick an owner to paint · shift-click to multi-select",
 		"bodySm",
 		state.paintOwner and Colors.Positive or Colors.TextSecondary
 	)
-	paintHint.Position = UDim2.fromOffset(360, 0)
-	paintHint.Size = UDim2.new(1, -360, 1, 0)
+	paintHint.Position = UDim2.fromOffset(600, 0)
+	paintHint.Size = UDim2.new(1, -600, 1, 0)
 	dropdown({
 		parent = paintRow,
 		size = UDim2.fromOffset(150, 26),
@@ -762,6 +764,71 @@ local function renderProvinces()
 		end,
 	})
 	stopBtn.Position = UDim2.fromOffset(256, 2)
+
+	-- Bulk assign: shift-select tiles on the map, then assign them all to the paint owner at once
+	-- (assignBatch). bulkApplyBtn/bulkCountLabel are module refs the multi-select listener keeps live.
+	bulkApplyBtn = Button.create({
+		parent = paintRow,
+		variant = "primary",
+		text = "Assign selected",
+		width = 140,
+		onClick = function()
+			local owner = state.paintOwner
+			if not owner then
+				setStatus("Pick a paint owner first", Colors.Negative)
+				return
+			end
+			if not (paintInteraction and paintInteraction.getMultiSelection) then
+				return
+			end
+			local items = {}
+			for _, part in ipairs(paintInteraction.getMultiSelection()) do
+				local pid = part:GetAttribute("province_id")
+				local isSea = part.Parent and part.Parent.Name == "Sea"
+				if pid and not isSea and snap.provinces[pid] then
+					items[#items + 1] = { kind = "seed", id = pid }
+				end
+			end
+			if #items == 0 then
+				setStatus("No seeded land tiles selected (shift-click tiles on the map)", Colors.Negative)
+				return
+			end
+			if #items > 500 then
+				setStatus(string.format("Too many (%d); max 500 — select fewer", #items), Colors.Negative)
+				return
+			end
+			local res, err = editorCall("assignBatch", { ownerTag = owner, items = items })
+			if res then
+				for _, it in ipairs(items) do
+					local p = snap.provinces[it.id]
+					if p then
+						p.ownerTag = owner
+						p.controllerTag = owner
+					end
+				end
+				setStatus(string.format("Assigned %d tiles → %s", #items, owner), Colors.Positive)
+				if paintInteraction.clearMultiSelection then
+					paintInteraction.clearMultiSelection()
+				end
+				state.multiSelCount = 0
+				if bulkCountLabel then bulkCountLabel.Text = "" end
+				bulkApplyBtn.Visible = false
+			else
+				setStatus("Bulk assign failed: " .. tostring(err), Colors.Negative)
+			end
+		end,
+	})
+	bulkApplyBtn.Position = UDim2.fromOffset(364, 2)
+	bulkApplyBtn.Visible = (state.multiSelCount or 0) > 0
+
+	bulkCountLabel = label(
+		paintRow,
+		(state.multiSelCount or 0) > 0 and (state.multiSelCount .. " selected") or "",
+		"bodySm",
+		Colors.Accent
+	)
+	bulkCountLabel.Position = UDim2.fromOffset(512, 0)
+	bulkCountLabel.Size = UDim2.new(0, 84, 1, 0)
 
 	local columns = frame({ parent = body, transparent = true, size = UDim2.new(1, 0, 1, -36), position = UDim2.fromOffset(0, 36) })
 	local detail = makeDetailPane(columns)
@@ -1439,35 +1506,57 @@ do
 	local piMod = modules and modules:FindFirstChild("ProvinceInteraction")
 	if piMod then
 		local ok, PI = pcall(require, piMod)
-		if ok and PI and PI.addSelectListener then
-			PI.addSelectListener(function(part)
-				if not gui.Enabled or state.tab ~= "provinces" or not state.paintOwner or not part then
-					return
-				end
-				local parent = part.Parent
-				if parent and parent.Name == "Sea" then
-					setStatus("Sea tiles can't be assigned", Colors.Negative)
-					return
-				end
-				local pid = part:GetAttribute("province_id")
-				local snap = state.snapshot
-				if not (pid and snap and snap.provinces and snap.provinces[pid]) then
-					setStatus("That tile isn't a seeded province yet", Colors.TextSecondary)
-					return
-				end
-				local owner = state.paintOwner
-				-- assignProvince (not updateProvince): it sets owner+controller AND is in the paint-cooldown
-				-- class (0.05s), so painting many tiles isn't throttled by the 2.5s write cooldown.
-				local res, err = editorCall("assignProvince", { id = pid, ownerTag = owner })
-				if res then
-					local p = snap.provinces[pid]
-					p.ownerTag = owner
-					p.controllerTag = owner
-					setStatus(string.format("Painted #%s → %s", tostring(pid), owner), Colors.Positive)
-				else
-					setStatus("Paint failed: " .. tostring(err), Colors.Negative)
-				end
-			end)
+		if ok and PI then
+			paintInteraction = PI
+			if PI.addSelectListener then
+				PI.addSelectListener(function(part)
+					if not gui.Enabled or state.tab ~= "provinces" or not part then
+						return
+					end
+					local snap = state.snapshot
+					local pid = part:GetAttribute("province_id")
+					local seeded = pid and snap and snap.provinces and snap.provinces[pid] ~= nil
+					if state.paintOwner then
+						-- PAINT: assign the armed owner to the clicked land tile.
+						if part.Parent and part.Parent.Name == "Sea" then
+							setStatus("Sea tiles can't be assigned", Colors.Negative)
+							return
+						end
+						if not seeded then
+							setStatus("That tile isn't a seeded province yet", Colors.TextSecondary)
+							return
+						end
+						local owner = state.paintOwner
+						-- assignProvince (paint cooldown 0.05s) sets owner+controller without the 2.5s write throttle.
+						local res, err = editorCall("assignProvince", { id = pid, ownerTag = owner })
+						if res then
+							local p = snap.provinces[pid]
+							p.ownerTag = owner
+							p.controllerTag = owner
+							setStatus(string.format("Painted #%s → %s", tostring(pid), owner), Colors.Positive)
+						else
+							setStatus("Paint failed: " .. tostring(err), Colors.Negative)
+						end
+					elseif seeded then
+						-- SELECT: jump the Provinces tab to the clicked province + open its detail.
+						state.selected = pid
+						render()
+						setStatus("Selected #" .. tostring(pid), Colors.Accent)
+					end
+				end)
+			end
+			if PI.addMultiSelectListener then
+				-- Keep the bulk-assign controls live as the map multi-selection (shift-click) changes.
+				PI.addMultiSelectListener(function(selection)
+					state.multiSelCount = selection and #selection or 0
+					if bulkCountLabel and bulkCountLabel.Parent then
+						bulkCountLabel.Text = state.multiSelCount > 0 and (state.multiSelCount .. " selected") or ""
+					end
+					if bulkApplyBtn and bulkApplyBtn.Parent then
+						bulkApplyBtn.Visible = state.multiSelCount > 0
+					end
+				end)
+			end
 		end
 	end
 end
