@@ -2,6 +2,9 @@
 -- battles from allBattles(), sieges from each province's .occupation record — and
 -- floats a billboard meter above the contested province. No server authority here;
 -- this is a pure read-through visualization, mirroring ArmyView's reconcile pattern.
+-- Under EnableBattleDisc battles render instead as a flat world-space disc on the
+-- contested border (HOI4-style), with a rim pointer at the defender and a 1-100
+-- viewer-relative progress numeral on the cap.
 
 local CombatView = {}
 
@@ -29,6 +32,12 @@ local NEUTRAL   = Color3.fromRGB(218, 168, 84)  -- gold (uninvolved / even)
 local LIFT = 1.2 -- scaled for the 2048 map (was 52, a pre-migration value that floated markers off-screen)
 local REQUIRED = WorldConstants.OccupationProgressRequired or 12
 local RING_SEGMENTS = 30 -- radial capture-gauge resolution (segments lit up to current progress)
+
+-- Battle-disc variant (EnableBattleDisc). No strength counts on the disc — banners/panel carry those.
+local DISC_DIAMETER = WorldConstants.BattleDiscDiameter or 4
+local DISC_HEIGHT = 0.12
+local DISC_CREAM = Color3.fromRGB(248, 240, 218) -- overhead-label cream (matches ArmyView OVH_CREAM)
+local DISC_FONT = Font.new("rbxasset://fonts/families/Merriweather.json", Enum.FontWeight.SemiBold, Enum.FontStyle.Normal)
 
 local markersFolder, mapFolder, provincesFolder
 local battleMarkers = {}
@@ -61,6 +70,18 @@ end
 -- appeared after the 2048-map migration. ProvincePositions caches by name and self-heals on re-parent.
 local function provinceCenter(provinceId)
 	return ProvincePositions.centerOf(provinceId, LIFT)
+end
+
+-- Fold an X coordinate back into the main map fold (same math as CameraController.wrapX) —
+-- a seam-straddling battle must not put its disc halfway across the world.
+local function wrapX(x)
+	local relX = x - WorldConstants.MapCenterX
+	relX = ((relX + WorldConstants.MapHalfWidth) % WorldConstants.MapWidth) - WorldConstants.MapHalfWidth
+	return WorldConstants.MapCenterX + relX
+end
+
+local function foldX(v)
+	return Vector3.new(wrapX(v.X), v.Y, v.Z)
 end
 
 local function ownerColor(tag)
@@ -255,6 +276,76 @@ local function buildBattleMarker(center)
 		rightCount = rightCount, fill = fill, sig = nil, atkWorld = nil, defWorld = nil }
 end
 
+-- Battle-disc marker (EnableBattleDisc): anchored flat cylinder on the contested border,
+-- a rim pointer wedge aimed at the defender tile, and the progress numeral on the cap.
+local function buildBattleDisc()
+	local disc = Instance.new("Part")
+	disc.Name = "BattleDisc"
+	disc.Shape = Enum.PartType.Cylinder
+	disc.Size = Vector3.new(DISC_HEIGHT, DISC_DIAMETER, DISC_DIAMETER)
+	disc.Material = Enum.Material.SmoothPlastic
+	disc.Color = NEUTRAL
+	disc.Anchored = true
+	disc.CanCollide = false
+	disc.CanQuery = false
+	disc.CanTouch = false
+	disc.CastShadow = false
+	disc.Locked = true
+
+	-- Pointer parented under the disc so destroy/reposition move them together
+	-- (both anchored — no weld needed, their CFrames are only ever set in positionDisc).
+	local wedge = Instance.new("WedgePart")
+	wedge.Name = "Pointer"
+	wedge.Size = Vector3.new(DISC_DIAMETER / 3, DISC_HEIGHT, DISC_DIAMETER / 3)
+	wedge.Material = Enum.Material.SmoothPlastic
+	wedge.Color = NEUTRAL
+	wedge.Anchored = true
+	wedge.CanCollide = false
+	wedge.CanQuery = false
+	wedge.CanTouch = false
+	wedge.CastShadow = false
+	wedge.Locked = true
+	wedge.Parent = disc
+
+	-- After the pi/2 Z-roll that lays the cylinder flat (ArmyView Base trick), local +X
+	-- points world-up — so the up-facing circular cap is the Right (+X) face.
+	local gui = Instance.new("SurfaceGui")
+	gui.Name = "Progress"
+	gui.Face = Enum.NormalId.Right
+	gui.AlwaysOnTop = true
+	gui.CanvasSize = Vector2.new(200, 200)
+	gui.Parent = disc
+
+	local num = Instance.new("TextLabel")
+	num.Name = "Value"
+	num.BackgroundTransparency = 1
+	num.AnchorPoint = Vector2.new(0.5, 0.5)
+	num.Position = UDim2.fromScale(0.5, 0.5)
+	num.Size = UDim2.fromScale(0.72, 0.72) -- inset so the scaled digits stay inside the circular cap
+	num.FontFace = DISC_FONT
+	num.TextColor3 = DISC_CREAM
+	num.TextScaled = true
+	num.TextStrokeTransparency = 0.25
+	num.TextStrokeColor3 = PLATE_BG -- dark outline keeps the numeral legible on the tide-tinted disc
+	num.Text = "50"
+	num.Parent = gui
+
+	disc.Parent = markersFolder
+	return { kind = "disc", anchor = disc, wedge = wedge, num = num, sig = nil, pos = nil, originId = nil }
+end
+
+-- Set once at build and again only when the attacker origin changes or overlap relief
+-- shifts the midpoint — never per-frame (the disc is world-space; the camera does the rest).
+local function positionDisc(marker, pos, aimDir)
+	-- Yaw -90° on top of the flattening roll so the cap's canvas up-axis lands on world -Z:
+	-- side-face SurfaceGuis keep local +Y as canvas-up, the roll sends +Y to world -X, and
+	-- the yaw carries it on to -Z — upright for the top-down camera.
+	marker.anchor.CFrame = CFrame.new(pos) * CFrame.Angles(0, -math.pi / 2, 0) * CFrame.Angles(0, 0, math.pi / 2)
+	-- WedgePart's thin bottom edge is its front (-Z); lookAt points -Z at the defender.
+	local rim = pos + aimDir * (DISC_DIAMETER * 0.5 + DISC_DIAMETER / 6)
+	marker.wedge.CFrame = CFrame.lookAt(rim, rim + aimDir)
+end
+
 -- A world-space RADIAL capture gauge: a ring of segments (lit up to the current progress) around a
 -- circular plate that shows the percentage and the occupier. Asset-free (segments are tiny rounded
 -- Frames placed by angle), so it reads as a clean circular progress ring at any zoom.
@@ -329,6 +420,8 @@ local function buildCaptureRing(center)
 	return { kind = "siege", anchor = anchor, segments = segments, pct = pct, tag = tag, sig = nil }
 end
 
+-- All marker kinds root at .anchor (the disc variant parents its wedge + gui under it),
+-- so one Destroy covers battle bars, discs and capture rings alike.
 local function destroyMarker(marker)
 	if marker and marker.anchor and marker.anchor.Parent then
 		marker.anchor:Destroy()
@@ -362,6 +455,25 @@ local function updateBattle(marker, battle)
 	marker.fill.BackgroundColor3 = col
 end
 
+local function updateBattleDisc(marker, battle, originId)
+	local pTide, role = playerTide(battle)
+	-- Viewer-relative progress: 50 = even, 100 = my side has fully carried the field.
+	local progress = math.clamp(math.floor((pTide + 1) * 50 + 0.5), 1, 100)
+	local col = NEUTRAL
+	if role ~= "neutral" then
+		if pTide > 0.03 then col = GOOD
+		elseif pTide < -0.03 then col = BAD end
+	end
+	local sig = string.format("%d,%s,%s", progress, tostring(col), tostring(originId))
+	if marker.sig == sig then return end
+	marker.sig = sig
+
+	marker.num.Text = tostring(progress)
+	marker.num.TextColor3 = col
+	marker.anchor.Color = col
+	marker.wedge.Color = col
+end
+
 local function updateCaptureRing(marker, occ)
 	local byTag = occ.byTag
 	local progress = occ.progress or 0
@@ -392,6 +504,49 @@ local function scheduleRetry(kind, id)
 	end)
 end
 
+-- Disc variant of reconcileBattle. Placement: midpoint of attacker-origin -> defender,
+-- seam-aware — shift the attacker a whole MapWidth toward the defender when the pair
+-- straddles the wrap seam, then fold the midpoint back into the main fold.
+local function reconcileBattleDisc(battleId, battle)
+	local defCenter = provinceCenter(battle.provinceId)
+	if not defCenter then scheduleRetry("battle", battleId); return end
+	local originId = attackerOriginId(battle)
+	local atkCenter = provinceCenter(originId) or defCenter
+	local ax = atkCenter.X
+	if math.abs(ax - defCenter.X) > WorldConstants.MapHalfWidth then
+		ax += (defCenter.X > ax) and WorldConstants.MapWidth or -WorldConstants.MapWidth
+	end
+	local atkShifted = Vector3.new(ax, atkCenter.Y, atkCenter.Z)
+	-- Aim in the unwrapped frame; the fold is a pure X translation so the direction survives it.
+	local aim = Vector3.new(defCenter.X - ax, 0, defCenter.Z - atkCenter.Z)
+	aim = (aim.Magnitude > 0.01) and aim.Unit or Vector3.new(0, 0, -1)
+	local pos = foldX(atkShifted:Lerp(defCenter, 0.5))
+	-- Overlap relief: another live disc within ~one diameter pushes this one toward its
+	-- own defender (0.5 -> 0.65 of the way) so adjacent battles stay readable.
+	for otherId, other in pairs(battleMarkers) do
+		if otherId ~= battleId and other.kind == "disc" and other.pos
+			and (other.pos - pos).Magnitude < DISC_DIAMETER then
+			pos = foldX(atkShifted:Lerp(defCenter, 0.65))
+			break
+		end
+	end
+	local marker = battleMarkers[battleId]
+	if not marker then
+		marker = buildBattleDisc()
+		battleMarkers[battleId] = marker
+	end
+	-- Reposition + re-aim only when the origin changed (the first attacker died/withdrew
+	-- and attackerOriginId moved) or the midpoint shifted (overlap relief kicking in/out).
+	if marker.originId ~= originId or not marker.pos or (marker.pos - pos).Magnitude > 0.05 then
+		marker.originId = originId
+		marker.pos = pos
+		positionDisc(marker, pos, aim)
+	end
+	updateBattleDisc(marker, battle, originId)
+	-- Refresh the capture ring on this tile too (it stays visible through the battle, holding its %).
+	dirtySieges[battle.provinceId] = true
+end
+
 local function reconcileBattle(battleId)
 	local battle = ClientStateCache.getBattle and ClientStateCache.getBattle(battleId)
 	local marker = battleMarkers[battleId]
@@ -400,6 +555,10 @@ local function reconcileBattle(battleId)
 		return
 	end
 	if not ensureFolders() then return end
+	if WorldConstants.EnableBattleDisc then
+		reconcileBattleDisc(battleId, battle)
+		return
+	end
 	local defCenter = provinceCenter(battle.provinceId)
 	if not defCenter then scheduleRetry("battle", battleId); return end
 	-- Bubble sits on the front line: midpoint of attacker origin -> defender province.
