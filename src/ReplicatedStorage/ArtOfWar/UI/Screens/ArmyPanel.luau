@@ -7,11 +7,23 @@ local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
 local Colors = DesignSystem.Colors
 local Typography = DesignSystem.Typography
 local Icons = DesignSystem.Icons
+local WorldConstants = require(script.Parent.Parent.Parent.Shared.WorldConstants)
 
 local ArmyPanel = {}
 
 local REGIMENT_STRENGTH = 1000
 local MORALE_MAX = 100
+
+-- Combat depth A: entrenchment "L / max (+X% def)" so players see digging-in pays off. Combat
+-- already applies this bonus; this only surfaces it. Bonus updates live with entrenchment.
+local function entrenchValueText(army)
+	local entMax = army.entrenchmentMax or 0
+	local base = string.format("%d / %d", math.floor(army.entrenchment or 0), math.floor(entMax))
+	if not WorldConstants.EnableDefenseBreakdown then return base end
+	local bonus = (army.entrenchment or 0) * (WorldConstants.CombatEntrenchmentDefensePerLevel or 0.03)
+	if bonus <= 0 then return base end
+	return base .. string.format("  (+%d%% def)", math.floor(bonus * 100 + 0.5))
+end
 
 local function toHex(c)
 	return string.format("#%02X%02X%02X", math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
@@ -1084,7 +1096,7 @@ function ArmyPanel.create(ctx)
 		local entMax = army.entrenchmentMax or 0
 		local _, setEntrench = inlineStat(vitals, {
 			label = "Entrenchment",
-			value = string.format("%d / %d", math.floor(army.entrenchment or 0), math.floor(entMax)),
+			value = entrenchValueText(army),
 			pct = (army.entrenchment or 0) / math.max(entMax, 1),
 			color = "amber",
 			order = 3,
@@ -1193,7 +1205,7 @@ function ArmyPanel.create(ctx)
 			local bo = a.baseOrganization or 0
 			setOrg((a.organization or 0) / math.max(bo, 1), string.format("%d / %d", math.floor(a.organization or 0), math.floor(bo)), "amber")
 			local eM = a.entrenchmentMax or 0
-			setEntrench((a.entrenchment or 0) / math.max(eM, 1), string.format("%d / %d", math.floor(a.entrenchment or 0), math.floor(eM)), "amber")
+			setEntrench((a.entrenchment or 0) / math.max(eM, 1), entrenchValueText(a), "amber")
 			local inf = dominantInfo(a, registries)
 			local cR, mR = inf.total, reinforceMax(a)
 			local c2 = ctx.cache.getCountry(ctx.tag)

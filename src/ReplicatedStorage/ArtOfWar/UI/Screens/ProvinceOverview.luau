@@ -10,7 +10,23 @@ local Icons = DesignSystem.Icons
 local Responsive = DesignSystem.Responsive
 local SimClock = require(script.Parent.Parent.Parent.Modules.SimClock)
 local WorldConstants = require(script.Parent.Parent.Parent.Shared.WorldConstants)
+local Terrains = require(script.Parent.Parent.Parent.Data.Terrains)
 local RunService = game:GetService("RunService")
+
+-- Combat depth A: the defender bonus a terrain/fort grants in battle (combat already applies these;
+-- this just surfaces them). Returns a " (+X% def)" suffix, or "" when the flag is off / no bonus.
+local function terrainDefSuffix(terrainId)
+	if not WorldConstants.EnableDefenseBreakdown then return "" end
+	local t = terrainId and Terrains[terrainId]
+	local b = t and t.defenderBonus or 0
+	if b <= 0 then return "" end
+	return string.format("  (+%d%% def)", math.floor(b * 100 + 0.5))
+end
+
+local function fortDefSuffix(fortTier)
+	if not WorldConstants.EnableDefenseBreakdown or not fortTier or fortTier <= 0 then return "" end
+	return string.format("  (+%d%% def)", math.floor(fortTier * (WorldConstants.FortBattleDefensePerTier or 0.2) * 100 + 0.5))
+end
 
 local ProvinceOverview = {}
 
@@ -672,7 +688,12 @@ function ProvinceOverview.create(ctx)
 		end
 
 		ScreenKit.section(body, "Land", 2)
-		ScreenKit.stat(body, { icon = "MapTerrain", label = "Terrain", value = val(prov.terrain), layoutOrder = 3 })
+		ScreenKit.stat(body, {
+			icon = "MapTerrain",
+			label = "Terrain",
+			value = val(prov.terrain) .. terrainDefSuffix(prov.terrain),
+			layoutOrder = 3,
+		})
 		ScreenKit.stat(
 			body,
 			{ icon = "Building", label = "Development", value = val(prov.devTotal), mono = true, layoutOrder = 4 }
@@ -684,7 +705,13 @@ function ProvinceOverview.create(ctx)
 			layoutOrder = 5,
 		})
 		ScreenKit.stat(body, { icon = "Goods", label = "Trade Good", value = val(prov.tradeGood), layoutOrder = 6 })
-		ScreenKit.stat(body, { icon = "Fort", label = "Fort Level", value = val(prov.fortLevel or 0), layoutOrder = 7 })
+		local fortTier = prov.effectiveFortTier or prov.fortTier or 0
+		local fortValue = tostring(math.floor(fortTier)) .. fortDefSuffix(fortTier)
+		if WorldConstants.EnableDefenseBreakdown and prov.effectiveFortTier and prov.fortTier
+			and prov.effectiveFortTier > prov.fortTier then
+			fortValue = fortValue .. "  \u{2605}capital"
+		end
+		ScreenKit.stat(body, { icon = "Fort", label = "Fort", value = fortValue, layoutOrder = 7 })
 
 		ScreenKit.section(body, "Society", 8)
 		ScreenKit.stat(body, { icon = "MapCulture", label = "Culture", value = val(prov.culture), layoutOrder = 9 })

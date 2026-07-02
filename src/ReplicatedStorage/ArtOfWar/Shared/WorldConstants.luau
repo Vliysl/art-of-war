@@ -48,6 +48,7 @@ WorldConstants.EnableNewInputScheme = true        -- C5: LMB select/move, RMB pa
 WorldConstants.EnableMultiProvinceActions = true  -- C6: ctrl/shift multi-province selection + batched recruit/build remotes
 WorldConstants.EnableNewUnitModels = true         -- C8: cavalry/dragoon horse model (+ C9 ship model at sea)
 WorldConstants.EnableSeaTransport = true          -- C9: armies path over sea tiles (embark/sail/disembark, sea battles)
+WorldConstants.EnableDefenseBreakdown = true      -- Combat depth A: show terrain/fort/entrench defender bonus in province + army UI
 
 -- C2 instant-capture tunables: the walk-in cost. Forts no longer slow capture -- they bleed
 -- the captor harder instead (per-tier casualty scaling).
@@ -336,7 +337,10 @@ WorldConstants.DisciplineLevy = 0.6
 WorldConstants.DisciplineStandard = 1.0
 WorldConstants.DisciplineElite = 1.4
 -- Forts in field battle: defender defense x (1 + fortTier*FortBattleDefensePerTier).
-WorldConstants.FortBattleDefensePerTier = 0.15
+-- Combat depth A: 0.15 -> 0.20 so a Tier-2 fortress gives +40% defender in a field battle,
+-- making fortified lines a real obstacle. Only the DEFENDER multiplier -- capturing an
+-- UNDEFENDED fort is unchanged (see InstantCaptureCasualtyPerFortTier / siege constants, untouched).
+WorldConstants.FortBattleDefensePerTier = 0.20
 WorldConstants.FortCannonDebuff = 0.75 -- hook: cannon-tech fort debuff (gated off)
 -- Post-battle morale modifiers (spec G.1.7), applied by BattleManager.
 WorldConstants.BattleVictorMoraleBonus = 0.10
