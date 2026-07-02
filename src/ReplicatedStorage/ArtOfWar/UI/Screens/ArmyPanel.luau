@@ -9,21 +9,33 @@ local Typography = DesignSystem.Typography
 local Icons = DesignSystem.Icons
 local WorldConstants = require(script.Parent.Parent.Parent.Shared.WorldConstants)
 local LeaderTraits = require(script.Parent.Parent.Parent.Data.LeaderTraits)
+local Terrains = require(script.Parent.Parent.Parent.Data.Terrains)
 
 local ArmyPanel = {}
 
 local REGIMENT_STRENGTH = 1000
 local MORALE_MAX = 100
 
--- Combat depth A: entrenchment "L / max (+X% def)" so players see digging-in pays off. Combat
--- already applies this bonus; this only surfaces it. Bonus updates live with entrenchment.
 local function entrenchValueText(army)
-	local entMax = army.entrenchmentMax or 0
-	local base = string.format("%d / %d", math.floor(army.entrenchment or 0), math.floor(entMax))
-	if not WorldConstants.EnableDefenseBreakdown then return base end
-	local bonus = (army.entrenchment or 0) * (WorldConstants.CombatEntrenchmentDefensePerLevel or 0.03)
-	if bonus <= 0 then return base end
-	return base .. string.format("  (+%d%% def)", math.floor(bonus * 100 + 0.5))
+	return string.format("%d / %d", math.floor(army.entrenchment or 0), math.floor(army.entrenchmentMax or 0))
+end
+
+-- Combat depth A: the army's total defensive bonus at its current tile (terrain + fort + entrenchment).
+-- Combat already applies all three; this only surfaces the sum, on its own clean row.
+local function defenseBonus(cache, army)
+	if not WorldConstants.EnableDefenseBreakdown or type(army) ~= "table" then
+		return 0
+	end
+	local prov = army.provinceId and cache.getProvince(army.provinceId)
+	local terrain = 0
+	if prov and prov.terrain then
+		local t = Terrains[prov.terrain]
+		terrain = (t and t.defenderBonus) or 0
+	end
+	local fortTier = (prov and (prov.effectiveFortTier or prov.fortTier)) or 0
+	local fort = fortTier * (WorldConstants.FortBattleDefensePerTier or 0.2)
+	local entrench = (army.entrenchment or 0) * (WorldConstants.CombatEntrenchmentDefensePerLevel or 0.03)
+	return terrain + fort + entrench
 end
 
 local function toHex(c)
@@ -1506,6 +1518,18 @@ function ArmyPanel.create(ctx)
 			color = "amber",
 			order = 3,
 		})
+		local setDef
+		local defFrac = defenseBonus(ctx.cache, army)
+		if defFrac > 0 then
+			local _, sd = inlineStat(vitals, {
+				label = "Defense",
+				value = string.format("+%d%%", math.floor(defFrac * 100 + 0.5)),
+				pct = math.clamp(defFrac / 0.75, 0, 1),
+				color = "green",
+				order = 4,
+			})
+			setDef = sd
+		end
 
 		local info = dominantInfo(army, registries)
 		local curR = info.total
@@ -1536,8 +1560,8 @@ function ArmyPanel.create(ctx)
 			local nm = Instance.new("TextLabel")
 			nm.BackgroundTransparency = 1
 			nm.AnchorPoint = Vector2.new(0, 0.5)
-			nm.Position = UDim2.fromOffset(20, 0)
-			nm.Size = UDim2.new(1, -130, 1, 0)
+			nm.Position = UDim2.new(0, 20, 0.5, 0)
+			nm.Size = UDim2.new(1, -100, 1, 0)
 			nm.RichText = true
 			nm.Text = string.format("%s <font color=\"%s\">\u{00B7} Lvl %d</font>", val(officer.name), MUTED_HEX, officer.level or 0)
 			nm.TextColor3 = Colors.TextPrimary
@@ -1545,14 +1569,12 @@ function ArmyPanel.create(ctx)
 			nm.TextTruncate = Enum.TextTruncate.AtEnd
 			Typography.apply(nm, "bodyMd")
 			nm.Parent = nameRow
-			local canReassign = country and (country.politicalPower or 0) >= 25
 			local reassign = Button.create({
 				parent = nameRow,
 				variant = "secondary",
-				text = "Reassign \u{00B7} 25 PP",
-				width = 110,
+				text = "Traits",
+				width = 90,
 				size = "sm",
-				disabled = not canReassign,
 				onClick = function()
 					openOfficerTraits(army)
 				end,
@@ -1611,6 +1633,10 @@ function ArmyPanel.create(ctx)
 			setOrg((a.organization or 0) / math.max(bo, 1), string.format("%d / %d", math.floor(a.organization or 0), math.floor(bo)), "amber")
 			local eM = a.entrenchmentMax or 0
 			setEntrench((a.entrenchment or 0) / math.max(eM, 1), entrenchValueText(a), "amber")
+			if setDef then
+				local df = defenseBonus(ctx.cache, a)
+				setDef(math.clamp(df / 0.75, 0, 1), string.format("+%d%%", math.floor(df * 100 + 0.5)), "green")
+			end
 			local inf = dominantInfo(a, registries)
 			local cR, mR = inf.total, reinforceMax(a)
 			local c2 = ctx.cache.getCountry(ctx.tag)
