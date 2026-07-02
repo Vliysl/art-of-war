@@ -165,20 +165,68 @@ local function fortTierFor(provinceId)
 	return prov.effectiveFortTier or prov.fortTier or 0
 end
 
+local function findBattleAtProvince(provinceId)
+	for _, b in ctx.WorldState.allBattles() do
+		if b.provinceId == provinceId then return b end
+	end
+	return nil
+end
+
+-- A retreat destination must be a LAND province (sea nodes are negative ids and never an
+-- escape route -- owner decision), controlled by the retreater or an ally, with no active
+-- battle and no army the retreater is at war with standing on it. Neutral third-party
+-- stacks do NOT block a retreat.
+local function retreatCandidateOk(owner, candidateId)
+	if type(candidateId) == "number" and candidateId < 0 then return false end
+	local province = ctx.WorldState.getProvince(candidateId)
+	if not province then return false end
+	local controller = province.controllerTag
+	local controlledOrAllied = controller == owner
+	if not controlledOrAllied and controller and controller ~= "" and controller ~= "NONE" then
+		local dipl = ctx.DiplomacySystem
+		controlledOrAllied = (dipl and dipl.areAllied and dipl.areAllied(owner, controller)) or false
+	end
+	if not controlledOrAllied then return false end
+	if findBattleAtProvince(candidateId) then return false end
+	local dipl = ctx.DiplomacySystem
+	if dipl and dipl.areAtWar then
+		for _, other in ctx.ArmySystem.armiesInProvince(candidateId) do
+			if other.ownerTag ~= owner and dipl.areAtWar(owner, other.ownerTag) then
+				return false
+			end
+		end
+	end
+	return true
+end
+
 local function chooseRetreatProvince(army)
 	local adjacency = ctx.AdjacencyGraph
 	local owner = army.ownerTag
 	local origin = army.originProvinceId
-	if origin and origin ~= army.provinceId then
-		local p = ctx.WorldState.getProvince(origin)
-		if p and p.controllerTag == owner then
-			return origin
+	if not ctx.WorldConstants.EnableStrictRetreat then
+		-- Legacy: origin if still ours, else first adjacent controlled tile. Allows
+		-- non-adjacent origin teleports and retreats into contested/enemy-held tiles.
+		if origin and origin ~= army.provinceId then
+			local p = ctx.WorldState.getProvince(origin)
+			if p and p.controllerTag == owner then
+				return origin
+			end
 		end
+		for _, candidateId in adjacency.getNeighbors(army.provinceId) do
+			local province = ctx.WorldState.getProvince(candidateId)
+			if province and province.controllerTag == owner then
+				return candidateId
+			end
+		end
+		return nil
 	end
-	local candidates = adjacency.getNeighbors(army.provinceId)
-	for _, candidateId in candidates do
-		local province = ctx.WorldState.getProvince(candidateId)
-		if province and province.controllerTag == owner then
+	if origin and origin ~= army.provinceId
+		and adjacency.areNeighbors and adjacency.areNeighbors(army.provinceId, origin)
+		and retreatCandidateOk(owner, origin) then
+		return origin
+	end
+	for _, candidateId in adjacency.getNeighbors(army.provinceId) do
+		if candidateId ~= origin and retreatCandidateOk(owner, candidateId) then
 			return candidateId
 		end
 	end
@@ -188,6 +236,15 @@ end
 -- ===== Battle lifecycle =====================================================
 
 local function endBattle(record, winnerSide, reason)
+	-- Reentrancy guard: side processing below publishes events (ArmyDisbanded scrub,
+	-- ProvinceOccupied -> forced peace -> endActiveBattlesBetween, ...) that the EventBus
+	-- drains SYNCHRONOUSLY and that can route back here for this same record. Mark it and
+	-- remove it from WorldState FIRST so any re-entrant path finds nothing to end --
+	-- otherwise winners get processed twice and BattleResolved double-awards war-score.
+	if record.ending then return end
+	record.ending = true
+	ctx.WorldState.setBattle(record.id, nil)
+
 	local battleId = record.id
 	local provinceId = record.provinceId
 	local attackerTag = nil
@@ -306,7 +363,6 @@ local function endBattle(record, winnerSide, reason)
 		if a and a.casualtyDebt then a.casualtyDebt = nil; ctx.WorldState.setArmy(armyId, a) end
 	end
 
-	ctx.WorldState.setBattle(battleId, nil)
 	ctx.EventBus.publish(ctx.Channels.BattleResolved, {
 		battleId = battleId,
 		provinceId = provinceId,
@@ -610,13 +666,6 @@ local function tickBattle(record)
 	ctx.WorldState.setBattle(record.id, record)
 end
 
-local function findBattleAtProvince(provinceId)
-	for _, b in ctx.WorldState.allBattles() do
-		if b.provinceId == provinceId then return b end
-	end
-	return nil
-end
-
 -- A bordering, idle friendly army joins an ongoing battle in an adjacent province
 -- as a flanking reinforcement: it stays in its own province (origin recorded for the
 -- combat-width bonus) rather than relocating. Requires true bordering adjacency and
@@ -670,8 +719,49 @@ local function reinforce(armyId, targetProvinceId)
 	return joinBattle(battle.id, armyId, role)
 end
 
+-- An army can be destroyed while a battle still lists it (annexation sweep, encirclement of a
+-- co-belligerent, any future destroy path). Scrub it from every live battle so the record never
+-- stalls with a dead id; a side left empty concedes. Records mid-endBattle are already removed
+-- from WorldState (reentrancy guard), so the snapshot below never sees them.
+local function onArmyDisbanded(payload)
+	local armyId = payload and payload.armyId
+	if not armyId then return end
+	local records = {}
+	for _, record in ctx.WorldState.allBattles() do
+		records[#records + 1] = record
+	end
+	for _, record in ipairs(records) do
+		if record.ending or not ctx.WorldState.getBattle(record.id) then continue end
+		local changed = false
+		local function scrub(list)
+			for i = #list, 1, -1 do
+				if list[i] == armyId then
+					table.remove(list, i)
+					changed = true
+				end
+			end
+		end
+		scrub(record.attackerArmyIds)
+		scrub(record.defenderArmyIds)
+		if record.attackerOriginByArmyId and record.attackerOriginByArmyId[armyId] ~= nil then
+			record.attackerOriginByArmyId[armyId] = nil
+			changed = true
+		end
+		if changed then
+			if #record.attackerArmyIds == 0 then
+				endBattle(record, "defender", "side_eliminated")
+			elseif #record.defenderArmyIds == 0 then
+				endBattle(record, "attacker", "side_eliminated")
+			else
+				ctx.WorldState.setBattle(record.id, record)
+			end
+		end
+	end
+end
+
 function BattleManager.register(context)
 	ctx = context
+	context.EventBus.subscribe(context.Channels.ArmyDisbanded, onArmyDisbanded)
 	local api = {
 		startBattle = startBattle,
 		joinBattle = joinBattle,

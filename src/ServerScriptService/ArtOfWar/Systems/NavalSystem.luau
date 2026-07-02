@@ -340,6 +340,27 @@ function NavalSystem.disbandFleet(ownerTag, fleetId)
 	return true
 end
 
+-- Force-disband every fleet a tag owns (country deletion / annexation sweep). Unlike
+-- disbandFleet this skips refunds (the country record is going away) and ignores battle
+-- status -- tickBattles self-heals when a battle's fleet record vanishes (missing fleet
+-- -> the naval battle is pruned on its next tick).
+local function disbandAllFor(ownerTag)
+	local bucket = fleetsByTag[ownerTag]
+	if not bucket then return 0 end
+	local ids = {}
+	for fleetId in pairs(bucket) do
+		ids[#ids + 1] = fleetId
+	end
+	local removed = 0
+	for _, fleetId in ipairs(ids) do
+		if ctx.WorldState.getFleet(fleetId) then
+			removeFleet(fleetId)
+			removed += 1
+		end
+	end
+	return removed
+end
+
 local function tickBuildQueues(dt)
 	for provinceId, queue in pairs(buildQueueByProvince) do
 		local i = 1
@@ -646,6 +667,7 @@ function NavalSystem.register(context)
 		moveFleet    = NavalSystem.moveFleet,
 		attackFleet  = NavalSystem.attackFleet,
 		disbandFleet = NavalSystem.disbandFleet,
+		disbandAllFor = disbandAllFor,
 		assignMission = assignMission,
 		clearMission = clearMission,
 		queueLengthAt = queueLengthAt,

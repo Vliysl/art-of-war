@@ -1485,6 +1485,19 @@ function annexCountry(winnerTag, loserTag, exceptWarId)
 			})
 		end
 	end
+	-- Disband the annexed nation's military. Without this its armies/fleets orphan under a dead
+	-- ownerTag once the country record is deleted. Battles self-heal via BattleManager's
+	-- ArmyDisbanded scrub; naval battles prune themselves when a fleet record vanishes.
+	if ctx.WorldConstants.EnableAnnexArmyDisband then
+		if ctx.ArmySystem and ctx.ArmySystem.armiesOfOwner then
+			for _, army in ipairs(ctx.ArmySystem.armiesOfOwner(loserTag)) do
+				ctx.ArmySystem.destroyArmy(army.id, "country_annexed")
+			end
+		end
+		if ctx.NavalSystem and ctx.NavalSystem.disbandAllFor then
+			ctx.NavalSystem.disbandAllFor(loserTag)
+		end
+	end
 	ctx.WorldState.deleteCountry(loserTag)
 end
 
