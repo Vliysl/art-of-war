@@ -40,6 +40,117 @@ local function isUnowned(tag)
 	return tag == nil or tag == "" or tag == "NONE"
 end
 
+-- First army at the province the given owner is AT WAR with, or nil. This -- not bare
+-- foreign ownership -- is what "defended" means everywhere in the adjacent-engagement
+-- machinery: neutral third-party stacks never hold a tile, never get drafted, and never
+-- block movement.
+local function hostileArmyAt(ownerTag, provinceId)
+	local dipl = ctx.DiplomacySystem
+	if not (dipl and dipl.areAtWar) then return nil end
+	for _, other in ctx.ArmySystem.armiesInProvince(provinceId) do
+		if other.ownerTag ~= ownerTag and dipl.areAtWar(ownerTag, other.ownerTag) then
+			return other
+		end
+	end
+	return nil
+end
+
+local function isDefendedAgainst(ownerTag, provinceId)
+	if getBattleAt(provinceId) then return true end
+	return hostileArmyAt(ownerTag, provinceId) ~= nil
+end
+
+-- Defender draft for a NEW battle at a tile: the controller's armies first, else any
+-- at-war army there (covers unowned tiles and third-party garrisons).
+local function buildDefendersAt(provinceId, attackerTag)
+	local province = ctx.WorldState.getProvince(provinceId)
+	local controllerTag = province and province.controllerTag
+	local dipl = ctx.DiplomacySystem
+	local defenders, fallback = {}, {}
+	for _, other in ctx.ArmySystem.armiesInProvince(provinceId) do
+		if other.ownerTag ~= attackerTag then
+			if not isUnowned(controllerTag) and other.ownerTag == controllerTag then
+				table.insert(defenders, other.id)
+			elseif dipl and dipl.areAtWar and dipl.areAtWar(attackerTag, other.ownerTag) then
+				table.insert(fallback, other.id)
+			end
+		end
+	end
+	if #defenders == 0 then defenders = fallback end
+	return defenders
+end
+
+-- HOI4-style engagement (EnableAdjacentEngagement): the attacker fights the battle at the
+-- TARGET tile while physically remaining on its own tile; it marches in only on victory
+-- (BattleManager winner processing). Single engagement entry point for every attack path.
+local function engageFromAdjacent(armyId, targetProvinceId)
+	local army = ctx.WorldState.getArmy(armyId)
+	if not army then return false, "unknown_army" end
+	if army.battleId then return false, "in_battle" end
+	local target = ctx.WorldState.getProvince(targetProvinceId)
+	if not target then return false, "unknown_target" end
+	local defenderTag = target.controllerTag
+	if not isUnowned(defenderTag) and defenderTag ~= army.ownerTag then
+		local dipl = ctx.DiplomacySystem
+		if dipl and dipl.areAtWar and not dipl.areAtWar(army.ownerTag, defenderTag) then
+			return false, "not_at_war"
+		end
+	end
+	local adjacency = ctx.AdjacencyGraph
+	if not adjacency or not adjacency.areNeighbors then return false, "no_adjacency" end
+	if not adjacency.areNeighbors(army.provinceId, targetProvinceId) then
+		return false, "not_adjacent"
+	end
+
+	-- Ongoing battle at the target: join it from here as a flanking origin. reinforce()
+	-- already resolves the side (incl. third-party co-belligerents) and records the origin.
+	local existing = getBattleAt(targetProvinceId)
+	if existing then
+		if army.movement and ctx.MovementSystem and ctx.MovementSystem.cancelMovement then
+			ctx.MovementSystem.cancelMovement(armyId, "engaged")
+		end
+		return ctx.BattleManager.reinforce(armyId, targetProvinceId)
+	end
+
+	local defenders = buildDefendersAt(targetProvinceId, army.ownerTag)
+	if #defenders == 0 then return false, "no_defenders" end
+
+	-- Home defense preempts offense: a draftee currently attacking ELSEWHERE (its battleId
+	-- points at another tile -- it fights from its own tile now) abandons that offensive
+	-- before defending home. Its old battle ends "attackers_withdrew" if it was the last
+	-- attacker (no war-score: BattleResolved carries a nil loser).
+	local drafted = {}
+	for _, defenderId in ipairs(defenders) do
+		local d = ctx.WorldState.getArmy(defenderId)
+		if d then
+			if d.battleId and ctx.BattleManager.withdrawFromBattle then
+				ctx.BattleManager.withdrawFromBattle(defenderId, "attackers_withdrew")
+				d = ctx.WorldState.getArmy(defenderId)
+			end
+			if d and not d.battleId then
+				table.insert(drafted, defenderId)
+			end
+		end
+	end
+	if #drafted == 0 then return false, "no_defenders" end
+
+	if army.movement and ctx.MovementSystem and ctx.MovementSystem.cancelMovement then
+		ctx.MovementSystem.cancelMovement(armyId, "engaged")
+		army = ctx.WorldState.getArmy(armyId)
+		if not army then return false, "unknown_army" end
+	end
+	army.originProvinceId = army.provinceId
+	ctx.WorldState.setArmy(armyId, army)
+
+	local warId = nil
+	if ctx.DiplomacySystem and ctx.DiplomacySystem.findActiveWar and not isUnowned(defenderTag) then
+		local war = ctx.DiplomacySystem.findActiveWar(army.ownerTag, defenderTag)
+		if war then warId = war.id end
+	end
+	ctx.BattleManager.startBattle(targetProvinceId, { armyId }, drafted, { [armyId] = army.provinceId }, warId)
+	return true
+end
+
 local function attackProvince(armyId, targetProvinceId)
 	local army = ctx.WorldState.getArmy(armyId)
 	if not army then return false, "unknown_army" end
@@ -62,6 +173,13 @@ local function attackProvince(armyId, targetProvinceId)
 	if not adjacency or not adjacency.areNeighbors then return false, "no_adjacency" end
 	if not adjacency.areNeighbors(army.provinceId, targetProvinceId) then
 		return false, "not_adjacent"
+	end
+	-- Engage from our own tile (flag ON); an undefended target falls through to the
+	-- legacy march (walk-in -> instant capture on arrival).
+	if ctx.WorldConstants.EnableAdjacentEngagement then
+		local ok, reason = engageFromAdjacent(armyId, targetProvinceId)
+		if ok then return true end
+		if reason ~= "no_defenders" then return false, reason end
 	end
 	-- Dispatch movement
 	if not ctx.MovementSystem or not ctx.MovementSystem.beginMove then return false, "no_movement" end
@@ -150,6 +268,13 @@ local function onArmyArrival(armyId, provinceId)
 	-- No battle: check for enemy in province
 	local enemy = ctx.ArmySystem.findEnemyArmyAt(army.ownerTag, provinceId)
 	if enemy then
+		-- Under adjacent engagement the finishMove gate keeps attackers off defended tiles,
+		-- so a walk-on battle start should be unreachable; log if it ever fires (co-located
+		-- armies whose owners declared war mid-tick is the only known path).
+		if ctx.WorldConstants.EnableAdjacentEngagement then
+			warn(string.format("[CombatSystem] walk-on battle fallback at province %s (army %s)",
+				tostring(provinceId), tostring(armyId)))
+		end
 		-- Build defender side from province controller's armies
 		local defenders = {}
 		for _, other in ctx.ArmySystem.armiesInProvince(provinceId) do
@@ -181,6 +306,9 @@ function CombatSystem.register(context)
 		onArmyArrival = onArmyArrival,
 		getBattleAt = getBattleAt,
 		captureIfUndefended = captureIfUndefended,
+		engageFromAdjacent = engageFromAdjacent,
+		isDefendedAgainst = isDefendedAgainst,
+		hostileArmyAt = hostileArmyAt,
 	}
 	context.CombatSystem = api
 	for k, v in pairs(api) do CombatSystem[k] = v end

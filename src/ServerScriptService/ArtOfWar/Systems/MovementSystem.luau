@@ -141,9 +141,20 @@ local function beginMovePath(armyId, finalProvinceId)
 		return false, "province_unregistered"
 	end
 
-	-- If adjacent, just begin a single move (lets CombatSystem.onArmyArrival handle attack on arrival).
+	-- If adjacent, just begin a single move (lets CombatSystem.onArmyArrival handle attack on
+	-- arrival). Under adjacent engagement, a DEFENDED hostile/unowned neighbor is instead
+	-- dispatched through attackProvince -> engageFromAdjacent: the battle starts immediately
+	-- and the army never leaves its tile. This is the PRIMARY player attack path (MoveArmyPath)
+	-- and also covers AutoCapture/AISystem, which enter through here.
 	if ctx.AdjacencyGraph.areNeighbors(army.provinceId, finalProvinceId) then
 		clearPath(army)
+		if ctx.WorldConstants.EnableAdjacentEngagement and ctx.CombatSystem and ctx.CombatSystem.isDefendedAgainst then
+			local destProv = ctx.WorldState.getProvince(finalProvinceId)
+			local wouldAttack = not destProv or destProv.controllerTag ~= army.ownerTag
+			if wouldAttack and ctx.CombatSystem.isDefendedAgainst(army.ownerTag, finalProvinceId) then
+				return ctx.CombatSystem.attackProvince(armyId, finalProvinceId)
+			end
+		end
 		return beginMove(armyId, finalProvinceId)
 	end
 
@@ -236,8 +247,24 @@ local function continuePath(army)
 	end
 	ctx.WorldState.setArmy(army.id, army)
 
-	-- If the next step is the final destination and hostile, dispatch through attackProvince.
-	if nextStep == finalId then
+	-- Adjacent engagement: ANY defended hostile/unowned next step engages from the current
+	-- tile, not just the final one (the legacy rule let armies walk INTO defended tiles
+	-- mid-path). nextStep was already popped, so on success the remaining steps are exactly
+	-- the post-victory continuation (resumed by endBattle's winner pass).
+	if ctx.WorldConstants.EnableAdjacentEngagement and ctx.CombatSystem
+		and ctx.CombatSystem.attackProvince and ctx.CombatSystem.isDefendedAgainst then
+		local destProv = ctx.WorldState.getProvince(nextStep)
+		local wouldAttack = not destProv or destProv.controllerTag ~= army.ownerTag
+		if wouldAttack and ctx.CombatSystem.isDefendedAgainst(army.ownerTag, nextStep) then
+			local attacked = ctx.CombatSystem.attackProvince(army.id, nextStep)
+			if not attacked then
+				army.movementPath = nil
+				ctx.WorldState.setArmy(army.id, army)
+			end
+			return
+		end
+	elseif nextStep == finalId then
+		-- Legacy rule: only a hostile FINAL step routes through attackProvince.
 		local destProv = ctx.WorldState.getProvince(nextStep)
 		local hostile = destProv and destProv.controllerTag
 			and destProv.controllerTag ~= army.ownerTag
@@ -261,6 +288,39 @@ end
 
 local function finishMove(army)
 	local targetId = army.movement and army.movement.toProvinceId
+
+	-- Arrival gate (EnableAdjacentEngagement): a defender appeared on the target while we
+	-- marched. The army's provinceId never changed mid-move, so stop HERE and engage from
+	-- adjacency instead of walking onto a defended tile. Friendly-controlled targets always
+	-- complete the walk (that is how defenders reinforce their own contested tile).
+	-- Invariant: no attacker ever stands on a defended tile.
+	if targetId and ctx.WorldConstants.EnableAdjacentEngagement
+		and ctx.CombatSystem and ctx.CombatSystem.isDefendedAgainst and ctx.CombatSystem.engageFromAdjacent then
+		local destProv = ctx.WorldState.getProvince(targetId)
+		local wouldAttack = not destProv or destProv.controllerTag ~= army.ownerTag
+		if wouldAttack and ctx.CombatSystem.isDefendedAgainst(army.ownerTag, targetId) then
+			-- Clear movement manually (NOT cancelMovement -- that would drop movementPath,
+			-- which is the post-victory continuation).
+			army.movement = nil
+			ctx.WorldState.setArmy(army.id, army)
+			ctx.EventBus.publish(ctx.Channels.ArmyMoveCancelled, {
+				armyId = army.id, tag = army.ownerTag, reason = "engaged", provinceId = army.provinceId,
+			})
+			local ok = ctx.CombatSystem.engageFromAdjacent(army.id, targetId)
+			if not ok then
+				local refreshed = ctx.WorldState.getArmy(army.id)
+				if refreshed then
+					refreshed.movementPath = nil
+					ctx.WorldState.setArmy(army.id, refreshed)
+				end
+				if ctx.ArmySystem and ctx.ArmySystem.setState then
+					ctx.ArmySystem.setState(army.id, "idle")
+				end
+			end
+			return
+		end
+	end
+
 	army.movement = nil
 	ctx.WorldState.setArmy(army.id, army)
 	if targetId then

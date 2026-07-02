@@ -75,8 +75,13 @@ end
 
 local function tick()
 	if not (ctx.MovementSystem and ctx.MovementSystem.beginMovePath) then return end
+	local now = ctx.TickScheduler.getSimTime()
+	local cooldown = ctx.WorldConstants.FailedAttackCooldownSec or 20
 	for armyId, army in ctx.WorldState.allArmies() do
-		if army.autoCapture and not army.movement and not army.battleId then
+		-- Adjacent engagement: a beaten attacker stays home (no retreat), so without this
+		-- cooldown AutoCapture re-orders the identical attack every tick -- a suicide grind.
+		local coolingDown = army.lastFailedAttackAt ~= nil and (now - army.lastFailedAttackAt) < cooldown
+		if army.autoCapture and not army.movement and not army.battleId and not coolingDown then
 			local owner = army.ownerTag
 			local here = ctx.WorldState.getProvince(army.provinceId)
 			if here and canCapture(owner, here) then

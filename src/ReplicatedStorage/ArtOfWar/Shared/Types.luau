@@ -490,6 +490,13 @@ export type BattleRecord = {
 	defenderTacticAtk: number?,
 	defenderTacticDef: number?,
 	lastDamageRoll: { attacker: number, defender: number }?,
+	round: number?,
+	tide: number?,           -- -1..1 attacker advantage; replicated read-only for the battle UI
+	phaseCycle: string?,     -- "ground" | "naval"
+	phaseIndex: number?,
+	phaseElapsed: number?,
+	log: { any }?,           -- last 60 round summaries (server debug; replicated with the record)
+	ending: boolean?,        -- endBattle reentrancy guard; record is already removed when set
 }
 
 export type ArmyRecord = {
@@ -509,6 +516,13 @@ export type ArmyRecord = {
 	originProvinceId: ProvinceId?,
 	supplyStatus: string?,   -- "adequate" | "crowded" | "starving" (display only; set by AttritionSystem)
 	movementPath: { steps: { ProvinceId }, finalProvinceId: ProvinceId }?,  -- remaining legs of a multi-tile order
+	autoCapture: boolean?,   -- AutoCaptureSystem toggle (nil when off, never false)
+	lastFailedAttackAt: number?,  -- sim-time of the last lost attack (AutoCapture re-attack cooldown)
+	battleMoraleMod: { pct: number, expireMonthIndex: number? }?,
+	casualtyDebt: number?,
+	reinforceEnabled: boolean?,
+	reinforceTarget: RegimentComposition?,
+	domain: string?,         -- "ground" | "naval"
 }
 
 export type RecruitTicket = {

@@ -282,7 +282,7 @@ local function endBattle(record, winnerSide, reason)
 		ctx.WorldState.setArmy(armyId, army)
 	end
 
-	local function processLosers(armyIds)
+	local function processLosers(armyIds, isAttackerSide)
 		for _, armyId in armyIds do
 			local army = ctx.WorldState.getArmy(armyId)
 			if army then
@@ -293,6 +293,27 @@ local function endBattle(record, winnerSide, reason)
 				if ctx.ArmySystem.compositionStrength(army.composition) <= 0 then
 					ctx.ArmySystem.destroyArmy(armyId, "annihilated")
 				else
+					-- Adjacent engagement: a beaten ATTACKER standing on its own (or an ally's)
+					-- tile simply stands down there -- a failed attack is not a rout. It keeps
+					-- the morale/org penalties; its queued path is dead. Cooldown stamped so
+					-- AutoCapture doesn't grind the same attack every tick.
+					local staysHome = false
+					if isAttackerSide and ctx.WorldConstants.EnableAdjacentEngagement then
+						local here = ctx.WorldState.getProvince(army.provinceId)
+						local controller = here and here.controllerTag
+						staysHome = controller == army.ownerTag
+						if not staysHome and controller and controller ~= "" and controller ~= "NONE" then
+							local dipl = ctx.DiplomacySystem
+							staysHome = (dipl and dipl.areAllied and dipl.areAllied(army.ownerTag, controller)) or false
+						end
+					end
+					if staysHome then
+						army.movementPath = nil
+						army.lastFailedAttackAt = ctx.TickScheduler.getSimTime()
+						ctx.WorldState.setArmy(armyId, army)
+						ctx.ArmySystem.setState(armyId, "idle")
+						continue
+					end
 					local retreatTo = chooseRetreatProvince(army)
 					if retreatTo then
 						army.retreating = true
@@ -333,16 +354,26 @@ local function endBattle(record, winnerSide, reason)
 					if ctx.CombatSystem and ctx.CombatSystem.captureIfUndefended then
 						ctx.CombatSystem.captureIfUndefended(armyId, provinceId)
 					end
+					-- Adjacent engagement: a queued multi-tile order paused for this battle;
+					-- resume it through the just-won tile.
+					if ctx.WorldConstants.EnableAdjacentEngagement
+						and ctx.MovementSystem and ctx.MovementSystem.continuePath then
+						local refreshed = ctx.WorldState.getArmy(armyId)
+						if refreshed and refreshed.movementPath
+							and not refreshed.battleId and not refreshed.retreating then
+							ctx.MovementSystem.continuePath(refreshed)
+						end
+					end
 				end
 			end
 		end
 	end
 
 	if winnerSide == "attacker" then
-		processLosers(record.defenderArmyIds)
+		processLosers(record.defenderArmyIds, false)
 		processWinners(record.attackerArmyIds, true)
 	elseif winnerSide == "defender" then
-		processLosers(record.attackerArmyIds)
+		processLosers(record.attackerArmyIds, true)
 		processWinners(record.defenderArmyIds, false)
 	else
 		processWinners(record.attackerArmyIds, false)
@@ -725,6 +756,40 @@ local function reinforce(armyId, targetProvinceId)
 	return joinBattle(battle.id, armyId, role)
 end
 
+-- Home defense preempts offense: pull an army out of a battle it is ATTACKING in (it fights
+-- from its own tile, so "leaving" is bookkeeping only) so it can defend its own tile. Never
+-- valid for defenders -- a defender's battle IS at its tile. If it was the last attacker the
+-- battle ends "attackers_withdrew": the attacker list is empty by then, so BattleResolved
+-- carries a nil winner/loser pair and DiplomacySystem awards no war-score (no bait farming).
+local function withdrawFromBattle(armyId, reason)
+	local army = ctx.WorldState.getArmy(armyId)
+	if not army or not army.battleId then return false, "not_in_battle" end
+	local record = ctx.WorldState.getBattle(army.battleId)
+	if not record then
+		army.battleId = nil
+		ctx.WorldState.setArmy(armyId, army)
+		return true
+	end
+	local removed = false
+	for i = #record.attackerArmyIds, 1, -1 do
+		if record.attackerArmyIds[i] == armyId then
+			table.remove(record.attackerArmyIds, i)
+			removed = true
+		end
+	end
+	if not removed then return false, "not_attacker" end
+	if record.attackerOriginByArmyId then record.attackerOriginByArmyId[armyId] = nil end
+	army.battleId = nil
+	ctx.WorldState.setArmy(armyId, army)
+	ctx.ArmySystem.setState(armyId, "idle")
+	if #record.attackerArmyIds == 0 then
+		endBattle(record, "defender", reason or "attackers_withdrew")
+	else
+		ctx.WorldState.setBattle(record.id, record)
+	end
+	return true
+end
+
 -- An army can be destroyed while a battle still lists it (annexation sweep, encirclement of a
 -- co-belligerent, any future destroy path). Scrub it from every live battle so the record never
 -- stalls with a dead id; a side left empty concedes. Records mid-endBattle are already removed
@@ -772,6 +837,7 @@ function BattleManager.register(context)
 		startBattle = startBattle,
 		joinBattle = joinBattle,
 		reinforce = reinforce,
+		withdrawFromBattle = withdrawFromBattle,
 		findBattleAtProvince = findBattleAtProvince,
 		tickBattle = tickBattle,
 		endBattle = endBattle,
