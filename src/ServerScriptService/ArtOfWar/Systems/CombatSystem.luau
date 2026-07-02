@@ -89,9 +89,11 @@ local function engageFromAdjacent(armyId, targetProvinceId)
 	local army = ctx.WorldState.getArmy(armyId)
 	if not army then return false, "unknown_army" end
 	if army.battleId then return false, "in_battle" end
+	-- Sea nodes have no province record but ARE legal engagement targets (interception at
+	-- sea); without this the unknown_target guard would make sea battles unreachable.
 	local target = ctx.WorldState.getProvince(targetProvinceId)
-	if not target then return false, "unknown_target" end
-	local defenderTag = target.controllerTag
+	if not target and not SeaNodes.isSea(targetProvinceId) then return false, "unknown_target" end
+	local defenderTag = target and target.controllerTag
 	if not isUnowned(defenderTag) and defenderTag ~= army.ownerTag then
 		local dipl = ctx.DiplomacySystem
 		if dipl and dipl.areAtWar and not dipl.areAtWar(army.ownerTag, defenderTag) then
@@ -163,9 +165,10 @@ local function attackProvince(armyId, targetProvinceId)
 	if not army then return false, "unknown_army" end
 	if army.battleId then return false, "in_battle" end
 	local target = ctx.WorldState.getProvince(targetProvinceId)
-	if not target then return false, "unknown_target" end
-	-- Diplomacy gate: attacker must be at war with the controller (unless unowned)
-	local defenderTag = target.controllerTag
+	if not target and not SeaNodes.isSea(targetProvinceId) then return false, "unknown_target" end
+	-- Diplomacy gate: attacker must be at war with the controller (unless unowned;
+	-- sea nodes have no controller -- hostility is settled per army by the defender draft)
+	local defenderTag = target and target.controllerTag
 	if not isUnowned(defenderTag) and defenderTag ~= army.ownerTag then
 		local dipl = ctx.DiplomacySystem
 		if dipl and dipl.areAtWar then
