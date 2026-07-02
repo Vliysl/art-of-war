@@ -79,10 +79,28 @@ end
 -- shrinks (lost land -> lost reserve).
 local function recomputeManpowerCaps()
     local caps = {}
-    for _, province in ctx.WorldState.allProvinces() do
-        local owner = province.ownerTag
-        if owner and province.controllerTag == owner then
-            caps[owner] = (caps[owner] or 0) + provinceManpowerContribution(province)
+    -- perf: iterate each country's owned provinces via the O(1) registry instead of scanning all
+    -- ~5713 provinces. byOwner is the owned set; still require controllerTag == owner (occupied
+    -- provinces contribute 0). Falls back to a full scan if the registry is unavailable.
+    local registry = ctx.ProvinceRegistry
+    if registry and registry.byOwner then
+        for _, country in ctx.WorldState.allCountries() do
+            local tag = country.tag
+            local total = 0
+            for _, id in ipairs(registry.byOwner(tag)) do
+                local province = ctx.WorldState.getProvince(id)
+                if province and province.controllerTag == tag then
+                    total += provinceManpowerContribution(province)
+                end
+            end
+            caps[tag] = total
+        end
+    else
+        for _, province in ctx.WorldState.allProvinces() do
+            local owner = province.ownerTag
+            if owner and province.controllerTag == owner then
+                caps[owner] = (caps[owner] or 0) + provinceManpowerContribution(province)
+            end
         end
     end
     for _, country in ctx.WorldState.allCountries() do

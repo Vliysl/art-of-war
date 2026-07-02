@@ -60,7 +60,20 @@ local function unlockGood(goodId)
 	return true
 end
 
+-- perf: supply is an O(5713-province) scan, but it only changes when a province's owner / dev /
+-- infra / goods change. Gate the scan on a dirty flag (set by the relevant events) with a slow
+-- full-recompute fallback; prices still rebalance every tick off the cached supply/demand.
+local supplyDirty = true
+local lastSupplyRecomputeAt = -math.huge
+local SUPPLY_FULL_INTERVAL = 30
+
 local function recompute()
+	local now = ctx.TickScheduler.getSimTime()
+	if not supplyDirty and (now - lastSupplyRecomputeAt) < SUPPLY_FULL_INTERVAL then
+		return
+	end
+	supplyDirty = false
+	lastSupplyRecomputeAt = now
 	for _, m in markets do
 		m.supply = 0
 		m.demand = 0
@@ -136,6 +149,12 @@ function MarketSystem.register(context)
 		end,
 		unlockGood = unlockGood,
 	}
+	local function markSupplyDirty() supplyDirty = true end
+	ctx.EventBus.subscribe(ctx.Channels.ProvinceOwnershipChanged, markSupplyDirty)
+	ctx.EventBus.subscribe(ctx.Channels.ProvinceDevelopmentChanged, markSupplyDirty)
+	ctx.EventBus.subscribe(ctx.Channels.BuildingCompleted, markSupplyDirty)
+	ctx.EventBus.subscribe(ctx.Channels.ProvinceOccupied, markSupplyDirty)
+
 	ctx.TickScheduler.register({
 		id = "MarketSystem",
 		priority = 25,

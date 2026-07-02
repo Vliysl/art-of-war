@@ -210,6 +210,10 @@ local armyParts = {}
 local labelRefs = {} -- [armyId] = { bb = BillboardGui, scale = UIScale } cached so the per-frame size
 -- pass avoids FindFirstChild; populated lazily, cleared in destroyModelFor / ArmyView.destroy.
 local lastLabelCamCF = nil -- camera CFrame the label-size pass last ran for (skip recompute when still)
+-- perf: the label pass iterates every army banner; run it at ~15Hz (not per-frame) since constant-
+-- size rescaling is imperceptible at that rate. The hop animation stays per-frame for smoothness.
+local labelAccum = 0
+local LABEL_UPDATE_INTERVAL = 1 / 15
 local animTracks = {}                -- [armyId] = { Idle, Walk, Shoot, Reload }  AnimationTrack table
 local animState = {}                 -- [armyId] = currently-playing state name (cached to avoid restarting tracks)
 local combatAnimConns = {}           -- [armyId] = { shoot = conn, reload = conn }  signal handles for the shoot/reload loop
@@ -1776,14 +1780,16 @@ function ArmyView.init()
 		end
 	end)
 
-	renderConn = RunService.RenderStepped:Connect(function()
+	renderConn = RunService.RenderStepped:Connect(function(dt)
 		-- Constant on-screen label size: an Offset-Size BillboardGui grows as the camera moves away, so we
 		-- counter it by scaling the label INVERSELY with the camera->army distance (no clamp -- a clamp
 		-- would let it drift at the zoom extremes); labels hide past LABEL_HIDE_ZOOM. Efficiency: the
-		-- BillboardGui/UIScale refs are cached per army (no per-frame FindFirstChild), only the cheap
-		-- Enabled flag is written each frame, and the size recompute (GetPivot + Size) runs ONLY when the
-		-- camera actually moved (distances don't change otherwise) or a label is newly built.
-		do
+		-- BillboardGui/UIScale refs are cached per army (no per-frame FindFirstChild), the size recompute
+		-- (GetPivot + Size) runs ONLY when the camera actually moved, and the whole banner pass is
+		-- throttled to ~15Hz (labelAccum) so it doesn't iterate every army every frame.
+		labelAccum += dt
+		if labelAccum >= LABEL_UPDATE_INTERVAL then
+			labelAccum = 0
 			local cam = workspace.CurrentCamera
 			local zoom = CameraController.getZoom and CameraController.getZoom()
 			-- perf: nothing to size/enable when no tokens exist -- skip the whole pass.

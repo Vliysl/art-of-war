@@ -2,6 +2,8 @@
 
 local ctx
 local nextBattleSeq = 0
+-- perf: server-only per-battle round log (see tickBattle). Never replicated; cleared in endBattle.
+local battleLogs = {}
 
 local CombatPhases = require(game:GetService("ReplicatedStorage").ArtOfWar.Data.CombatPhases)
 
@@ -253,6 +255,7 @@ local function endBattle(record, winnerSide, reason)
 	if record.ending then return end
 	record.ending = true
 	ctx.WorldState.setBattle(record.id, nil)
+	battleLogs[record.id] = nil
 
 	local battleId = record.id
 	local provinceId = record.provinceId
@@ -710,15 +713,20 @@ local function tickBattle(record)
 		})
 	end
 
-	if type(record.log) ~= "table" then record.log = {} end
-	table.insert(record.log, {
+	-- perf: the round log is server-only debug data. Keeping it on the replicated record meant the
+	-- whole ~60-entry array re-broadcast to every client on every 3s combat tick per battle. Store
+	-- it in a module-level sidecar instead so the battle record stays small (the client UI reads
+	-- tide/round/width, never the log). record.log stays nil on the wire.
+	local logs = battleLogs[record.id]
+	if not logs then logs = {}; battleLogs[record.id] = logs end
+	table.insert(logs, {
 		round = record.round,
 		simTime = ctx.TickScheduler.getSimTime(),
 		atkCasualtyRatio = result.attacker.casualtyRatio,
 		defCasualtyRatio = result.defender.casualtyRatio,
 		reason = result.reason,
 	})
-	while #record.log > 60 do table.remove(record.log, 1) end
+	while #logs > 60 do table.remove(logs, 1) end
 
 	if result.outcome == "attacker" then
 		endBattle(record, "attacker", result.reason)

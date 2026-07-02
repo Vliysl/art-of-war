@@ -495,7 +495,6 @@ export type BattleRecord = {
 	phaseCycle: string?,     -- "ground" | "naval"
 	phaseIndex: number?,
 	phaseElapsed: number?,
-	log: { any }?,           -- last 60 round summaries (server debug; replicated with the record)
 	ending: boolean?,        -- endBattle reentrancy guard; record is already removed when set
 }
 

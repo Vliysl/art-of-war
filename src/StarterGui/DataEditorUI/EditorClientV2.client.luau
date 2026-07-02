@@ -431,6 +431,9 @@ end
 
 -- Lightweight dropdown (no shared component exists). cfg: { parent, size, position, options[], value, onChange? }.
 -- The popup + a full-screen click-catcher live on the root ScreenGui so they overlay and close on outside click.
+-- Long option lists (> SEARCH_THRESHOLD) gain a type-to-search field; short/narrow ones stay a plain scroll list.
+local ROW_H, MAX_ROWS, SEARCH_H = 24, 8, 26
+local SEARCH_THRESHOLD, MIN_SEARCH_WIDTH = 8, 120
 local openPopup
 local function dropdown(cfg)
 	local btn = Instance.new("TextButton")
@@ -459,6 +462,11 @@ local function dropdown(cfg)
 
 	btn.MouseButton1Click:Connect(function()
 		closePopup()
+		local abs, sz = btn.AbsolutePosition, btn.AbsoluteSize
+		-- Search only on lists too long to eyeball, and only when the button is wide enough for a usable field
+		-- (suppresses it on the 72px inline "+ add" chip -- that list still scrolls).
+		local useSearch = (#cfg.options > SEARCH_THRESHOLD) and (sz.X >= MIN_SEARCH_WIDTH)
+
 		local catcher = Instance.new("TextButton")
 		catcher.BackgroundTransparency = 1
 		catcher.AutoButtonColor = false
@@ -468,47 +476,128 @@ local function dropdown(cfg)
 		catcher.Parent = gui
 		catcher.MouseButton1Click:Connect(closePopup)
 
-		local n = #cfg.options
-		local popup = Instance.new("ScrollingFrame")
-		popup.BackgroundColor3 = Colors.SurfaceElevated
-		popup.BorderSizePixel = 0
-		popup.ScrollBarThickness = 4
-		popup.ZIndex = 61
-		popup.CanvasSize = UDim2.fromOffset(0, n * 24)
-		local abs, sz = btn.AbsolutePosition, btn.AbsoluteSize
-		popup.Size = UDim2.fromOffset(sz.X, math.min(math.max(n, 1), 8) * 24)
-		popup.Position = UDim2.fromOffset(abs.X, abs.Y + sz.Y)
-		popup.Parent = gui
-		local ps = Instance.new("UIStroke")
-		ps.Color = Colors.BorderStrong
-		ps.Thickness = 1
-		ps.Parent = popup
-		popup.Destroying:Connect(function()
+		-- The container paints the background + border and owns the catcher cleanup; it holds the (optional)
+		-- search box and the scrolling option list. `openPopup` is the container so closePopup tears it all down.
+		local container = Instance.new("Frame")
+		container.BackgroundColor3 = Colors.SurfaceElevated
+		container.BorderSizePixel = 0
+		container.ZIndex = 61
+		container.Parent = gui
+		local cs = Instance.new("UIStroke")
+		cs.Color = Colors.BorderStrong
+		cs.Thickness = 1
+		cs.Parent = container
+		container.Destroying:Connect(function()
 			if catcher then catcher:Destroy() end
 		end)
+		openPopup = container
 
-		for i, opt in ipairs(cfg.options) do
-			local ob = Instance.new("TextButton")
-			ob.AutoButtonColor = true
-			ob.BackgroundColor3 = Colors.SurfaceElevated
-			ob.BorderSizePixel = 0
-			ob.ZIndex = 62
-			ob.Size = UDim2.new(1, 0, 0, 24)
-			ob.Position = UDim2.fromOffset(0, (i - 1) * 24)
-			ob.Text = ""
-			local ol = label(ob, opt, "bodySm")
-			ol.Position = UDim2.fromOffset(8, 0)
-			ol.Size = UDim2.new(1, -12, 1, 0)
-			ol.ZIndex = 63
-			ob.MouseButton1Click:Connect(function()
-				current = opt
-				lbl.Text = opt
-				closePopup()
-				if cfg.onChange then cfg.onChange(opt) end
-			end)
-			ob.Parent = popup
+		local searchBox
+		if useSearch then
+			searchBox = textbox(container, "Search…")
+			searchBox.Size = UDim2.new(1, 0, 0, SEARCH_H)
+			searchBox.Position = UDim2.fromOffset(0, 0)
+			searchBox.ZIndex = 63
 		end
-		openPopup = popup
+
+		local listTop = useSearch and SEARCH_H or 0
+		local popup = Instance.new("ScrollingFrame")
+		popup.BackgroundTransparency = 1 -- the container paints the background; avoid double-painting
+		popup.BorderSizePixel = 0
+		popup.ScrollBarThickness = 4
+		popup.ZIndex = 62
+		popup.Position = UDim2.fromOffset(0, listTop)
+		popup.Parent = container
+
+		-- Decide open direction ONCE, at the popup's max possible height, so it doesn't flip up/down as the
+		-- filter changes the row count. Prefer opening below; flip up only when the full list would clip the
+		-- bottom and it does fit above. `gui` is the already-laid-out ScreenGui (a fresh catcher reads size 0).
+		local screenH = gui.AbsoluteSize.Y
+		if screenH < 1 then screenH = 720 end
+		local maxH = listTop + MAX_ROWS * ROW_H
+		local openUp = (abs.Y + sz.Y + maxH > screenH) and (abs.Y - maxH >= 0)
+		local function place(totalH)
+			local y = openUp and (abs.Y - totalH) or (abs.Y + sz.Y)
+			return UDim2.fromOffset(abs.X, math.max(0, math.min(y, screenH - totalH)))
+		end
+
+		local matches = cfg.options -- alias while unfiltered (never mutated in place)
+		local emptyLbl
+		local function renderOptions(query)
+			for _, ch in popup:GetChildren() do
+				if ch:IsA("TextButton") then ch:Destroy() end
+			end
+			if query == "" then
+				matches = cfg.options
+			else
+				local q, tmp = string.lower(query), {}
+				for _, opt in ipairs(cfg.options) do
+					if string.lower(tostring(opt)):find(q, 1, true) then tmp[#tmp + 1] = opt end
+				end
+				matches = tmp
+			end
+			for i, opt in ipairs(matches) do
+				local ob = Instance.new("TextButton")
+				ob.AutoButtonColor = true
+				ob.BackgroundColor3 = Colors.SurfaceElevated
+				ob.BorderSizePixel = 0
+				ob.ZIndex = 62
+				ob.Size = UDim2.new(1, 0, 0, ROW_H)
+				ob.Position = UDim2.fromOffset(0, (i - 1) * ROW_H)
+				ob.Text = ""
+				local ol = label(ob, opt, "bodySm")
+				ol.Position = UDim2.fromOffset(8, 0)
+				ol.Size = UDim2.new(1, -12, 1, 0)
+				ol.ZIndex = 63
+				ob.MouseButton1Click:Connect(function()
+					current = opt
+					lbl.Text = opt
+					closePopup()
+					if cfg.onChange then cfg.onChange(opt) end
+				end)
+				ob.Parent = popup
+			end
+			local m = #matches
+			if m == 0 then
+				if not emptyLbl then -- a TextLabel, so the TextButton-only clear above leaves it intact
+					emptyLbl = label(popup, "No matches", "bodySm", Colors.TextTertiary)
+					emptyLbl.Position = UDim2.fromOffset(8, 0)
+					emptyLbl.Size = UDim2.new(1, -12, 0, ROW_H)
+					emptyLbl.ZIndex = 63
+				end
+				emptyLbl.Visible = true
+			elseif emptyLbl then
+				emptyLbl.Visible = false
+			end
+			local visibleRows = math.min(math.max(m, 1), MAX_ROWS)
+			popup.CanvasSize = UDim2.fromOffset(0, m * ROW_H)
+			popup.Size = UDim2.fromOffset(sz.X, visibleRows * ROW_H)
+			local totalH = listTop + visibleRows * ROW_H
+			container.Size = UDim2.fromOffset(sz.X, totalH)
+			container.Position = place(totalH)
+		end
+
+		if useSearch then
+			searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+				if container.Parent then renderOptions(searchBox.Text) end
+			end)
+			searchBox.FocusLost:Connect(function(enterPressed)
+				-- Never close on a plain focus loss: clicking an option steals focus first and must still register.
+				if not enterPressed then return end
+				if #matches > 0 and container.Parent then
+					local first = matches[1]
+					current = first
+					lbl.Text = first
+					closePopup()
+					if cfg.onChange then cfg.onChange(first) end
+				end
+			end)
+			task.defer(function()
+				if searchBox and searchBox.Parent then searchBox:CaptureFocus() end
+			end)
+		end
+
+		renderOptions("")
 	end)
 
 	return { instance = btn, get = function() return current end }

@@ -108,6 +108,14 @@ local function activeCamera()
 	return workspace.CurrentCamera
 end
 
+-- perf: GetGuiObjectsAtPosition walks the whole PlayerGui tree and is called per input event AND
+-- from the 30Hz hover loop. Cache the result keyed on cursor position for a short window so a burst
+-- of same-frame calls (and a stationary cursor) reuse one walk instead of re-walking each time.
+local uiCacheResult = false
+local uiCacheX, uiCacheY = nil, nil
+local uiCacheClock = -math.huge
+local UI_CACHE_TTL = 0.05
+local UI_CACHE_MOVE = 8
 local function isMouseOverUI()
 	local player = Players.LocalPlayer
 	if not player then
@@ -118,26 +126,37 @@ local function isMouseOverUI()
 		return false
 	end
 	local mp = UserInputService:GetMouseLocation()
+	local now = os.clock()
+	if uiCacheX and (now - uiCacheClock) < UI_CACHE_TTL
+		and math.abs(mp.X - uiCacheX) < UI_CACHE_MOVE and math.abs(mp.Y - uiCacheY) < UI_CACHE_MOVE then
+		return uiCacheResult
+	end
+	uiCacheX, uiCacheY, uiCacheClock = mp.X, mp.Y, now
 	local inset = GuiService:GetGuiInset()
 	local x, y = mp.X, mp.Y - inset.Y
 	local objects = pg:GetGuiObjectsAtPosition(x, y)
+	local result = false
 	for _, obj in objects do
 		local cursor = obj
 		while cursor and cursor:IsA("GuiObject") do
 			local sink = cursor:GetAttribute("AoWInputSink")
 			if sink == true then
-				return true
+				result = true
+				break
 			end
 			if sink == false then
 				break
 			end
 			if cursor:IsA("ScrollingFrame") then
-				return true
+				result = true
+				break
 			end
 			cursor = cursor.Parent
 		end
+		if result then break end
 	end
-	return false
+	uiCacheResult = result
+	return result
 end
 
 local CLICK_DRAG_THRESHOLD = 6

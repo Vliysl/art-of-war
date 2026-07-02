@@ -48,6 +48,7 @@ local pendingRetry = {}
 local heartbeatConn
 local battleSub, provinceSub, snapshotSub
 local started = false
+local chevronAccum = 0 -- perf: throttles the per-frame chevron re-aim to ~10Hz
 
 local function ensureFolders()
 	if markersFolder and markersFolder.Parent then return true end
@@ -631,7 +632,7 @@ function CombatView.init()
 		snapshotSub = ClientStateCache.onChange("snapshot", fullRescan)
 	end
 
-	heartbeatConn = RunService.Heartbeat:Connect(function()
+	heartbeatConn = RunService.Heartbeat:Connect(function(dt)
 		if next(dirtyBattles) then
 			for id in pairs(dirtyBattles) do reconcileBattle(id) end
 			table.clear(dirtyBattles)
@@ -640,9 +641,12 @@ function CombatView.init()
 			for id in pairs(dirtySieges) do reconcileSiege(id) end
 			table.clear(dirtySieges)
 		end
-		-- Keep each battle bubble's chevron pointing in the on-screen attack
-		-- direction (attacker origin -> defender) as the camera moves. Cheap: a
-		-- handful of battles at most.
+		-- Keep each battle bubble's chevron pointing in the on-screen attack direction as the
+		-- camera moves. Only the legacy billboard bar has a chevron (the disc has no per-frame
+		-- work), so throttle to ~10Hz -- imperceptible and free under EnableBattleDisc.
+		chevronAccum += dt
+		if chevronAccum < 0.1 then return end
+		chevronAccum = 0
 		local cam = workspace.CurrentCamera
 		if cam and next(battleMarkers) then
 			for _, marker in pairs(battleMarkers) do

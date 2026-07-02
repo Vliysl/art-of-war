@@ -9,6 +9,11 @@
 local AutoCaptureSystem = {}
 
 local ctx
+-- perf: auto-capture is opt-in, so the enabled set is a tiny fraction of all armies. Track it
+-- here instead of scanning allArmies() every tick. May over-include (a disbanded/cleared army
+-- is skipped by the per-army re-check in tick()); never under-includes because setAutoCapture is
+-- the only enable path and ArmyDisbanded prunes.
+local autoCaptureArmies = {}
 
 local function isUnowned(tag)
 	return tag == nil or tag == "" or tag == "NONE"
@@ -70,31 +75,44 @@ local function setAutoCapture(armyId, enabled)
 	-- Store nil rather than false so a disabled flag doesn't replicate noise.
 	army.autoCapture = enabled and true or nil
 	ctx.WorldState.setArmy(armyId, army)
+	autoCaptureArmies[armyId] = enabled and true or nil
 	return true
 end
 
 local function tick()
 	if not (ctx.MovementSystem and ctx.MovementSystem.beginMovePath) then return end
+	if next(autoCaptureArmies) == nil then return end
 	local now = ctx.TickScheduler.getSimTime()
 	local cooldown = ctx.WorldConstants.FailedAttackCooldownSec or 20
-	for armyId, army in ctx.WorldState.allArmies() do
-		-- Adjacent engagement: a beaten attacker stays home (no retreat), so without this
-		-- cooldown AutoCapture re-orders the identical attack every tick -- a suicide grind.
-		local coolingDown = army.lastFailedAttackAt ~= nil and (now - army.lastFailedAttackAt) < cooldown
-		if army.autoCapture and not army.movement and not army.battleId and not coolingDown then
-			local owner = army.ownerTag
-			local here = ctx.WorldState.getProvince(army.provinceId)
-			if here and canCapture(owner, here) then
-				-- Standing on a tile we are taking. Under instant capture SiegeSystem is off, so
-				-- flip it here (covers armies left on capturable tiles when the flag turned on);
-				-- if it fails (defended), fall through next tick. Legacy: SiegeSystem sieges in place.
-				if ctx.WorldConstants.EnableInstantCapture and ctx.CombatSystem and ctx.CombatSystem.captureIfUndefended then
-					ctx.CombatSystem.captureIfUndefended(armyId, army.provinceId)
-				end
-			else
-				local target = nearestCapturable(owner, army.provinceId)
-				if target then
-					ctx.MovementSystem.beginMovePath(armyId, target)
+	-- perf: iterate only the (sparse) opt-in set, not allArmies(). Snapshot the ids so beginMovePath
+	-- side effects can't perturb the traversal; prune entries whose flag/army is gone.
+	local ids = {}
+	for armyId in pairs(autoCaptureArmies) do
+		ids[#ids + 1] = armyId
+	end
+	for _, armyId in ipairs(ids) do
+		local army = ctx.WorldState.getArmy(armyId)
+		if not army or not army.autoCapture then
+			autoCaptureArmies[armyId] = nil
+		else
+			-- Adjacent engagement: a beaten attacker stays home (no retreat), so without this
+			-- cooldown AutoCapture re-orders the identical attack every tick -- a suicide grind.
+			local coolingDown = army.lastFailedAttackAt ~= nil and (now - army.lastFailedAttackAt) < cooldown
+			if not army.movement and not army.battleId and not coolingDown then
+				local owner = army.ownerTag
+				local here = ctx.WorldState.getProvince(army.provinceId)
+				if here and canCapture(owner, here) then
+					-- Standing on a tile we are taking. Under instant capture SiegeSystem is off, so
+					-- flip it here (covers armies left on capturable tiles when the flag turned on);
+					-- if it fails (defended), fall through next tick. Legacy: SiegeSystem sieges in place.
+					if ctx.WorldConstants.EnableInstantCapture and ctx.CombatSystem and ctx.CombatSystem.captureIfUndefended then
+						ctx.CombatSystem.captureIfUndefended(armyId, army.provinceId)
+					end
+				else
+					local target = nearestCapturable(owner, army.provinceId)
+					if target then
+						ctx.MovementSystem.beginMovePath(armyId, target)
+					end
 				end
 			end
 		end
@@ -106,6 +124,10 @@ function AutoCaptureSystem.register(context)
 	local api = { setAutoCapture = setAutoCapture }
 	context.AutoCaptureSystem = api
 	for k, v in pairs(api) do AutoCaptureSystem[k] = v end
+
+	context.EventBus.subscribe(context.Channels.ArmyDisbanded, function(payload)
+		if payload and payload.armyId then autoCaptureArmies[payload.armyId] = nil end
+	end)
 
 	context.TickScheduler.register({
 		id = "AutoCaptureSystem",
