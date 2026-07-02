@@ -8,6 +8,10 @@
 -- outline + colour on top) with overlapping segments so the joints read as one continuous flowing
 -- arrow instead of a blocky zigzag. The body is a uniform width and ends in a single matching-width
 -- point (flat back at the origin, thick body, one clean point at the target = a 5-sided banner).
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local WorldConstants = require(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Shared"):WaitForChild("WorldConstants"))
+
 local MoveArrowRender = {}
 
 local DEFAULT_WIDTH = 0.77  -- scaled for 2048 map (was 7)
@@ -197,6 +201,41 @@ local function resample(points, step, maxSeg)
 	end
 	if (out[#out] - points[#points]).Magnitude > 1e-3 then
 		out[#out + 1] = points[#points]
+	end
+	return out
+end
+
+-- Seam-unfold an ordered polyline: the map wraps horizontally every MapWidth studs, so a route that
+-- crosses the ±MapHalfWidth seam arrives as centroids that jump nearly a whole MapWidth in X -- the
+-- ribbon would streak the LONG way back across the map. Whenever consecutive points jump by more
+-- than half the map, shift the current point (and, via the running offset, every point after it) by
+-- a whole MapWidth so each segment takes the SHORT way around. Then re-anchor the whole line by a
+-- multiple of MapWidth so the FIRST point sits in the main fold -- the army's real tile always lives
+-- there; the far half of the route may extend past the seam over the LeftWrap/RightWrap map clones,
+-- which is exactly where the wrapped map renders.
+function MoveArrowRender.unfoldPoints(points)
+	if #points < 2 then
+		return points
+	end
+	local mapWidth = WorldConstants.MapWidth
+	local halfWidth = WorldConstants.MapHalfWidth
+	local out = { points[1] }
+	local offset = 0
+	for i = 2, #points do
+		local p = points[i]
+		local dx = (p.X + offset) - out[i - 1].X
+		if dx > halfWidth then
+			offset -= mapWidth
+		elseif dx < -halfWidth then
+			offset += mapWidth
+		end
+		out[i] = (offset == 0) and p or Vector3.new(p.X + offset, p.Y, p.Z)
+	end
+	local shift = -math.floor((out[1].X - WorldConstants.MapCenterX + halfWidth) / mapWidth) * mapWidth
+	if shift ~= 0 then
+		for i, p in ipairs(out) do
+			out[i] = Vector3.new(p.X + shift, p.Y, p.Z)
+		end
 	end
 	return out
 end

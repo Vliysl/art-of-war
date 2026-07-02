@@ -30,7 +30,7 @@ local COLOR_FILL = Color3.fromRGB(245, 205, 70)   -- yellow "charging" fill
 local mapFolder, provincesFolder, arrowsFolder
 local conn
 local armiesSub, snapshotSub
-local arrows = {}    -- [armyId] = { sig = string, statics = { Part, ... }, fill = Part }
+local arrows = {}    -- [armyId] = { sig = string, statics = { Part, ... }, fill = Part, fillFrom/fillTo = Vector3 }
 local centerCache = {}
 -- perf: index of armyIds that currently have an active server movement, maintained from the
 -- "armies" replication deltas (the only place army.movement is created/cleared). The per-frame
@@ -91,22 +91,13 @@ local function destroyArrow(armyId)
 	arrows[armyId] = nil
 end
 
--- Dark smoothed banner over the whole route (current leg + any queued steps) ending in a solid
--- arrowhead at the final tile. Uses the SAME smoothed geometry as the hover preview
--- (MoveArrowRender.buildArrow: Chaikin + resample + overlapping two-layer ribbon) so the committed
--- arrow flows as one continuous banner instead of zig-zagging plank-to-plank between centroids.
-local function buildStatics(army, fromPos, toPos)
+-- Dark smoothed banner over the whole route (points = current leg + any queued steps, already
+-- seam-unfolded by the caller) ending in a solid arrowhead at the final tile. Uses the SAME smoothed
+-- geometry as the hover preview (MoveArrowRender.buildArrow: Chaikin + resample + overlapping
+-- two-layer ribbon) so the committed arrow flows as one continuous banner instead of zig-zagging
+-- plank-to-plank between centroids.
+local function buildStatics(points)
 	local statics = {}
-	-- Ordered route: current leg (fromPos -> toPos), then any queued steps.
-	local points = { fromPos, toPos }
-	local mp = army.movementPath
-	if mp and mp.steps then
-		for _, id in ipairs(mp.steps) do
-			local c = provinceCenter(id)
-			if c then points[#points + 1] = c end
-		end
-	end
-
 	for _, p in ipairs(MoveArrowRender.buildArrow(points, {
 		color = COLOR_SHAFT,
 		width = WIDTH,
@@ -132,7 +123,19 @@ local function updateArrow(armyId, army, now)
 	local a = arrows[armyId]
 	if not a or a.sig ~= sig then
 		destroyArrow(armyId)
-		a = { sig = sig, statics = buildStatics(army, fromPos, toPos), fill = nil }
+		-- Ordered route: current leg (fromPos -> toPos), then any queued steps -- seam-unfolded ONCE per
+		-- route and cached alongside sig so the per-frame fill lerp reuses the same fold (a route across
+		-- the ±MapHalfWidth wrap must fill toward the seam, not streak back across the map).
+		local points = { fromPos, toPos }
+		local mp = army.movementPath
+		if mp and mp.steps then
+			for _, id in ipairs(mp.steps) do
+				local c = provinceCenter(id)
+				if c then points[#points + 1] = c end
+			end
+		end
+		points = MoveArrowRender.unfoldPoints(points)
+		a = { sig = sig, statics = buildStatics(points), fill = nil, fillFrom = points[1], fillTo = points[2] }
 		arrows[armyId] = a
 	end
 
@@ -143,9 +146,10 @@ local function updateArrow(armyId, army, now)
 		progress = math.clamp((now - started) / (completes - started), 0, 1)
 	end
 
-	-- Yellow fill grows along the CURRENT leg only (origin -> front); queued legs stay dark.
-	local front = fromPos:Lerp(toPos, progress)
-	local fa = fromPos + Vector3.new(0, FILL_LIFT_EPS, 0)
+	-- Yellow fill grows along the CURRENT leg only (origin -> front); queued legs stay dark. Lerp the
+	-- UNFOLDED pair so the fill tracks the rendered ribbon across the seam, not the raw centroids.
+	local front = a.fillFrom:Lerp(a.fillTo, progress)
+	local fa = a.fillFrom + Vector3.new(0, FILL_LIFT_EPS, 0)
 	local fb = front + Vector3.new(0, FILL_LIFT_EPS, 0)
 	local dist = (fb - fa).Magnitude
 	if dist < 0.05 then

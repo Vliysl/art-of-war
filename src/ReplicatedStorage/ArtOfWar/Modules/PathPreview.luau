@@ -40,6 +40,7 @@ local INVOKE_TIMEOUT = 5 -- seconds before a lane's in-flight guard is force-rel
 local MAX_LANES = 12 -- bound the number of simultaneous hover requests during a big multi-select
 local RECONCILE_INTERVAL = 0.5 -- backstop only; selection/army-delta events carry the latency-sensitive cases
 local ROUTE_TTL = 4 -- seconds a cached (from,to) route stays fresh (instant re-hover, no round-trip)
+local ROUTE_CACHE_MAX = 64 -- hard cap; oldest-first eviction keeps long hover sweeps from growing the table unbounded
 
 local mapFolder = nil
 local previewFolder = nil
@@ -58,7 +59,8 @@ local selectionConn = nil
 local armiesSub = nil
 local snapshotSub = nil
 local reconcileAccum = 0
-local routeCache = {} -- [cacheKey] = { nodes, color, expires }
+local routeCache = {} -- [cacheKey] = { nodes, color, expires, at }
+local routeCacheCount = 0
 
 local function ensurePreviewFolder()
 	mapFolder = workspace:FindFirstChild("ArtOfWarMap")
@@ -119,6 +121,9 @@ local function renderLane(lane, nodes, color)
 		if pos then pts[#pts + 1] = pos end
 	end
 	if #pts < 2 then return end
+	-- Seam-unfold so a route crossing the ±MapHalfWidth wrap draws one short ribbon over the wrap
+	-- clones instead of streaking the long way back across the map.
+	pts = MoveArrowRender.unfoldPoints(pts)
 	local parts = MoveArrowRender.buildArrow(pts, {
 		color = color,
 		width = ARROW_WIDTH,
@@ -142,13 +147,44 @@ local function cacheGet(fromId, toId)
 	if not entry then return nil end
 	if os.clock() >= entry.expires then
 		routeCache[k] = nil
+		routeCacheCount -= 1
 		return nil
 	end
 	return entry
 end
 
 local function cachePut(fromId, toId, nodes, color)
-	routeCache[cacheKey(fromId, toId)] = { nodes = nodes, color = color, expires = os.clock() + ROUTE_TTL }
+	local k = cacheKey(fromId, toId)
+	if routeCache[k] == nil then
+		if routeCacheCount >= ROUTE_CACHE_MAX then
+			-- Evict the oldest entry (smallest insert time). Linear scan is fine at 64 entries.
+			local oldestKey, oldestAt
+			for key, entry in pairs(routeCache) do
+				if oldestAt == nil or entry.at < oldestAt then
+					oldestKey, oldestAt = key, entry.at
+				end
+			end
+			if oldestKey then
+				routeCache[oldestKey] = nil
+				routeCacheCount -= 1
+			end
+		end
+		routeCacheCount += 1
+	end
+	local now = os.clock()
+	routeCache[k] = { nodes = nodes, color = color, expires = now + ROUTE_TTL, at = now }
+end
+
+-- Drop entries past their TTL. Called from clear() (end of a hover session) so dead routes do not
+-- accumulate between sessions -- cacheGet only evicts the specific key it is asked for.
+local function cachePurgeExpired()
+	local now = os.clock()
+	for k, entry in pairs(routeCache) do
+		if now >= entry.expires then
+			routeCache[k] = nil
+			routeCacheCount -= 1
+		end
+	end
 end
 
 local function getLane(key)
@@ -206,9 +242,14 @@ local function dispatchLane(lane, fromId, toId)
 			renderLane(lane, res.nodes, color)
 			lane.shownFrom, lane.shownTo = fromId, toId
 			cachePut(fromId, toId, res.nodes, color)
+		else
+			-- failure (invoke error / malformed or rejected reply): clear the lane instead of leaving the
+			-- PREVIOUS route on screen as a ghost arrow pointing at a stale target. reqFrom/reqTo stay set
+			-- so a reconcile from an unrelated army delta does not re-spam this dead target. (Unreachable-
+			-- but-valid targets are NOT this path -- the server answers ok=true + blocked, red stub.)
+			clearLaneLines(lane)
+			lane.shownFrom, lane.shownTo = nil, nil
 		end
-		-- failure (no path / error): keep the last valid arrow on screen; reqFrom/reqTo stay set so a
-		-- reconcile from an unrelated army delta does not re-spam this dead target.
 	end)
 end
 
@@ -300,6 +341,7 @@ end
 
 function PathPreview.clear()
 	desiredTo = nil
+	cachePurgeExpired()
 	reconcile()
 end
 
@@ -313,6 +355,7 @@ function PathPreview.destroy()
 	previewFolder = nil
 	remoteFn = nil
 	table.clear(routeCache)
+	routeCacheCount = 0
 end
 
 return PathPreview
