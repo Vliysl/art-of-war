@@ -582,6 +582,31 @@ InputValidator.register("DisbandArmyGroup", {
 	schema = { { name = "groupId", type = "string" } },
 	rate = { count = 6, window = 15 },
 })
+-- Combat depth C: generals.
+InputValidator.register("BuyGeneral", { schema = {}, rate = { count = 3, window = 30 } })
+InputValidator.register("AssignGeneral", {
+	schema = {
+		{ name = "groupId", type = "string" },
+		{ name = "generalId", type = "string" },
+	},
+	rate = { count = 6, window = 15 },
+})
+InputValidator.register("UnassignGeneral", {
+	schema = { { name = "groupId", type = "string" } },
+	rate = { count = 6, window = 15 },
+})
+-- Combat depth D: cover-border order.
+InputValidator.register("SetBorderCover", {
+	schema = {
+		{ name = "groupId", type = "string" },
+		{ name = "targetTag", type = "countryTag" },
+	},
+	rate = { count = 6, window = 15 },
+})
+InputValidator.register("ClearBorderCover", {
+	schema = { { name = "groupId", type = "string" } },
+	rate = { count = 6, window = 15 },
+})
 InputValidator.register("Reinforce", {
 	schema = {
 		{ name = "armyId", type = "string" },
@@ -1309,6 +1334,51 @@ bindEvent("DisbandArmyGroup", function(player, groupId)
 	local tag = auth.tagFor(player)
 	if not tag or not ownedGroup(tag, groupId) then return end
 	ags.disbandGroup(groupId, "player")
+end)
+
+bindEvent("BuyGeneral", function(player)
+	local auth = authority()
+	local gs = loadedSystems.GeneralSystem
+	if not auth or not gs or not gs.buyGeneral then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	gs.buyGeneral(tag)
+end)
+
+bindEvent("AssignGeneral", function(player, groupId, generalId)
+	local auth = authority()
+	local gs = loadedSystems.GeneralSystem
+	if not auth or not gs or not gs.assignGeneral then return end
+	local tag = auth.tagFor(player)
+	if not tag or not ownedGroup(tag, groupId) then return end
+	gs.assignGeneral(tag, groupId, generalId)
+end)
+
+bindEvent("UnassignGeneral", function(player, groupId)
+	local auth = authority()
+	local gs = loadedSystems.GeneralSystem
+	if not auth or not gs or not gs.unassignGeneral then return end
+	local tag = auth.tagFor(player)
+	if not tag or not ownedGroup(tag, groupId) then return end
+	gs.unassignGeneral(tag, groupId)
+end)
+
+bindEvent("SetBorderCover", function(player, groupId, targetTag)
+	local auth = authority()
+	local bcs = loadedSystems.BorderCoverSystem
+	if not auth or not bcs or not bcs.setBorderCover then return end
+	local tag = auth.tagFor(player)
+	if not tag or not ownedGroup(tag, groupId) then return end
+	bcs.setBorderCover(groupId, targetTag)
+end)
+
+bindEvent("ClearBorderCover", function(player, groupId)
+	local auth = authority()
+	local bcs = loadedSystems.BorderCoverSystem
+	if not auth or not bcs or not bcs.clearBorderCover then return end
+	local tag = auth.tagFor(player)
+	if not tag or not ownedGroup(tag, groupId) then return end
+	bcs.clearBorderCover(groupId)
 end)
 
 bindEvent("Reinforce", function(player, armyId, provinceId)

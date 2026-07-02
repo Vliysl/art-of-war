@@ -24,6 +24,42 @@ local function officerModifierFor(army, field)
 	return mod.modifierSum(army.officer.traits, field) or 0
 end
 
+-- Combat depth C: the group general's contribution, folded ON TOP of the army's own officer as a
+-- separate clamped factor so N grouped armies never compound the general's effect. LeaderTraits use
+-- army_attack / army_defense / army_morale fields. Gated + returns the neutral value when off.
+local function commanderTraitSum(general, field)
+	if not general or not general.traits then return 0 end
+	local defs = ctx.Bundle and ctx.Bundle.leaderTraits or nil
+	if not defs then return 0 end
+	local total = 0
+	for _, id in ipairs(general.traits) do
+		local t = defs[id]
+		if t and t.modifiers and t.modifiers[field] then total += t.modifiers[field] end
+	end
+	return total
+end
+
+local function commanderCombatMultiplier(army, sideRole)
+	if not ctx.WorldConstants.EnableGenerals or not ctx.GeneralSystem then return 1 end
+	local general = ctx.GeneralSystem.getCommanderFor(army)
+	if not general then return 1 end
+	local field = (sideRole == "attack") and "army_attack" or "army_defense"
+	local cap = ctx.WorldConstants.GeneralCombatBonusCap or 1.30
+	-- Floor at 1: a general is pure upside -- a defensive general's negative attack trait never
+	-- makes a member army WORSE than ungrouped (it just doesn't help attack). Ceiling caps runaway.
+	local traitMult = math.clamp(1 + commanderTraitSum(general, field), 1, cap)
+	local skillBonus = (math.clamp(general.skill or 2, 0, 5) - 2) * 0.1
+	return traitMult * (1 + skillBonus)
+end
+
+local function commanderMoraleResist(army)
+	if not ctx.WorldConstants.EnableGenerals or not ctx.GeneralSystem then return 0 end
+	local general = ctx.GeneralSystem.getCommanderFor(army)
+	if not general then return 0 end
+	local cap = ctx.WorldConstants.GeneralMoraleResistCap or 0.25
+	return math.clamp(commanderTraitSum(general, "army_morale"), 0, cap)
+end
+
 -- Doctrine-as-tactic classification (in-system; promote to data later)
 local OFFENSIVE_DOCTRINES = {
 	heavy_cavalry = true,
@@ -109,6 +145,7 @@ local function statMultiplier(army, terrain, sideRole)
 	local skill = (army.officer and army.officer[skillField]) or 2
 	local skillBonus = (math.clamp(skill, 0, 5) - 2) * 0.1   -- spec G.1.6: +/-0.1 per skill point vs default 2
 	local officer = (1 + officerModifierFor(army, (sideRole == "attack") and "attack" or "defense")) * (1 + skillBonus)
+	local commander = commanderCombatMultiplier(army, sideRole)
 	local tactic, entrench = 1, 1
 	if sideRole == "attack" then
 		tactic = 1 + tacticBonusForCountry(country, "offensive")
@@ -116,7 +153,7 @@ local function statMultiplier(army, terrain, sideRole)
 		tactic = 1 + tacticBonusForCountry(country, "defensive")
 		entrench = 1 + (army.entrenchment or 0) * (ctx.WorldConstants.CombatEntrenchmentDefensePerLevel or 0.02)
 	end
-	return mod * training * spec * officer * tactic * entrench
+	return mod * training * spec * officer * commander * tactic * entrench
 end
 
 local function effectiveWidthFor(record)
@@ -579,7 +616,8 @@ local function buildSideInput(armyIds, terrain, record, sideRole)
 					baseOrganization = army.baseOrganization or orgMax,
 					atkMult = atkMult,
 					defMult = defMult,
-					moraleResist = officerModifierFor(army, "morale") + officerModifierFor(army, "discipline"),
+					moraleResist = officerModifierFor(army, "morale") + officerModifierFor(army, "discipline")
+						+ commanderMoraleResist(army),
 					units = units,
 				})
 			end
@@ -678,6 +716,27 @@ local function tickBattle(record)
 	-- Officer XP: damage dealt by a side == damage taken by the other side.
 	awardSideXp(record.attackerArmyIds, result.defender.damageTaken)
 	awardSideXp(record.defenderArmyIds, result.attacker.damageTaken)
+
+	-- Combat depth C: group generals also earn XP from their armies' battles, awarded ONCE per
+	-- commander per round (a group's armies share one general -> don't multiply by member count).
+	if ctx.WorldConstants.EnableGenerals and ctx.GeneralSystem and ctx.GeneralSystem.awardGeneralXp then
+		local function awardCommanderSide(armyIds, damageDealt)
+			local xp = 1 + math.floor((damageDealt or 0) * 0.02 + 0.5)
+			local seen = {}
+			for _, armyId in ipairs(armyIds) do
+				local army = ctx.WorldState.getArmy(armyId)
+				local gid = army and army.groupId
+				local grp = gid and ctx.WorldState.getArmyGroup(gid)
+				local cid = grp and grp.commanderId
+				if cid and not seen[cid] then
+					seen[cid] = true
+					ctx.GeneralSystem.awardGeneralXp(army, xp)
+				end
+			end
+		end
+		awardCommanderSide(record.attackerArmyIds, result.defender.damageTaken)
+		awardCommanderSide(record.defenderArmyIds, result.attacker.damageTaken)
+	end
 
 	record.round = (record.round or 0) + 1
 	record.lastDamageRoll = { attacker = result.attacker.damageTaken, defender = result.defender.damageTaken }
