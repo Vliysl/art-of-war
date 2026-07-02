@@ -1,6 +1,6 @@
 local WorldState = {}
 
-local COLLECTIONS = { "provinces", "countries", "markets", "units", "fleets", "tradeRoutes", "ideologies", "leaders", "armies", "battles", "wars", "peaceProposals", "tradeOrders", "pacts" }
+local COLLECTIONS = { "provinces", "countries", "markets", "units", "fleets", "tradeRoutes", "ideologies", "leaders", "armies", "battles", "wars", "peaceProposals", "tradeOrders", "pacts", "armyGroups" }
 
 local store
 local dirty
@@ -250,6 +250,21 @@ function WorldState.allPacts()
 	return store.pacts
 end
 
+function WorldState.setArmyGroup(id, record)
+	if record == nil then tombstone("armyGroups", id); return end
+	store.armyGroups[id] = record
+	mark("armyGroups", id)
+	bump()
+end
+
+function WorldState.getArmyGroup(id)
+	return store.armyGroups[id]
+end
+
+function WorldState.allArmyGroups()
+	return store.armyGroups
+end
+
 function WorldState.snapshot()
 	return {
 		revision = revision,
@@ -267,6 +282,7 @@ function WorldState.snapshot()
 		peaceProposals = store.peaceProposals,
 		tradeOrders = store.tradeOrders,
 		pacts = store.pacts,
+		armyGroups = store.armyGroups,
 	}
 end
 

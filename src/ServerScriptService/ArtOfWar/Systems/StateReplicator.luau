@@ -6,7 +6,7 @@ local BROADCAST_INTERVAL = 1.5
 -- every broadcast tick + bounded by a short TTL; a joiner may see state up to
 -- ~SNAPSHOT_TTL old, which the next delta corrects. Delta path is untouched.
 local SNAPSHOT_TTL = 2
-local COLLECTIONS = { "provinces", "countries", "markets", "tradeRoutes", "armies", "battles", "fleets", "wars", "peaceProposals", "tradeOrders", "pacts" }
+local COLLECTIONS = { "provinces", "countries", "markets", "tradeRoutes", "armies", "battles", "fleets", "wars", "peaceProposals", "tradeOrders", "pacts", "armyGroups" }
 local GETTERS = {
 	provinces = "getProvince",
 	countries = "getCountry",
@@ -19,6 +19,7 @@ local GETTERS = {
 	peaceProposals = "getPeaceProposal",
 	tradeOrders = "getTradeOrder",
 	pacts = "getPact",
+	armyGroups = "getArmyGroup",
 }
 
 local ctx
@@ -77,6 +78,7 @@ local function buildSnapshotUncached()
 	snapshot.peaceProposals = ctx.WorldState.allPeaceProposals()
 	snapshot.tradeOrders = ctx.WorldState.allTradeOrders()
 	snapshot.pacts = ctx.WorldState.allPacts()
+	snapshot.armyGroups = ctx.WorldState.allArmyGroups()
 	return snapshot
 end
 

@@ -49,6 +49,9 @@ WorldConstants.EnableMultiProvinceActions = true  -- C6: ctrl/shift multi-provin
 WorldConstants.EnableNewUnitModels = true         -- C8: cavalry/dragoon horse model (+ C9 ship model at sea)
 WorldConstants.EnableSeaTransport = true          -- C9: armies path over sea tiles (embark/sail/disembark, sea battles)
 WorldConstants.EnableDefenseBreakdown = true      -- Combat depth A: show terrain/fort/entrench defender bonus in province + army UI
+WorldConstants.EnableArmyGroups = false           -- Combat depth B: persistent named army groups
+WorldConstants.EnableGenerals = false             -- Combat depth C: hire/assign named generals that boost a group
+WorldConstants.EnableBorderCover = false          -- Combat depth D: "Cover Border vs Nation" auto-front order
 
 -- C2 instant-capture tunables: the walk-in cost. Forts no longer slow capture -- they bleed
 -- the captor harder instead (per-tier casualty scaling).

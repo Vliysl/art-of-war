@@ -515,6 +515,7 @@ export type ArmyRecord = {
 	originProvinceId: ProvinceId?,
 	supplyStatus: string?,   -- "adequate" | "crowded" | "starving" (display only; set by AttritionSystem)
 	movementPath: { steps: { ProvinceId }, finalProvinceId: ProvinceId }?,  -- remaining legs of a multi-tile order
+	groupId: GroupId?,       -- persistent army-group membership back-ref (Combat depth B)
 	autoCapture: boolean?,   -- AutoCaptureSystem toggle (nil when off, never false)
 	lastFailedAttackAt: number?,  -- sim-time of the last lost attack (AutoCapture re-attack cooldown)
 	battleMoraleMod: { pct: number, expireMonthIndex: number? }?,
@@ -522,6 +523,36 @@ export type ArmyRecord = {
 	reinforceEnabled: boolean?,
 	reinforceTarget: RegimentComposition?,
 	domain: string?,         -- "ground" | "naval"
+}
+
+export type GroupId = string
+export type GeneralId = string
+
+-- Persistent named army group (Combat depth B). Its own replicated collection (armyGroups).
+export type ArmyGroupRecord = {
+	id: GroupId,
+	ownerTag: CountryTag,
+	name: string,
+	memberArmyIds: { ArmyId },
+	commanderId: GeneralId?,            -- assigned roster general (Combat depth C); nil = no boost
+	borderCoverTargetTag: CountryTag?,  -- "Cover Border" order (Combat depth D); nil = passive
+	borderCoverLastRunAt: number?,      -- Combat depth D thrash guard
+	createdAt: number,
+}
+
+-- A hired named general (Combat depth C). Lives on country.generalRoster (not its own collection).
+export type GeneralRecord = {
+	id: GeneralId,
+	firstName: string,
+	lastName: string,
+	title: string?,
+	traits: { string },
+	portraitId: number?,
+	hiredAt: number,
+	experience: number,
+	level: number,
+	skill: number,                      -- 0..5, drives the (clamp-2)*0.1 combat bonus
+	assignedGroupId: GroupId?,
 }
 
 export type RecruitTicket = {

@@ -563,6 +563,25 @@ InputValidator.register("SplitArmy", {
 	},
 	rate = { count = 6, window = 15 },
 })
+-- Combat depth B: army groups.
+InputValidator.register("FormArmyGroup", {
+	schema = {
+		{ name = "name", type = "string" },
+		{ name = "armyIds", type = "shallowTable" },
+	},
+	rate = { count = 6, window = 15 },
+})
+InputValidator.register("RenameArmyGroup", {
+	schema = {
+		{ name = "groupId", type = "string" },
+		{ name = "name", type = "string" },
+	},
+	rate = { count = 4, window = 15 },
+})
+InputValidator.register("DisbandArmyGroup", {
+	schema = { { name = "groupId", type = "string" } },
+	rate = { count = 6, window = 15 },
+})
 InputValidator.register("Reinforce", {
 	schema = {
 		{ name = "armyId", type = "string" },
@@ -1248,6 +1267,48 @@ bindEvent("SplitArmy", function(player, armyId, composition)
 	end
 	if next(cleaned) == nil then return end
 	armySys.splitArmy(armyId, cleaned)
+end)
+
+bindEvent("FormArmyGroup", function(player, name, armyIds)
+	local auth = authority()
+	local ags = loadedSystems.ArmyGroupSystem
+	if not auth or not ags or not ags.createGroup then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	if type(armyIds) ~= "table" then return end
+	local cleaned = {}
+	for _, id in ipairs(armyIds) do
+		if type(id) == "string" then
+			local army = context.WorldState.getArmy(id)
+			if army and army.ownerTag == tag then table.insert(cleaned, id) end
+		end
+	end
+	if #cleaned == 0 then return end
+	ags.createGroup(tag, name, cleaned)
+end)
+
+local function ownedGroup(tag, groupId)
+	local g = context.WorldState.getArmyGroup(groupId)
+	if g and g.ownerTag == tag then return g end
+	return nil
+end
+
+bindEvent("RenameArmyGroup", function(player, groupId, name)
+	local auth = authority()
+	local ags = loadedSystems.ArmyGroupSystem
+	if not auth or not ags or not ags.renameGroup then return end
+	local tag = auth.tagFor(player)
+	if not tag or not ownedGroup(tag, groupId) then return end
+	ags.renameGroup(groupId, name)
+end)
+
+bindEvent("DisbandArmyGroup", function(player, groupId)
+	local auth = authority()
+	local ags = loadedSystems.ArmyGroupSystem
+	if not auth or not ags or not ags.disbandGroup then return end
+	local tag = auth.tagFor(player)
+	if not tag or not ownedGroup(tag, groupId) then return end
+	ags.disbandGroup(groupId, "player")
 end)
 
 bindEvent("Reinforce", function(player, armyId, provinceId)
