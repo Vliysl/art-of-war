@@ -716,8 +716,10 @@ function HudWiring.start(modules)
 			-- A plain (non-command) map click drops any selected army stack, so clicking a province
 			-- or empty tile deselects troops (parallels the X-key deselect). Clicking your OWN army is
 			-- consumed by ArmyView's classifier and never reaches this listener, so this cannot clobber
-			-- a fresh selection.
-			if ArmyView and ArmyView.deselect then
+			-- a fresh selection. Alt-inspect (new input scheme) keeps the stack alive -- inspecting
+			-- the tile under your own token is its whole purpose.
+			local altKeep = ProvinceInteraction.isAltInspecting and ProvinceInteraction.isAltInspecting()
+			if ArmyView and ArmyView.deselect and not altKeep then
 				local sel = selectedArmies()
 				if sel and #sel > 0 then
 					ArmyView.deselect()
@@ -789,6 +791,13 @@ function HudWiring.start(modules)
 				ProvinceInteraction.setRightClickPredicate(function()
 					local sel = selectedArmies()
 					return sel ~= nil and #sel > 0
+				end)
+			end
+			-- New input scheme: a pending requestTarget command (fleet attack/reinforce picker)
+			-- must consume the next click through the select pipeline, not the LMB-move branch.
+			if ProvinceInteraction.setCommandPredicate then
+				ProvinceInteraction.setCommandPredicate(function()
+					return pendingCommand ~= nil
 				end)
 			end
 			ProvinceInteraction.onRightClick(function(part)

@@ -6,6 +6,7 @@ local Players = game:GetService("Players")
 local GuiService = game:GetService("GuiService")
 
 local Platform = require(script.Parent:WaitForChild("Platform"))
+local WorldConstants = require(script.Parent.Parent:WaitForChild("Shared"):WaitForChild("WorldConstants"))
 
 local DEBOUNCE_FRAMES = 1
 local HOVER_INTERVAL = 1 / 30
@@ -150,6 +151,15 @@ local touchMoved = false
 local rightClickArmed = function()
 	return true
 end
+-- New input scheme (EnableNewInputScheme): a pending targeted command (HudWiring requestTarget,
+-- e.g. fleet attack) must consume the next map click via the select pipeline, NOT the LMB-move
+-- branch. HudWiring installs the probe.
+local commandPending = function()
+	return false
+end
+-- True only while an Alt+LMB inspect is dispatching its setSelection, so HudWiring's select
+-- listener can keep the current army selection alive (the whole point of Alt-inspect).
+local altInspecting = false
 
 local function getProvinceAtMouse(skipUiCheck)
 	local cam = activeCamera()
@@ -467,13 +477,15 @@ function ProvinceInteraction.init()
 	end)
 
 	connections[#connections + 1] = UserInputService.InputBegan:Connect(function(input, processed)
-		-- Right-click move: capture on press (any map mode), resolve on release as a CLICK (move)
-		-- vs DRAG (field-camera rotate). Armed only while a unit is selected, so with nothing
-		-- selected MB2 is left entirely to the camera. gameProcessedEvent is ignored here because
+		-- Right-click: capture on press (any map mode), resolve on release as a CLICK vs DRAG.
+		-- Legacy scheme: click = move order, armed only while a unit is selected (with nothing
+		-- selected MB2 is left entirely to the camera); drag = field-camera rotate.
+		-- New scheme (EnableNewInputScheme): click = select/inspect (always armed); drag = map
+		-- camera pan (CameraController's MB2 handler). gameProcessedEvent is ignored here because
 		-- the Classic field camera marks MB2 processed.
 		if input.UserInputType == Enum.UserInputType.MouseButton2 then
 			mb2Down, mb2DownProvince, mb2Moved, mb2Accum = false, nil, false, 0
-			if not rightClickArmed() then
+			if not WorldConstants.EnableNewInputScheme and not rightClickArmed() then
 				return
 			end
 			if isMouseOverUI() then
@@ -580,8 +592,15 @@ function ProvinceInteraction.init()
 			end
 			if moved then
 				return
-			end -- right-drag = field-camera rotate, not a move order
+			end -- right-drag = camera (new scheme: map pan; legacy: field-camera rotate)
 			if isMouseOverUI() then
+				return
+			end
+			if WorldConstants.EnableNewInputScheme then
+				-- RMB click = select/inspect with the OLD left-click semantics, including the
+				-- army-deselect ripple through the select listeners (symmetric button swap).
+				clearMultiSelection()
+				setSelection(province)
 				return
 			end
 			if province and onRightClicked then
@@ -630,6 +649,21 @@ function ProvinceInteraction.init()
 		local ok3, province = pcall(getProvinceAtMouse, true)
 		local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
 			or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
+		-- New scheme: with units selected, a plain left-click on a province IS the move order --
+		-- the same routing the touch tap-to-move rule uses. Alt keeps inspecting; a pending
+		-- targeted command (fleet attack etc.) keeps priority and resolves through the select
+		-- pipeline below; empty clicks fall through to deselect.
+		if WorldConstants.EnableNewInputScheme and not alt and ok3 and province
+			and rightClickArmed() and not commandPending() then
+			if onRightClicked then
+				onRightClicked(province)
+			end
+			return
+		end
+		-- Alt-inspect must not drop the current army selection (that is its purpose); flagged
+		-- for the duration of the synchronous setSelection dispatch so HudWiring can skip the
+		-- army-deselect ripple.
+		altInspecting = alt and WorldConstants.EnableNewInputScheme
 		if ok3 and province then
 			if shift then
 				toggleInMultiSelection(province)
@@ -642,6 +676,7 @@ function ProvinceInteraction.init()
 			clearMultiSelection()
 			setSelection(nil)
 		end
+		altInspecting = false
 	end)
 end
 
@@ -666,6 +701,14 @@ function ProvinceInteraction.setRightClickPredicate(fn)
 	rightClickArmed = (type(fn) == "function") and fn or function()
 		return false
 	end
+end
+function ProvinceInteraction.setCommandPredicate(fn)
+	commandPending = (type(fn) == "function") and fn or function()
+		return false
+	end
+end
+function ProvinceInteraction.isAltInspecting()
+	return altInspecting
 end
 function ProvinceInteraction.getSelected()
 	return selectedProvince

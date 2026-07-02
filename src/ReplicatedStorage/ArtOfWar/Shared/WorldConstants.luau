@@ -43,10 +43,10 @@ WorldConstants.EnableStrictRetreat = true         -- C1: retreat = adjacent alli
 WorldConstants.EnableInstantCapture = true        -- C2: entering an undefended enemy tile flips it instantly (siege progress off)
 WorldConstants.EnableOccupationFreeze = true      -- C2: enemy occupation cancels recruitment (refunded) + pauses construction
 WorldConstants.EnableAdjacentEngagement = true    -- C3: attackers fight from their own tile; march in only on victory
-WorldConstants.EnableBattleDisc = false           -- C4: border battle disc (SurfaceGui 1-100) replaces the billboard battle bar
-WorldConstants.EnableNewInputScheme = false       -- C5: LMB select/move, RMB pan/inspect (MMB pan kept)
+WorldConstants.EnableBattleDisc = true            -- C4: border battle disc (SurfaceGui 1-100) replaces the billboard battle bar
+WorldConstants.EnableNewInputScheme = true        -- C5: LMB select/move, RMB pan/inspect (MMB pan kept)
 WorldConstants.EnableMultiProvinceActions = false -- C6: ctrl/shift multi-province selection + batched recruit/build remotes
-WorldConstants.EnableNewUnitModels = false        -- C8: cavalry/dragoon horse model (+ C9 ship model at sea)
+WorldConstants.EnableNewUnitModels = true         -- C8: cavalry/dragoon horse model (+ C9 ship model at sea)
 WorldConstants.EnableSeaTransport = false         -- C9: armies path over sea tiles (embark/sail/disembark, sea battles)
 
 -- C2 instant-capture tunables: the walk-in cost. Forts no longer slow capture -- they bleed
@@ -59,6 +59,9 @@ WorldConstants.OccupiedToastWindowSec = 10
 -- C3: a beaten attacker stands down at home instead of retreating; AutoCapture waits this many
 -- sim-seconds before re-attacking after such a loss.
 WorldConstants.FailedAttackCooldownSec = 20
+
+-- C4: world-space battle disc on the border between the attacker origin and the defended tile.
+WorldConstants.BattleDiscDiameter = 4
 
 -- Phase 2: unrest added per owned province the nation holds NO core on (cores suppress unrest). Default 0
 -- (opt-in) -- raise once balanced. Gated by EnableCores; computed O(owned) in UnrestSystem.targetUnrest.

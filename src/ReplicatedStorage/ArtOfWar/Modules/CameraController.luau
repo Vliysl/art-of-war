@@ -177,6 +177,12 @@ local function handleEdgePan(dt)
 	end
 end
 
+-- New input scheme: RMB-drag pans the map (MMB kept for muscle memory). An RMB CLICK must
+-- still reach ProvinceInteraction's inspect, so the pan only engages after the cursor
+-- travels past a small threshold -- matching ProvinceInteraction's click/drag split.
+local MB2_DRAG_THRESHOLD = 6
+local mb2PanPending = nil
+
 local function wireConnections()
 	connections[#connections + 1] = UserInputService.InputBegan:Connect(function(input, processed)
 		if not active then return end
@@ -187,6 +193,10 @@ local function wireConnections()
 			dragStart = Vector2.new(input.Position.X, input.Position.Y)
 			dragCamStart = targetPos
 		end
+		if input.UserInputType == Enum.UserInputType.MouseButton2 and WorldConstants.EnableNewInputScheme then
+			if inputBlocked() then return end
+			mb2PanPending = Vector2.new(input.Position.X, input.Position.Y)
+		end
 		if input.UserInputType == Enum.UserInputType.Keyboard then
 			keysDown[input.KeyCode] = true
 		end
@@ -196,6 +206,10 @@ local function wireConnections()
 		if input.UserInputType == Enum.UserInputType.MouseButton3 then
 			isDragging = false
 		end
+		if input.UserInputType == Enum.UserInputType.MouseButton2 then
+			mb2PanPending = nil
+			isDragging = false
+		end
 		if input.UserInputType == Enum.UserInputType.Keyboard then
 			keysDown[input.KeyCode] = nil
 		end
@@ -203,6 +217,15 @@ local function wireConnections()
 
 	connections[#connections + 1] = UserInputService.InputChanged:Connect(function(input)
 		if not active then return end
+		if mb2PanPending and input.UserInputType == Enum.UserInputType.MouseMovement and not isDragging then
+			local p = Vector2.new(input.Position.X, input.Position.Y)
+			if math.abs(p.X - mb2PanPending.X) > MB2_DRAG_THRESHOLD
+				or math.abs(p.Y - mb2PanPending.Y) > MB2_DRAG_THRESHOLD then
+				isDragging = true
+				dragStart = mb2PanPending
+				dragCamStart = targetPos
+			end
+		end
 		if input.UserInputType == Enum.UserInputType.MouseMovement and isDragging then
 			local delta = Vector2.new(input.Position.X, input.Position.Y) - dragStart
 			local vp = camera.ViewportSize
