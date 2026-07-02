@@ -45,7 +45,7 @@ WorldConstants.EnableOccupationFreeze = true      -- C2: enemy occupation cancel
 WorldConstants.EnableAdjacentEngagement = true    -- C3: attackers fight from their own tile; march in only on victory
 WorldConstants.EnableBattleDisc = true            -- C4: border battle disc (SurfaceGui 1-100) replaces the billboard battle bar
 WorldConstants.EnableNewInputScheme = true        -- C5: LMB select/move, RMB pan/inspect (MMB pan kept)
-WorldConstants.EnableMultiProvinceActions = false -- C6: ctrl/shift multi-province selection + batched recruit/build remotes
+WorldConstants.EnableMultiProvinceActions = true  -- C6: ctrl/shift multi-province selection + batched recruit/build remotes
 WorldConstants.EnableNewUnitModels = true         -- C8: cavalry/dragoon horse model (+ C9 ship model at sea)
 WorldConstants.EnableSeaTransport = false         -- C9: armies path over sea tiles (embark/sail/disembark, sea battles)
 

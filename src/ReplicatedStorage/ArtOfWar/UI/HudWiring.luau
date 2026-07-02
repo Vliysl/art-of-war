@@ -8,6 +8,7 @@ local Registries = require(UI.Registries)
 local ProvinceTooltip = require(UI.Components.ProvinceTooltip)
 local Platform = require(ArtOfWar.Modules.Platform)
 local Button = require(UI.Components.Button)
+local WorldConstants = require(ArtOfWar.Shared.WorldConstants)
 
 local HudWiring = {}
 
@@ -740,6 +741,35 @@ function HudWiring.start(modules)
 			end
 		end)
 
+		-- Multi-province selection (C6): the aggregate ProvinceOverview is driven live from the
+		-- multi-select listener -- every toggle re-fires openProvince so the panel tracks the
+		-- selection; emptying it closes the panel.
+		if WorldConstants.EnableMultiProvinceActions and ProvinceInteraction.addMultiSelectListener then
+			ProvinceInteraction.addMultiSelectListener(function(parts)
+				if nationSelectActive then
+					return
+				end
+				if not parts or #parts == 0 then
+					Hud.closeContext()
+					return
+				end
+				local ids, ownedIds = {}, {}
+				for _, part in ipairs(parts) do
+					local rec, id = provinceFromPart(part)
+					if rec and id ~= nil then
+						ids[#ids + 1] = id
+						if rec.ownerTag == claimedTag then
+							ownedIds[#ownedIds + 1] = id
+						end
+					end
+				end
+				if #ids == 0 then
+					return
+				end
+				Hud.openProvince({ multi = true, ids = ids, ownedIds = ownedIds, isOwn = #ownedIds > 0 })
+			end)
+		end
+
 		ProvinceInteraction.addHoverListener(function(part)
 			-- Hover state changed (this fires only on a province/nil transition), so we're no longer over a
 			-- stable water body -> clear the dedupe key so returning to water re-shows the water tooltip.
@@ -809,8 +839,14 @@ function HudWiring.start(modules)
 				if not id then
 					return
 				end
-				for _, armyId in ipairs(sel) do
-					fire("MoveArmyPath", armyId, id)
+				-- Multi-army orders batch into one remote: MoveArmyPath is rate-limited 12/10s,
+				-- so a large stack selection firing per army would silently drop orders.
+				if #sel > 1 and WorldConstants.EnableMultiProvinceActions then
+					fire("MoveArmyPathMulti", sel, id)
+				else
+					for _, armyId in ipairs(sel) do
+						fire("MoveArmyPath", armyId, id)
+					end
 				end
 				-- Issuing the move drops the selection (HOI4-style): clear the preview, deselect the
 				-- stack, and close the army panel. The in-progress move arrow is driven by replicated
@@ -927,9 +963,44 @@ function HudWiring.start(modules)
 			deselectBtn.AnchorPoint = Vector2.new(0, 0)
 			deselectBtn.Position = UDim2.fromOffset(68, 16) -- top-left, just right of the settings gear
 			deselectBtn:SetAttribute("AoWInputSink", true)
+			-- Touch has no Ctrl/Shift: an on-screen toggle makes plain taps add/remove provinces
+			-- from the multi-selection (C6). Turning it off clears the selection.
+			local multiBtn = nil
+			local function setMultiBtnText(on)
+				-- Button.create's visible text lives on the child "Label" (the TextButton's own
+				-- Text is intentionally empty).
+				local lbl = multiBtn and multiBtn:FindFirstChild("Label")
+				if lbl then
+					lbl.Text = on and "Multi: On" or "Multi: Off"
+				end
+			end
+			if WorldConstants.EnableMultiProvinceActions and ProvinceInteraction.setMultiSelectMode then
+				multiBtn = Button.create({
+					parent = hudLayer,
+					variant = "secondary",
+					text = "Multi: Off",
+					onClick = function()
+						local on = not ProvinceInteraction.getMultiSelectMode()
+						ProvinceInteraction.setMultiSelectMode(on)
+						setMultiBtnText(on)
+					end,
+				})
+				multiBtn.Name = "TouchMultiSelect"
+				multiBtn.AnchorPoint = Vector2.new(0, 0)
+				multiBtn.Position = UDim2.fromOffset(172, 16) -- right of the Deselect button
+				multiBtn:SetAttribute("AoWInputSink", true)
+			end
 			-- Only meaningful in command mode -- field mode (walking the ruler) has no map selection.
 			local function syncDeselectVisible()
-				deselectBtn.Visible = (MapModeController == nil) or (MapModeController.current() == "command")
+				local visible = (MapModeController == nil) or (MapModeController.current() == "command")
+				deselectBtn.Visible = visible
+				if multiBtn then
+					multiBtn.Visible = visible
+					if not visible and ProvinceInteraction.getMultiSelectMode and ProvinceInteraction.getMultiSelectMode() then
+						ProvinceInteraction.setMultiSelectMode(false)
+						setMultiBtnText(false)
+					end
+				end
 			end
 			syncDeselectVisible()
 			if MapModeController and MapModeController.onChange then

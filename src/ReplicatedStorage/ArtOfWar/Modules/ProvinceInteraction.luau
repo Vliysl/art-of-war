@@ -160,6 +160,11 @@ end
 -- True only while an Alt+LMB inspect is dispatching its setSelection, so HudWiring's select
 -- listener can keep the current army selection alive (the whole point of Alt-inspect).
 local altInspecting = false
+-- Multi-province selection cap (server-side batch remotes reject larger lists; the panel
+-- title surfaces the cap). Touch has no modifier keys: multiSelectMode makes plain taps
+-- toggle provinces instead (on-screen toggle in HudWiring).
+local MULTI_SELECT_MAX = 25
+local multiSelectMode = false
 
 local function getProvinceAtMouse(skipUiCheck)
 	local cam = activeCamera()
@@ -299,6 +304,9 @@ local function toggleInMultiSelection(province)
 			notifyMultiSelectionChanged()
 			return
 		end
+	end
+	if #multiSelection >= MULTI_SELECT_MAX then
+		return
 	end
 	table.insert(multiSelection, province)
 	applyMultiHighlights()
@@ -506,6 +514,7 @@ function ProvinceInteraction.init()
 			return
 		end
 		if input.KeyCode == Enum.KeyCode.Escape then
+			clearMultiSelection()
 			setSelection(nil)
 			return
 		end
@@ -563,6 +572,15 @@ function ProvinceInteraction.init()
 				return
 			end
 			if isMouseOverUI() then
+				return
+			end
+			-- 0) Multi-Select mode (on-screen toggle; touch has no modifier keys): plain taps
+			--    toggle provinces in/out of the multi-selection and never move/select.
+			if multiSelectMode then
+				local okM, provinceM = pcall(getProvinceAtMouse, true)
+				if okM and provinceM then
+					toggleInMultiSelection(provinceM)
+				end
 				return
 			end
 			-- 1) Tapped one of our own armies -> classifier selects/stacks it.
@@ -664,8 +682,15 @@ function ProvinceInteraction.init()
 		-- for the duration of the synchronous setSelection dispatch so HudWiring can skip the
 		-- army-deselect ripple.
 		altInspecting = alt and WorldConstants.EnableNewInputScheme
+		local ctrl = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
+			or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
 		if ok3 and province then
-			if shift then
+			if (shift or ctrl) and WorldConstants.EnableMultiProvinceActions then
+				-- Multi-province toggle only: the aggregate panel is driven by the multi-select
+				-- listener; a setSelection here would immediately replace it with the single
+				-- province panel.
+				toggleInMultiSelection(province)
+			elseif shift then
 				toggleInMultiSelection(province)
 				setSelection(province)
 			else
@@ -748,6 +773,17 @@ end
 
 function ProvinceInteraction.clearMultiSelection()
 	clearMultiSelection()
+end
+
+function ProvinceInteraction.setMultiSelectMode(on)
+	multiSelectMode = on == true
+	if not multiSelectMode then
+		clearMultiSelection()
+	end
+end
+
+function ProvinceInteraction.getMultiSelectMode()
+	return multiSelectMode
 end
 
 function ProvinceInteraction.focusPart(part)

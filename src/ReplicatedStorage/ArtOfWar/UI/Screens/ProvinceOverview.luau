@@ -295,8 +295,170 @@ local function actionRow(parent, cfg)
 	return row, progressFill
 end
 
+-- Aggregate mode (C6 multi-province selection): ctx.data = { multi=true, ids={...}, ownedIds={...} }.
+-- One flat body (no tabs): union recruit list + union build list over the OWNED selection, each row
+-- firing the batched remote; per-province validation happens server-side, so partial application
+-- ("Queued in 4/7 provinces") is reported by the server toast, not here. HudWiring re-fires
+-- openProvince on every selection toggle, so this panel is rebuilt live and holds no signature state.
+local function createMulti(ctx)
+	local data = ctx.data or {}
+	local ids = data.ids or {}
+	local ownedIds = data.ownedIds or {}
+	local registries = ctx.registries
+	local handle
+
+	local function cacheProvince(id)
+		return ctx.cache and ctx.cache.getProvince(id) or nil
+	end
+
+	-- Mirror of create()'s canBuildHere, minus the closure state (same eligibility rules).
+	local function canBuildAt(p, id, def)
+		if not p then
+			return false
+		end
+		if p.ownerTag ~= ctx.tag or p.controllerTag ~= ctx.tag then
+			return false
+		end
+		if (p.infraTier or 0) < (def.infraRequirement or 0) then
+			return false
+		end
+		if def.requiresCoastal and p.coastal ~= true then
+			return false
+		end
+		local built = p.buildings or {}
+		local has = {}
+		for _, b in ipairs(built) do
+			has[b] = true
+		end
+		if not def.repeatable and has[id] then
+			return false
+		end
+		for _, prereq in ipairs(def.requires or {}) do
+			if not has[prereq] then
+				return false
+			end
+		end
+		return true
+	end
+
+	local totalDev = 0
+	for _, id in ipairs(ownedIds) do
+		local p = cacheProvince(id)
+		totalDev += (p and p.devTier) or 0
+	end
+
+	handle = ScreenKit.open(ctx, {
+		name = "ProvinceOverview",
+		shell = "panel_medium_shell",
+		title = string.format("%d provinces selected", #ids),
+		subtitle = string.format("%d owned  \u{00B7}  total dev %d  \u{00B7}  max 25", #ownedIds, totalDev),
+		anchorPoint = Vector2.new(1, 1),
+		position = UDim2.new(1, -16, 1, -16),
+		size = UDim2.fromOffset(360, 620),
+	})
+
+	local body = handle.body
+	if #ownedIds == 0 then
+		ScreenKit.note(body, "None of the selected provinces are yours \u{2014} batch actions need owned, controlled land.", 1)
+	else
+		ScreenKit.section(body, string.format("Recruit in all (%d owned)", #ownedIds), 10)
+		local pool = {}
+		for id, def in pairs((registries and registries.UnitTypes) or {}) do
+			if type(def) == "table" and def.recruitCost ~= nil and def.unlockedByDefault ~= false then
+				pool[#pool + 1] = { id = id, def = def }
+			end
+		end
+		table.sort(pool, function(a, b)
+			return (a.def.displayName or a.id) < (b.def.displayName or b.id)
+		end)
+		local uo = 11
+		for _, entry in ipairs(pool) do
+			local def = entry.def
+			actionRow(body, {
+				order = uo,
+				icon = "Army",
+				label = def.displayName or titleCase(entry.id),
+				value = string.format("%d gold ea", def.recruitCost or 0),
+				tooltip = function()
+					return Tooltip.create({
+						title = def.displayName or entry.id,
+						rows = unitTooltipRows(def),
+						width = 230,
+					})
+				end,
+				button = {
+					text = "+1 ea",
+					variant = "secondary",
+					onClick = function()
+						ctx.fire("RecruitUnitMulti", ownedIds, entry.id, 1)
+					end,
+				},
+			})
+			uo += 1
+		end
+
+		ScreenKit.section(body, "Build in all (where eligible)", 30)
+		-- Union: a building shows when ANY owned selected province can take it; the batched
+		-- remote validates per province, so ineligible tiles just count as failures in the toast.
+		local buildable = {}
+		for id, def in pairs((registries and registries.BuildingTypes) or {}) do
+			if type(def) == "table" and not TIER_BUILDINGS[id] then
+				for _, pid in ipairs(ownedIds) do
+					if canBuildAt(cacheProvince(pid), id, def) then
+						buildable[#buildable + 1] = { id = id, def = def }
+						break
+					end
+				end
+			end
+		end
+		table.sort(buildable, function(a, b)
+			return (a.def.displayName or a.id) < (b.def.displayName or b.id)
+		end)
+		if #buildable == 0 then
+			ScreenKit.note(body, "Nothing buildable on the selected provinces.", 31)
+		else
+			local bo = 31
+			for _, entry in ipairs(buildable) do
+				local def = entry.def
+				actionRow(body, {
+					order = bo,
+					icon = "Building",
+					label = def.displayName or titleCase(entry.id),
+					value = string.format("%d gold ea", def.cost or 0),
+					tooltip = function()
+						return Tooltip.create({
+							title = def.displayName or entry.id,
+							body = def.description,
+							rows = buildingTooltipRows(def),
+							width = 280,
+						})
+					end,
+					button = {
+						text = "+",
+						variant = "secondary",
+						onClick = function()
+							ctx.fire("ConstructBuildingMulti", ownedIds, entry.id)
+						end,
+					},
+				})
+				bo += 1
+			end
+		end
+	end
+
+	return {
+		root = handle.root,
+		destroy = function()
+			handle.destroy()
+		end,
+	}
+end
+
 function ProvinceOverview.create(ctx)
 	local prov = ctx.data or {}
+	if prov.multi then
+		return createMulti(ctx)
+	end
 	local registries = ctx.registries
 	local conns = {}
 	local handle

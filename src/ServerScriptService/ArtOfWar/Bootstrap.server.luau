@@ -513,6 +513,31 @@ InputValidator.register("MoveArmyPath", {
 	},
 	rate = { count = 12, window = 10 },
 })
+-- C6 batched remotes: per-remote rate limits make client-side loops over a multi-selection
+-- impossible (orders silently drop), so multi-province/multi-army actions arrive as ONE call
+-- with a bounded id list (shallowTable caps at 256 entries; handlers re-cap at 25).
+InputValidator.register("MoveArmyPathMulti", {
+	schema = {
+		{ name = "armyIds", type = "shallowTable" },
+		{ name = "finalProvinceId", type = "integer" },
+	},
+	rate = { count = 12, window = 10 },
+})
+InputValidator.register("RecruitUnitMulti", {
+	schema = {
+		{ name = "provinceIds", type = "shallowTable" },
+		{ name = "unitTypeId", type = "policyId" },
+		{ name = "count", type = "integer" },
+	},
+	rate = { count = 3, window = 10 },
+})
+InputValidator.register("ConstructBuildingMulti", {
+	schema = {
+		{ name = "provinceIds", type = "shallowTable" },
+		{ name = "buildingId", type = "policyId" },
+	},
+	rate = { count = 3, window = 10 },
+})
 InputValidator.register("AttackProvince", {
 	schema = {
 		{ name = "armyId", type = "string" },
@@ -967,6 +992,63 @@ bindEvent("RecruitUnit", function(player, provinceId, unitTypeId, count)
 	system.enqueue(tag, provinceId, unitTypeId, count)
 end)
 
+-- C6: apply a batched action per province, count successes, and toast the partial result
+-- ("Queued in 4/7 provinces"). Validation stays entirely per-province inside enqueue, so
+-- partial application (owner decision) is automatic -- it deducts until broke/ineligible.
+local MULTI_PROVINCE_CAP = 25
+
+local function applyMulti(tag, provinceIds, applyFn, title, verb)
+	local applied, total, firstReason = 0, 0, nil
+	for _, pid in ipairs(provinceIds) do
+		if total >= MULTI_PROVINCE_CAP then break end
+		if type(pid) == "number" then
+			total += 1
+			local ok, reason = applyFn(pid)
+			if ok then
+				applied += 1
+			elseif not firstReason and reason then
+				firstReason = reason
+			end
+		end
+	end
+	if total > 0 and context.NotificationBroadcaster then
+		local suffix = (applied < total and firstReason) and string.format(" (%s)", tostring(firstReason)) or ""
+		context.NotificationBroadcaster.push({
+			kind = applied > 0 and "good" or "warn",
+			title = title,
+			body = string.format("%s in %d/%d provinces%s.", verb, applied, total, suffix),
+			audience = "self",
+			tag = tag,
+			eventType = "multi.apply",
+			ttl = 6,
+		})
+	end
+end
+
+bindEvent("RecruitUnitMulti", function(player, provinceIds, unitTypeId, count)
+	local auth = authority()
+	local system = loadedSystems.RecruitSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	if type(provinceIds) ~= "table" then return end
+	applyMulti(tag, provinceIds, function(pid)
+		return system.enqueue(tag, pid, unitTypeId, count)
+	end, "Recruitment Queued", "Recruitment queued")
+end)
+
+bindEvent("ConstructBuildingMulti", function(player, provinceIds, buildingId)
+	local auth = authority()
+	local system = loadedSystems.BuildingSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	if type(provinceIds) ~= "table" then return end
+	applyMulti(tag, provinceIds, function(pid)
+		return system.enqueue(tag, pid, buildingId)
+	end, "Construction Queued", "Construction queued")
+end)
+
 -- Helper: surface a server-side movement rejection as a notification toast.
 local function notifyMoveRejected(tag, reason)
 	if not tag then return end
@@ -1020,6 +1102,28 @@ bindEvent("MoveArmyPath", function(player, armyId, finalProvinceId)
 	if not army or army.ownerTag ~= tag then return end
 	local ok, reason = system.beginMovePath(armyId, finalProvinceId)
 	if not ok and reason then notifyMoveRejected(tag, reason) end
+end)
+
+-- C6: one remote for a whole stack selection (MoveArmyPath's 12/10s rate would drop orders
+-- past 12 armies). Ownership validated per army; one rejection toast at most.
+bindEvent("MoveArmyPathMulti", function(player, armyIds, finalProvinceId)
+	local auth = authority()
+	local system = loadedSystems.MovementSystem
+	if not auth or not system then return end
+	local tag = auth.tagFor(player)
+	if not tag then return end
+	if type(armyIds) ~= "table" then return end
+	local n, firstReason = 0, nil
+	for _, armyId in ipairs(armyIds) do
+		n += 1
+		if n > 25 then break end
+		local army = context.WorldState.getArmy(armyId)
+		if army and army.ownerTag == tag then
+			local ok, reason = system.beginMovePath(armyId, finalProvinceId)
+			if not ok and reason and not firstReason then firstReason = reason end
+		end
+	end
+	if firstReason then notifyMoveRejected(tag, firstReason) end
 end)
 
 -- Server-authoritative move PREVIEW: returns the exact route the player's army would take, so the
