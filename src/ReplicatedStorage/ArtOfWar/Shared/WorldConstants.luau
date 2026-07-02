@@ -63,6 +63,14 @@ WorldConstants.FailedAttackCooldownSec = 20
 -- C4: world-space battle disc on the border between the attacker origin and the defended tile.
 WorldConstants.BattleDiscDiameter = 4
 
+-- C9 sea-transport tunables. Step costs ARE the embark mechanic: land->land keeps the 7-tick
+-- week, open water sails fast, and the land<->sea transition is the slow, vulnerable window.
+-- Transports fight poorly at sea; amphibious assaults attack ashore weakened.
+WorldConstants.SeaMoveTicksPerStep = 4
+WorldConstants.EmbarkMoveTicks = 10
+WorldConstants.SeaTransportCombatPenalty = 0.35
+WorldConstants.SeaInvasionAttackPenalty = 0.5
+
 -- Phase 2: unrest added per owned province the nation holds NO core on (cores suppress unrest). Default 0
 -- (opt-in) -- raise once balanced. Gated by EnableCores; computed O(owned) in UnrestSystem.targetUnrest.
 WorldConstants.UnrestNonCorePressure = 0

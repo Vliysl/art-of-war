@@ -199,6 +199,53 @@ local function linkUnbakedRegistered()
 	end
 end
 
+-- C9 sea transport: load the tile-level sea bake (Data/SeaTileAdjacency) into the same
+-- graph as negative node ids (sea part n -> node -n; see Shared/SeaNodes). MUST run AFTER
+-- linkUnbakedRegistered -- sea ids are absent from the province bake, so loading them first
+-- would let the linker geometry-bridge open water to random coastal provinces. Flag OFF (or
+-- an empty bake) leaves the graph byte-identical to land-only.
+local function loadSeaTiles()
+	if not ctx.WorldConstants.EnableSeaTransport then return 0, 0 end
+	local dataFolder = ReplicatedStorage:FindFirstChild("ArtOfWar")
+	dataFolder = dataFolder and dataFolder:FindFirstChild("Data")
+	local moduleScript = dataFolder and dataFolder:FindFirstChild("SeaTileAdjacency")
+	if not moduleScript then return 0, 0 end
+	local ok, baked = pcall(require, moduleScript)
+	if not ok or type(baked) ~= "table" then return 0, 0 end
+	local tiles, edges = 0, 0
+	for n, entry in baked do
+		if type(n) == "number" and type(entry) == "table" then
+			tiles += 1
+			positions[-n] = Vector2.new(entry.x or 0, entry.z or 0)
+		end
+	end
+	for n, entry in baked do
+		if type(n) == "number" and type(entry) == "table" then
+			local sid = -n
+			local list = {}
+			for _, m in ipairs(entry.sea or {}) do
+				if positions[-m] ~= nil then
+					list[#list + 1] = -m
+					edges += 1
+				end
+			end
+			for _, pid in ipairs(entry.shore or {}) do
+				-- Shore edges are land<->sea and bidirectional; only link provinces that
+				-- actually registered this boot.
+				if type(pid) == "number" and pid > 0 and positions[pid] ~= nil then
+					list[#list + 1] = pid
+					edges += 1
+					neighbors[pid] = neighbors[pid] or {}
+					table.insert(neighbors[pid], sid)
+					edges += 1
+				end
+			end
+			neighbors[sid] = list
+		end
+	end
+	return tiles, edges
+end
+
 function AdjacencyGraph.build()
 	scanPositions()
 	local total = registeredCount()
@@ -239,12 +286,14 @@ function AdjacencyGraph.build()
 		linkUnbakedRegistered()
 	end
 
+	local seaTiles, seaEdges = loadSeaTiles()
+
 	local edgeCount = 0
 	for _, list in neighbors do edgeCount += #list end
 	local coastalCount = 0
 	for _ in coastalSet do coastalCount += 1 end
-	print(string.format("[ArtOfWar] adjacency graph: %d provinces, %d directed edges, %d coastal (source=%s)",
-		total, edgeCount, coastalCount, activeSource))
+	print(string.format("[ArtOfWar] adjacency graph: %d provinces, %d directed edges, %d coastal, %d sea tiles (%d sea edges) (source=%s)",
+		total, edgeCount, coastalCount, seaTiles, seaEdges, activeSource))
 end
 
 function AdjacencyGraph.setMode(m)
@@ -285,6 +334,10 @@ end
 
 function AdjacencyGraph.isCoastal(provinceId)
 	return coastalSet[provinceId] == true
+end
+
+function AdjacencyGraph.isSeaNode(id)
+	return type(id) == "number" and id < 0 and positions[id] ~= nil
 end
 
 function AdjacencyGraph.getShore(provinceId)
@@ -336,6 +389,7 @@ function AdjacencyGraph.register(context)
 		position = AdjacencyGraph.position,
 		isRegistered = AdjacencyGraph.isRegistered,
 		isCoastal = AdjacencyGraph.isCoastal,
+		isSeaNode = AdjacencyGraph.isSeaNode,
 		getShore = AdjacencyGraph.getShore,
 		findPath = AdjacencyGraph.findPath,
 		setMode = AdjacencyGraph.setMode,

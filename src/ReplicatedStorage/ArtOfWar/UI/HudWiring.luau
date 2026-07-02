@@ -9,6 +9,11 @@ local ProvinceTooltip = require(UI.Components.ProvinceTooltip)
 local Platform = require(ArtOfWar.Modules.Platform)
 local Button = require(UI.Components.Button)
 local WorldConstants = require(ArtOfWar.Shared.WorldConstants)
+local SeaNodes = require(ArtOfWar.Shared.SeaNodes)
+
+-- Sea targeting (C9): a hovered water point snaps to the nearest baked sea node within this
+-- many studs (mirrors ProvinceInteraction's click-side SEA_TARGET_MAX_DIST).
+local SEA_HOVER_MAX_DIST = 60
 
 local HudWiring = {}
 
@@ -628,7 +633,11 @@ function HudWiring.start(modules)
 		}
 	end
 
-	local function updatePathPreview(part)
+	-- Drive the preview lanes to a raw destination id (province, or a negative sea node id --
+	-- C9 water hovers resolve to sea nodes with no part to pass through provinceFromPart).
+	-- A nil toId means a transient hover-nil / unmapped wilderness -> KEEP the last valid
+	-- preview (do not blank it while sweeping the cursor across tiles).
+	local function updatePathPreviewToId(toId)
 		if not (PathPreview and PathPreview.showMany) then
 			return
 		end
@@ -638,11 +647,6 @@ function HudWiring.start(modules)
 			if PathPreview.clear then PathPreview.clear() end
 			return
 		end
-		-- Resolve the destination via the SAME robust resolver the click/move path uses (the raw
-		-- province_id attribute is only stamped on ~45% of land parts). A nil id means a transient
-		-- hover-nil / sea tile / unmapped wilderness -> KEEP the last valid preview (do not blank it
-		-- while sweeping the cursor across tiles). "What you can preview" thus equals "what you can move to".
-		local _, toId = provinceFromPart(part)
 		if not toId then return end
 		-- One preview per distinct ORIGIN province (armies stacked on the same tile share a route),
 		-- so multi-select shows every selected unit's path, not just the first.
@@ -660,11 +664,21 @@ function HudWiring.start(modules)
 		end
 	end
 
+	local function updatePathPreview(part)
+		-- Resolve the destination via the SAME robust resolver the click/move path uses (the raw
+		-- province_id attribute is only stamped on ~45% of land parts). "What you can preview"
+		-- thus equals "what you can move to".
+		local _, toId = provinceFromPart(part)
+		updatePathPreviewToId(toId)
+	end
+
 	if ProvinceInteraction then
 		-- Dedupe the water tooltip: ProvinceInteraction fires onWater every 30Hz tick over ocean, so without
 		-- this showWater would re-run (and flicker) constantly. Reset whenever the hover state changes (land or
-		-- off-map) so re-entering a water body re-shows it.
+		-- off-map) so re-entering a water body re-shows it. lastSeaHoverId is the same dedupe for the sea-node
+		-- path preview (C9): re-fire only when the resolved node CHANGES, not per 30Hz tick.
 		local lastWaterName = nil
+		local lastSeaHoverId = nil
 		ProvinceInteraction.addSelectListener(function(part)
 			if nationSelectActive then
 				if part then
@@ -772,8 +786,10 @@ function HudWiring.start(modules)
 
 		ProvinceInteraction.addHoverListener(function(part)
 			-- Hover state changed (this fires only on a province/nil transition), so we're no longer over a
-			-- stable water body -> clear the dedupe key so returning to water re-shows the water tooltip.
+			-- stable water body -> clear the dedupe keys so returning to water re-shows the water tooltip
+			-- and re-fires the sea-node preview.
 			lastWaterName = nil
+			lastSeaHoverId = nil
 			if nationSelectActive then
 				tooltip.hide()
 				if nationSelectApi then
@@ -796,6 +812,7 @@ function HudWiring.start(modules)
 				if nationSelectActive then
 					tooltip.hide()
 					lastWaterName = nil
+					lastSeaHoverId = nil
 					if nationSelectApi then
 						nationSelectApi.hoverCountry(nil)
 					end
@@ -809,9 +826,27 @@ function HudWiring.start(modules)
 						lastWaterName = name
 						tooltip.showWater(name)
 					end
+					-- Sea hover preview (C9): with armies selected, hovering water previews the route to
+					-- the nearest baked sea node (negative id -- the server pathfinder + ProvincePositions
+					-- both speak it directly). Deduped on the resolved node so the preview re-fires only
+					-- when it CHANGES; leaving node range keeps the last preview, matching the land rule.
+					-- With no armies selected this is inert and water behaves exactly as today.
+					if WorldConstants.EnableSeaTransport then
+						local sel = selectedArmies()
+						if sel and #sel > 0 then
+							local seaNodeId = SeaNodes.nearestNode(wx, wz, SEA_HOVER_MAX_DIST)
+							if seaNodeId and seaNodeId ~= lastSeaHoverId then
+								lastSeaHoverId = seaNodeId
+								updatePathPreviewToId(seaNodeId)
+							end
+						else
+							lastSeaHoverId = nil
+						end
+					end
 				else
 					tooltip.hide()
 					lastWaterName = nil
+					lastSeaHoverId = nil
 				end
 			end)
 		end
@@ -835,7 +870,16 @@ function HudWiring.start(modules)
 				if not sel or #sel == 0 then
 					return
 				end
-				local _, id = provinceFromPart(part)
+				-- Move target: a province PART, or (C9) a { seaNodeId } table for water clicks --
+				-- sea tiles have no clickable part, so ProvinceInteraction resolves them to the
+				-- nearest baked node. The negative id rides the same move remotes unchanged.
+				local id
+				if type(part) == "table" and part.seaNodeId then
+					id = part.seaNodeId
+				else
+					local _, pid = provinceFromPart(part)
+					id = pid
+				end
 				if not id then
 					return
 				end

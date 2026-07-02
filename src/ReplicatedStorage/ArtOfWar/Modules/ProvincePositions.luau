@@ -7,13 +7,25 @@
 -- poisons every position read in that window, permanently (caches are write-once). Part NAMES never
 -- change and, post identity-collapse, the number IS the province id, so a name-keyed index is correct
 -- from the first frame and forever. Shared by ArmyView, MoveArrowView, and PathPreview.
+--
+-- Sea transport (C9): sea tiles are addressed by NEGATIVE part number (sea_<n>_* -> node id -n,
+-- see Shared/SeaNodes), so the same index also maps sea node ids -> Sea parts. centerOf works
+-- unchanged (sea parts are Size.Y = 0, so the top-face lift is a no-op) and every consumer
+-- (PathPreview, MoveArrowView, CombatView, ArmyView) resolves sea nodes with no further change.
+local WorldConstants = require(script.Parent.Parent:WaitForChild("Shared"):WaitForChild("WorldConstants"))
+
 local ProvincePositions = {}
 
-local byNumber = nil -- [id:number] = BasePart, keyed by the prov_<N> name number
+local byNumber = nil -- [id:number] = BasePart; prov_<N> name number, or -N for sea_<N> (sea transport)
 
 local function provincesFolder()
 	local map = workspace:FindFirstChild("ArtOfWarMap")
 	return map and map:FindFirstChild("Provinces")
+end
+
+local function seaFolder()
+	local map = workspace:FindFirstChild("ArtOfWarMap")
+	return map and map:FindFirstChild("Sea")
 end
 
 local function build()
@@ -27,6 +39,17 @@ local function build()
 		if part:IsA("BasePart") then
 			local n = tonumber(part.Name:match("^prov_(%d+)"))
 			if n then byNumber[n] = part end
+		end
+	end
+	if WorldConstants.EnableSeaTransport then
+		local sea = seaFolder()
+		if sea then
+			for _, part in sea:GetChildren() do
+				if part:IsA("BasePart") then
+					local n = tonumber(part.Name:match("^sea_(%d+)"))
+					if n then byNumber[-n] = part end
+				end
+			end
 		end
 	end
 end

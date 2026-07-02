@@ -1,5 +1,7 @@
 local CombatSystem = {}
 
+local SeaNodes = require(game:GetService("ReplicatedStorage"):WaitForChild("ArtOfWar"):WaitForChild("Shared"):WaitForChild("SeaNodes"))
+
 local ctx
 
 -- perf: provinceId -> battleId index so getBattleAt is O(1) instead of an
@@ -100,6 +102,11 @@ local function engageFromAdjacent(armyId, targetProvinceId)
 	if not adjacency or not adjacency.areNeighbors then return false, "no_adjacency" end
 	if not adjacency.areNeighbors(army.provinceId, targetProvinceId) then
 		return false, "not_adjacent"
+	end
+	-- Domain rule (C9): sea<->sea battles and sea->land naval invasions are legal; a LAND
+	-- army can never engage a sea node from the shore (build a transport route instead).
+	if SeaNodes.isSea(targetProvinceId) and not SeaNodes.isSea(army.provinceId) then
+		return false, "cannot_engage_sea_from_land"
 	end
 
 	-- Ongoing battle at the target: join it from here as a flanking origin. reinforce()
@@ -265,8 +272,15 @@ local function onArmyArrival(armyId, provinceId)
 		return
 	end
 
-	-- No battle: check for enemy in province
-	local enemy = ctx.ArmySystem.findEnemyArmyAt(army.ownerTag, provinceId)
+	-- No battle: check for enemy in province. Under adjacent engagement "enemy" is strictly
+	-- an AT-WAR army -- neutral co-location (a third party's transport on the same sea node,
+	-- a neutral stack crossing an unowned tile) must not start a battle.
+	local enemy
+	if ctx.WorldConstants.EnableAdjacentEngagement then
+		enemy = hostileArmyAt(army.ownerTag, provinceId)
+	else
+		enemy = ctx.ArmySystem.findEnemyArmyAt(army.ownerTag, provinceId)
+	end
 	if enemy then
 		-- Under adjacent engagement the finishMove gate keeps attackers off defended tiles,
 		-- so a walk-on battle start should be unreachable; log if it ever fires (co-located

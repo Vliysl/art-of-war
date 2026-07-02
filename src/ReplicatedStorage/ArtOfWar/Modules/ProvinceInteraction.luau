@@ -7,6 +7,7 @@ local GuiService = game:GetService("GuiService")
 
 local Platform = require(script.Parent:WaitForChild("Platform"))
 local WorldConstants = require(script.Parent.Parent:WaitForChild("Shared"):WaitForChild("WorldConstants"))
+local SeaNodes = require(script.Parent.Parent:WaitForChild("Shared"):WaitForChild("SeaNodes"))
 
 local DEBOUNCE_FRAMES = 1
 local HOVER_INTERVAL = 1 / 30
@@ -202,6 +203,24 @@ local function getMouseWorldPlanePosition()
 	end
 	local hit = ray.Origin + ray.Direction * t
 	return hit.X, hit.Z
+end
+
+-- Sea move target (C9 sea transport): the sea meshes are zero-thickness (and
+-- RenderDistanceController turns culled parts' CanQuery off), so a click raycast can never
+-- resolve them -- the Y=0 plane intersection + nearest baked sea node IS the mechanism.
+-- Consulted ONLY when a click/tap with armies selected resolved no province; sea is never
+-- selectable/inspectable, so the plain select paths still deselect over water. Returns the
+-- (negative) node id, or nil (flag off / no bake / too far -> callers keep today's behavior).
+local SEA_TARGET_MAX_DIST = 60
+local function getSeaMoveTarget()
+	if not WorldConstants.EnableSeaTransport then
+		return nil
+	end
+	local wx, wz = getMouseWorldPlanePosition()
+	if not wx then
+		return nil
+	end
+	return SeaNodes.nearestNode(wx, wz, SEA_TARGET_MAX_DIST)
 end
 
 local function setHover(province)
@@ -597,6 +616,15 @@ function ProvinceInteraction.init()
 				end
 				return
 			end
+			-- 2b) Units selected + tapped open water -> sail to the nearest baked sea node
+			--     (C9; without this mobile can't sail -- tapping water would just deselect).
+			if not (ok and province) and rightClickArmed() then
+				local seaNodeId = getSeaMoveTarget()
+				if seaNodeId and onRightClicked then
+					onRightClicked({ seaNodeId = seaNodeId })
+					return
+				end
+			end
 			-- 3) Otherwise select/inspect the tapped province (or deselect on empty water).
 			clearMultiSelection()
 			setSelection(ok and province or nil)
@@ -677,6 +705,17 @@ function ProvinceInteraction.init()
 				onRightClicked(province)
 			end
 			return
+		end
+		-- Sea move (C9): with units selected, an empty click that resolves NO province but sits
+		-- near a baked sea node is a move order onto that node instead of a deselect. Sea stays
+		-- unselectable -- with nothing selected (or no node in range) water still deselects below.
+		if WorldConstants.EnableNewInputScheme and not alt and not (ok3 and province)
+			and rightClickArmed() and not commandPending() then
+			local seaNodeId = getSeaMoveTarget()
+			if seaNodeId and onRightClicked then
+				onRightClicked({ seaNodeId = seaNodeId })
+				return
+			end
 		end
 		-- Alt-inspect must not drop the current army selection (that is its purpose); flagged
 		-- for the duration of the synchronous setSelection dispatch so HudWiring can skip the

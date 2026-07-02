@@ -172,12 +172,29 @@ local function findBattleAtProvince(provinceId)
 	return nil
 end
 
--- A retreat destination must be a LAND province (sea nodes are negative ids and never an
--- escape route -- owner decision), controlled by the retreater or an ally, with no active
--- battle and no army the retreater is at war with standing on it. Neutral third-party
--- stacks do NOT block a retreat.
-local function retreatCandidateOk(owner, candidateId)
-	if type(candidateId) == "number" and candidateId < 0 then return false end
+-- Battle at the candidate, or an army the retreater is at war with standing on it. Neutral
+-- third-party stacks never block anything.
+local function hostileOrBattleAt(owner, candidateId)
+	if findBattleAtProvince(candidateId) then return true end
+	local dipl = ctx.DiplomacySystem
+	if dipl and dipl.areAtWar then
+		for _, other in ctx.ArmySystem.armiesInProvince(candidateId) do
+			if other.ownerTag ~= owner and dipl.areAtWar(owner, other.ownerTag) then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+-- A retreat destination must be a LAND province (sea is never an escape route from a LAND
+-- battle -- owner decision), controlled by the retreater or an ally, with no active battle
+-- and no at-war army. A loser standing ON a sea node additionally accepts adjacent open
+-- water (allowSea): empty sea nodes qualify; surrounded on all sides means lost at sea.
+local function retreatCandidateOk(owner, candidateId, allowSea)
+	if type(candidateId) == "number" and candidateId < 0 then
+		return allowSea == true and not hostileOrBattleAt(owner, candidateId)
+	end
 	local province = ctx.WorldState.getProvince(candidateId)
 	if not province then return false end
 	local controller = province.controllerTag
@@ -187,16 +204,7 @@ local function retreatCandidateOk(owner, candidateId)
 		controlledOrAllied = (dipl and dipl.areAllied and dipl.areAllied(owner, controller)) or false
 	end
 	if not controlledOrAllied then return false end
-	if findBattleAtProvince(candidateId) then return false end
-	local dipl = ctx.DiplomacySystem
-	if dipl and dipl.areAtWar then
-		for _, other in ctx.ArmySystem.armiesInProvince(candidateId) do
-			if other.ownerTag ~= owner and dipl.areAtWar(owner, other.ownerTag) then
-				return false
-			end
-		end
-	end
-	return true
+	return not hostileOrBattleAt(owner, candidateId)
 end
 
 local function chooseRetreatProvince(army)
@@ -220,13 +228,14 @@ local function chooseRetreatProvince(army)
 		end
 		return nil
 	end
+	local atSea = type(army.provinceId) == "number" and army.provinceId < 0
 	if origin and origin ~= army.provinceId
 		and adjacency.areNeighbors and adjacency.areNeighbors(army.provinceId, origin)
-		and retreatCandidateOk(owner, origin) then
+		and retreatCandidateOk(owner, origin, atSea) then
 		return origin
 	end
 	for _, candidateId in adjacency.getNeighbors(army.provinceId) do
-		if candidateId ~= origin and retreatCandidateOk(owner, candidateId) then
+		if candidateId ~= origin and retreatCandidateOk(owner, candidateId, atSea) then
 			return candidateId
 		end
 	end
@@ -329,7 +338,8 @@ local function endBattle(record, winnerSide, reason)
 							ctx.ArmySystem.setState(armyId, "idle")
 						end
 					else
-						ctx.ArmySystem.destroyArmy(armyId, "annihilated")
+						local atSea = type(army.provinceId) == "number" and army.provinceId < 0
+						ctx.ArmySystem.destroyArmy(armyId, atSea and "lost_at_sea" or "annihilated")
 					end
 				end
 			end
@@ -512,7 +522,10 @@ end
 
 -- Build an engine side input from live armies. atkMult/defMult fold the static
 -- multipliers; the engine applies terrain/morale/discipline/org/fort itself.
-local function buildSideInput(armyIds, terrain)
+-- record/sideRole (optional, C9): an army standing on a sea node is a TRANSPORT and fights
+-- badly (both mults scaled); in a LAND battle an attacker whose feet are still in the water
+-- is a naval invasion and attacks weakened instead.
+local function buildSideInput(armyIds, terrain, record, sideRole)
 	local formations = {}
 	local orgMax = ctx.WorldConstants.ArmyOrganizationMax or 10
 	local moraleMax = ctx.WorldConstants.ArmyMoraleMax or 100
@@ -539,14 +552,28 @@ local function buildSideInput(armyIds, terrain)
 				end
 			end
 			if #units > 0 then
+				local atkMult = statMultiplier(army, terrain, "attack")
+				local defMult = statMultiplier(army, terrain, "defense")
+				if ctx.WorldConstants.EnableSeaTransport
+					and type(army.provinceId) == "number" and army.provinceId < 0 then
+					local battleAtSea = record == nil
+						or (type(record.provinceId) == "number" and record.provinceId < 0)
+					if battleAtSea or sideRole ~= "attacker" then
+						local p = ctx.WorldConstants.SeaTransportCombatPenalty or 0.35
+						atkMult *= p
+						defMult *= p
+					else
+						atkMult *= (ctx.WorldConstants.SeaInvasionAttackPenalty or 0.5)
+					end
+				end
 				table.insert(formations, {
 					id = armyId,
 					morale = army.morale or moraleMax,
 					moraleMax = ctx.ArmySystem.effectiveMoraleMax(army),
 					organization = army.organization or (army.baseOrganization or orgMax),
 					baseOrganization = army.baseOrganization or orgMax,
-					atkMult = statMultiplier(army, terrain, "attack"),
-					defMult = statMultiplier(army, terrain, "defense"),
+					atkMult = atkMult,
+					defMult = defMult,
 					moraleResist = officerModifierFor(army, "morale") + officerModifierFor(army, "discipline"),
 					units = units,
 				})
@@ -624,8 +651,8 @@ local function tickBattle(record)
 
 	local phaseSpec = CombatPhases.getPhase(record.phaseCycle, record.phaseIndex or 1)
 
-	local attackerSide = buildSideInput(record.attackerArmyIds, terrain)
-	local defenderSide = buildSideInput(record.defenderArmyIds, terrain)
+	local attackerSide = buildSideInput(record.attackerArmyIds, terrain, record, "attacker")
+	local defenderSide = buildSideInput(record.defenderArmyIds, terrain, record, "defender")
 
 	local result = ctx.CombatEngine.resolveRound({
 		constants = ctx.WorldConstants,

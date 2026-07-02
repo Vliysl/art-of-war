@@ -1,11 +1,24 @@
 local MovementSystem = {}
 
+local SeaNodes = require(game:GetService("ReplicatedStorage"):WaitForChild("ArtOfWar"):WaitForChild("Shared"):WaitForChild("SeaNodes"))
+
 local ctx
 
--- All units take one in-game week (7 ticks) per province step for now. Centralised
--- so per-unit/per-composition speeds can vary this later in one place.
+-- All units take one in-game week (7 ticks) per land step. Sea transport (C9) prices the
+-- step by domain: open water sails fast, and the land<->sea transition is deliberately the
+-- slow, vulnerable leg -- that step cost IS the whole embark/disembark mechanic (no states).
 local MOVE_TICKS = 7
-local function moveTicksFor(_army)
+local function moveTicksFor(army, toProvinceId)
+	local C = ctx.WorldConstants
+	if C.EnableSeaTransport and toProvinceId ~= nil then
+		local fromSea = SeaNodes.isSea(army.provinceId)
+		local toSea = SeaNodes.isSea(toProvinceId)
+		if fromSea and toSea then
+			return C.SeaMoveTicksPerStep or 4
+		elseif fromSea ~= toSea then
+			return C.EmbarkMoveTicks or 10
+		end
+	end
 	return MOVE_TICKS
 end
 
@@ -83,9 +96,10 @@ local function beginMove(armyId, toProvinceId, options)
 	if distance == math.huge then return false, "bad_distance" end
 
 	-- Fixed cadence: one province step = 7 ticks (one week), independent of stud
-	-- distance. The client draws a filling arrow over this window. (effectiveSpeed
-	-- is retained/exported for future per-unit speeds.)
-	local duration = moveTicksFor(army) * (ctx.WorldConstants.SecondsPerSimTick or 1.5)
+	-- distance; sea/embark steps price differently (see moveTicksFor). The client draws
+	-- a filling arrow over this window. (effectiveSpeed is retained/exported for future
+	-- per-unit speeds.)
+	local duration = moveTicksFor(army, toProvinceId) * (ctx.WorldConstants.SecondsPerSimTick or 1.5)
 
 	local now = ctx.TickScheduler.getSimTime()
 	army.movement = {
@@ -118,6 +132,11 @@ end
 --  * OR the province is unowned (NONE)
 -- Future: military-access treaties extend this allowlist.
 local function provinceTraversable(provinceId, ownerTag)
+	-- Open water is unowned and always traversable when sea transport is on (C9); a sea
+	-- node has no province record, so it must short-circuit before the lookup below.
+	if SeaNodes.isSea(provinceId) then
+		return ctx.WorldConstants.EnableSeaTransport == true
+	end
 	local p = ctx.WorldState.getProvince(provinceId)
 	if not p then return false end
 	local controller = p.controllerTag
@@ -339,7 +358,42 @@ local function finishMove(army)
 	end
 end
 
+-- Flag-OFF insurance (C9): with EnableSeaTransport off the sea edges vanish from the graph,
+-- so any army still standing on a sea node could never move again. One-time sweep relocates
+-- each to a shore province of its tile (own-controlled preferred) via the baked shore data.
+local strandSweepDone = false
+local function sweepStrandedSeaArmies()
+	if ctx.WorldConstants.EnableSeaTransport then
+		strandSweepDone = false
+		return
+	end
+	if strandSweepDone then return end
+	strandSweepDone = true
+	for _, army in ctx.WorldState.allArmies() do
+		if SeaNodes.isSea(army.provinceId) then
+			local shore = SeaNodes.shoreOf(army.provinceId)
+			local target = nil
+			for _, pid in ipairs(shore) do
+				local p = ctx.WorldState.getProvince(pid)
+				if p and p.controllerTag == army.ownerTag then
+					target = pid
+					break
+				end
+			end
+			target = target or shore[1]
+			if target then
+				cancelMovement(army.id, "sea_transport_disabled")
+				ctx.ArmySystem.relocateArmy(army.id, target)
+			else
+				warn(string.format("[MovementSystem] army %s stranded at sea node %s with no baked shore -- leaving in place",
+					tostring(army.id), tostring(army.provinceId)))
+			end
+		end
+	end
+end
+
 local function tickMovements()
+	sweepStrandedSeaArmies()
 	local now = ctx.TickScheduler.getSimTime()
 	-- perf: iterate only armies known to have a pending .movement (ArmySystem.movingArmies index)
 	-- instead of scanning every army. The index may over-include, so the per-army conditions below

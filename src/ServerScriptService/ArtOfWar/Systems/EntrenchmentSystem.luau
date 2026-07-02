@@ -13,8 +13,11 @@ local function onDateAdvanced(payload)
 		-- cheaply skip armies that are definitely non-idle before the heavier getState()
 		-- (which can resolve battles). These conditions each guarantee getState() ~= "idle",
 		-- so results stay identical. battleId alone is NOT skipped (may not resolve to a
-		-- battle -> falls through).
+		-- battle -> falls through). No trenches on open water (C9 sea nodes, negative ids).
 		if army.movement or army.retreating or (army.state and army.state ~= "idle") then
+			return
+		end
+		if type(army.provinceId) == "number" and army.provinceId < 0 then
 			return
 		end
 		local state = ctx.ArmySystem.getState(armyId)

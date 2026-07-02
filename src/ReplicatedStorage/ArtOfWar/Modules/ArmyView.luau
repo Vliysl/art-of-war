@@ -13,6 +13,7 @@ local ProvinceInteraction = require(aow.Modules:WaitForChild("ProvinceInteractio
 local MapModeController = require(aow.Modules:WaitForChild("MapModeController"))
 local CameraController = require(aow.Modules:WaitForChild("CameraController"))
 local ProvincePositions = require(aow.Modules:WaitForChild("ProvincePositions"))
+local SeaNodes = require(aow:WaitForChild("Shared"):WaitForChild("SeaNodes"))
 
 local STATE_ICON = {
 	idle = "",
@@ -55,6 +56,35 @@ local MUSKETEER_TARGET_HEIGHT = 1.85  -- world studs, scaled for 2048 map (was 1
 local CAVALRY_TEMPLATE = nil
 local CAVALRY_TARGET_HEIGHT = 1.7  -- world studs; horses read slightly under the 1.85 musketeer
 
+-- Sea transport (C9): any army standing on a sea node renders as a ship, regardless of
+-- composition. The Ship asset is ~212 MeshParts and 58.4 studs long, so ALL heavy prep
+-- (part properties + ScaleTo + Anchor placement) happens ONCE on a cached template;
+-- buildShipModel only clones + recolors sails/flags per army.
+local SHIP_TEMPLATE = nil          -- prepped (scaled/anchored/no-collide) template, cloned per army
+local SHIP_TARGET_LENGTH = 3       -- world studs bow-to-stern; masts land ~1.7, near the musketeer
+local SHIP_LABEL_CLEARANCE = 0.8   -- banner clearance above the mast tops
+local SHIP_LABEL_OFFSET_Y = 2.5    -- recomputed from the scaled bounding box at template prep
+-- The big hull mesh is named "Cube"; it carries the state tint (attack red etc.) and the
+-- selection pulse. Unlike the cavalry Body it is NOT owner-coloured (sails/flags carry that),
+-- so tinting lerps from -- and restores to -- the asset's own wood colour, captured at prep.
+local SHIP_HULL_COLOR = Color3.fromRGB(105, 80, 56)
+-- Sail/flag mesh names in the Ship asset (exact): sails get the owner colour washed toward
+-- white (tinted canvas, Fabric material kept -- Color-only writes never touch Material);
+-- the small mast-top flags fly the full owner colour.
+local SHIP_SAIL_NAMES = {
+	["Plane"] = true,
+	["Plane.001"] = true,
+	["Plane.002"] = true,
+	["Plane.003"] = true,
+	["Plane.004"] = true,
+	["Plane.005"] = true,
+}
+local SHIP_FLAG_NAMES = {
+	["Plane.006"] = true,
+	["Plane.007"] = true,
+	["Plane.008"] = true,
+}
+
 local function getMusketeerTemplate()
 	if MUSKETEER_TEMPLATE then return MUSKETEER_TEMPLATE end
 	local rs = game:GetService("ReplicatedStorage")
@@ -73,10 +103,85 @@ local function getCavalryTemplate()
 	return CAVALRY_TEMPLATE
 end
 
+-- One-time Ship template prep (never per army -- the asset is ~212 MeshParts): clone,
+-- anchor/no-collide every part (banner-pin pattern), scale so the ship is SHIP_TARGET_LENGTH
+-- studs bow-to-stern, then add the invisible Anchor PrimaryPart at the hull-bottom centre
+-- (post-scale, so its 0.1 size stays fixed -- same ordering as the cavalry builder).
+local function getShipTemplate()
+	if SHIP_TEMPLATE then return SHIP_TEMPLATE end
+	local models = ReplicatedStorage:FindFirstChild("Models")
+	local src = models and models:FindFirstChild("Ship")
+	if not src then return nil end
+
+	local model = src:Clone()
+	for _, p in model:GetDescendants() do
+		if p:IsA("BasePart") then
+			p.Anchored = true
+			p.CanCollide = false
+			p.CanTouch = false
+			p.CanQuery = true
+			p.Massless = true
+			p.CastShadow = false
+			p.Locked = true
+		end
+	end
+
+	-- Scale by measured length (the longest horizontal extent), not a hardcoded 58.4, so a
+	-- re-exported asset stays proportionate. ScaleTo replaces the *absolute* scale, hence the
+	-- multiply by the current scale (same rationale as the musketeer/cavalry builders).
+	if model.ScaleTo and model.GetScale then
+		local currentScale = model:GetScale()
+		local _, bbSize0 = model:GetBoundingBox()
+		local length = math.max(bbSize0.X, bbSize0.Z)
+		if length > 0 then
+			model:ScaleTo(currentScale * (SHIP_TARGET_LENGTH / length))
+		end
+	end
+
+	-- Anchor: invisible PrimaryPart with NO rotation at the post-scale bounding-box bottom
+	-- centre, so a ground-level pivot floats the hull on the (zero-thickness) sea tile and
+	-- PivotTo/lookAt translates/turns the whole ship (banner-pin pattern).
+	local cf, bbSize = model:GetBoundingBox()
+	local anchor = Instance.new("Part")
+	anchor.Name = "Anchor"
+	anchor.Size = Vector3.new(0.1, 0.1, 0.1)
+	anchor.Transparency = 1
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanTouch = false
+	anchor.CanQuery = false
+	anchor.Massless = true
+	anchor.CFrame = CFrame.new(cf.Position.X, cf.Position.Y - bbSize.Y * 0.5, cf.Position.Z)
+	anchor.Parent = model
+	model.PrimaryPart = anchor
+
+	-- The anchor sits at hull-bottom, so the banner offset must clear the full mast height.
+	SHIP_LABEL_OFFSET_Y = bbSize.Y + SHIP_LABEL_CLEARANCE
+
+	-- Wood colour the state tint restores to (see SHIP_HULL_COLOR).
+	local hull = model:FindFirstChild("Cube", true)
+	if hull and hull:IsA("BasePart") then
+		SHIP_HULL_COLOR = hull.Color
+	end
+
+	SHIP_TEMPLATE = model
+	return SHIP_TEMPLATE
+end
+
 local function modelTypeFor(unitTypeId)
 	if unitTypeId and INFANTRY_UNIT_IDS[unitTypeId] then return "musketeer" end
 	if WorldConstants.EnableNewUnitModels and unitTypeId and CAVALRY_UNIT_IDS[unitTypeId] then return "cavalry" end
 	return "banner_pin"
+end
+
+-- Army-aware model kind: an army standing on a sea node is a ship (C9 sea transport), which
+-- overrides the composition-derived kind; on land the dominant unit decides as before. This is
+-- the single decision point for BOTH the reconcile rebuild compare and the initial build.
+local function modelTypeForArmy(army, dominantUnitId)
+	if WorldConstants.EnableSeaTransport and army and SeaNodes.isSea(army.provinceId) then
+		return "ship"
+	end
+	return modelTypeFor(dominantUnitId)
 end
 
 
@@ -880,6 +985,56 @@ local function buildCavalryModel(armyId, factionColor)
 	return model
 end
 
+-- Ship (C9 sea transport): static mesh cloned from the prepped template -- part properties,
+-- scale and the Anchor PrimaryPart are already baked in, so the per-army work is only the
+-- sail/flag recolor + banner + highlight. Moves via PivotTo like the banner pin; no
+-- animTracks entry is ever created, so setAnimState no-ops for this kind.
+local function buildShipModel(armyId, factionColor)
+	local template = getShipTemplate()
+	if not template then
+		return buildBannerPinModel(armyId, factionColor)
+	end
+
+	local model = template:Clone()
+	model.Name = "army_" .. tostring(armyId)
+	model:SetAttribute("armyId", armyId)
+	model:SetAttribute("modelType", "ship")
+
+	-- Sails read as tinted canvas (owner colour washed toward white); flags fly the full
+	-- owner colour. Color-only writes keep the Fabric material.
+	local sailColor = factionColor:Lerp(Color3.new(1, 1, 1), 0.35)
+	for _, p in model:GetDescendants() do
+		if p:IsA("BasePart") then
+			if SHIP_SAIL_NAMES[p.Name] then
+				p.Color = sailColor
+			elseif SHIP_FLAG_NAMES[p.Name] then
+				p.Color = factionColor
+			end
+		end
+	end
+
+	-- The anchor sits at hull-bottom, so the offset clears the masts (computed from the scaled
+	-- bounding box at template prep, ~2.5 at the 3-stud scale).
+	local anchor = model.PrimaryPart
+	local bb = buildBannerGui(anchor, Vector3.new(0, SHIP_LABEL_OFFSET_Y, 0), factionColor)
+	bb.Parent = anchor
+
+	-- Selection highlight on the model
+	local hl = Instance.new("Highlight")
+	hl.Name = "Selection"
+	hl.FillColor = Color3.fromRGB(120, 220, 255)
+	hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+	hl.FillTransparency = 0.5
+	hl.OutlineTransparency = 0
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Adornee = model
+	hl.Enabled = false
+	hl.Parent = model
+
+	model.Parent = armiesFolder
+	return model
+end
+
 -- Unit tokens are pure presentation: never collide with the map, each other, or the player.
 -- The builders already set this, but enforce it uniformly here so a stray colliding part in a
 -- model template (or a future builder) can't reintroduce physics shoving.
@@ -908,14 +1063,16 @@ local function zeroModelVelocity(model)
 	end
 end
 
--- Dispatch builder: choose model based on dominant unit's modelType.
-local function buildModel(armyId, factionColor, dominantUnitId)
-	local mt = modelTypeFor(dominantUnitId)
+-- Dispatch builder: the caller passes the resolved model kind (modelTypeForArmy) so the
+-- initial build and the reconcile rebuild-on-kind-change compare can never disagree.
+local function buildModel(armyId, factionColor, modelType)
 	local model
-	if mt == "musketeer" then
+	if modelType == "musketeer" then
 		model = buildMusketeerModel(armyId, factionColor)
-	elseif mt == "cavalry" then
+	elseif modelType == "cavalry" then
 		model = buildCavalryModel(armyId, factionColor)
+	elseif modelType == "ship" then
+		model = buildShipModel(armyId, factionColor)
 	else
 		model = buildBannerPinModel(armyId, factionColor)
 	end
@@ -940,9 +1097,9 @@ local function applyTransparency(model, target)
 			TweenService:Create(part, TweenInfo.new(0.35, Enum.EasingStyle.Quad), { Transparency = target }):Play()
 		end
 	end
-	-- Musketeer/cavalry parts: tween every BasePart descendant (except invisible ones we own like Anchor)
+	-- Musketeer/cavalry/ship parts: tween every BasePart descendant (except invisible ones we own like Anchor)
 	local mt = model:GetAttribute("modelType")
-	if mt == "musketeer" or mt == "cavalry" then
+	if mt == "musketeer" or mt == "cavalry" or mt == "ship" then
 		for _, p in model:GetDescendants() do
 			if p:IsA("BasePart") and p.Name ~= "Anchor" and p.Name ~= "HumanoidRootPart" then
 				TweenService:Create(p, TweenInfo.new(0.35, Enum.EasingStyle.Quad), { Transparency = target }):Play()
@@ -962,6 +1119,7 @@ local function ensurePulse(armyId, model, on)
 	if on then
 		if pulseTweens[armyId] then return end
 		local target = model:FindFirstChild("Base") or model:FindFirstChild("Shako") or model:FindFirstChild("Body")
+				or model:FindFirstChild("Cube", true) -- ship hull (nested in the mesh import, hence recursive)
 		if not target then return end
 		local tween = TweenService:Create(target,
 			TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
@@ -974,6 +1132,7 @@ local function ensurePulse(armyId, model, on)
 			tween:Cancel()
 			pulseTweens[armyId] = nil
 			local target = model:FindFirstChild("Base") or model:FindFirstChild("Shako") or model:FindFirstChild("Body")
+				or model:FindFirstChild("Cube", true) -- ship hull (nested in the mesh import, hence recursive)
 			if target then target.Transparency = cameraMode == "command" and 1 or 0 end
 		end
 	end
@@ -1070,15 +1229,16 @@ local function reconcileOne(armyId)
 	local last = lastKnownState[armyId] or {}
 	local newlyCreated = false
 
-	-- Rebuild model if dominant unit's model type changed (e.g., infantry -> cavalry composition shift)
+	-- Rebuild model if the army's model kind changed (infantry -> cavalry composition shift,
+	-- or an embark/disembark flipping land <-> sea; a sea node always means "ship").
 	local dominantId, _ = dominantUnit(army)
-	local desiredModelType = modelTypeFor(dominantId)
+	local desiredModelType = modelTypeForArmy(army, dominantId)
 	if model and last.modelType ~= nil and last.modelType ~= desiredModelType then
 		destroyModelFor(armyId)
 		model = nil
 	end
 	if not model then
-		model = buildModel(armyId, color, dominantId)
+		model = buildModel(armyId, color, desiredModelType)
 		armyParts[armyId] = model
 		newlyCreated = true
 	end
@@ -1112,6 +1272,11 @@ local function reconcileOne(armyId)
 		-- Cavalry parts (Tail stays black)
 		local horseBody = model:FindFirstChild("Body")
 		if horseBody then horseBody.Color = applied end
+		-- Ship hull: state-tint over the asset's wood colour, never the owner colour (the
+		-- sails/flags carry that, recoloured at build). modelType-gated so only ship models
+		-- pay the recursive lookup.
+		local hull = model:GetAttribute("modelType") == "ship" and model:FindFirstChild("Cube", true) or nil
+		if hull then hull.Color = tint and SHIP_HULL_COLOR:Lerp(tint, 0.4) or SHIP_HULL_COLOR end
 		-- Crest (works for all model types since Label is parented to Pole, Head or Anchor): tint the plate
 		-- from the owner colour and stamp the 3-letter country tag.
 		local crest = bg and bg:FindFirstChild("Crest")
@@ -1160,6 +1325,9 @@ local function reconcileOne(armyId)
 		if shako then shako.Color = applied end
 		local horseBody = model:FindFirstChild("Body")
 		if horseBody then horseBody.Color = applied end
+		-- Ship hull: state-tint over the wood colour (restores it when the tint clears).
+		local hull = model:GetAttribute("modelType") == "ship" and model:FindFirstChild("Cube", true) or nil
+		if hull then hull.Color = tint and SHIP_HULL_COLOR:Lerp(tint, 0.4) or SHIP_HULL_COLOR end
 		ensurePulse(armyId, model, state == "attacking")
 		setAnimState(armyId, state)
 	end
@@ -1256,7 +1424,7 @@ local function reconcileOne(armyId)
 			end
 		end
 		local mtAttr = model:GetAttribute("modelType")
-		if mtAttr == "musketeer" or mtAttr == "cavalry" then
+		if mtAttr == "musketeer" or mtAttr == "cavalry" or mtAttr == "ship" then
 			for _, p in model:GetDescendants() do
 				if p:IsA("BasePart") and p.Name ~= "Anchor" and p.Name ~= "HumanoidRootPart" then
 					p.Transparency = target
