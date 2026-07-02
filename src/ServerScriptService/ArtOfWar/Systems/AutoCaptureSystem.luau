@@ -79,8 +79,14 @@ local function tick()
 		if army.autoCapture and not army.movement and not army.battleId then
 			local owner = army.ownerTag
 			local here = ctx.WorldState.getProvince(army.provinceId)
-			-- Already standing on a tile we are taking? Let SiegeSystem finish the siege in place.
-			if not (here and canCapture(owner, here)) then
+			if here and canCapture(owner, here) then
+				-- Standing on a tile we are taking. Under instant capture SiegeSystem is off, so
+				-- flip it here (covers armies left on capturable tiles when the flag turned on);
+				-- if it fails (defended), fall through next tick. Legacy: SiegeSystem sieges in place.
+				if ctx.WorldConstants.EnableInstantCapture and ctx.CombatSystem and ctx.CombatSystem.captureIfUndefended then
+					ctx.CombatSystem.captureIfUndefended(armyId, army.provinceId)
+				end
+			else
 				local target = nearestCapturable(owner, army.provinceId)
 				if target then
 					ctx.MovementSystem.beginMovePath(armyId, target)

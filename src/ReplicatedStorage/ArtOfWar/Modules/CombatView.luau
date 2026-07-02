@@ -418,6 +418,12 @@ local function reconcileBattle(battleId)
 end
 
 local function reconcileSiege(provinceId)
+	-- Instant capture writes no occupation records; kill any stale ring and bail.
+	if WorldConstants.EnableInstantCapture then
+		local stale = siegeMarkers[provinceId]
+		if stale then destroyMarker(stale); siegeMarkers[provinceId] = nil end
+		return
+	end
 	local prov = ClientStateCache.getProvince and ClientStateCache.getProvince(provinceId)
 	local occ = prov and prov.occupation
 	local marker = siegeMarkers[provinceId]

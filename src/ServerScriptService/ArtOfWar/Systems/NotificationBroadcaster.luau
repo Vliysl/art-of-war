@@ -58,15 +58,65 @@ end
 -- "Army Raised" / "Army Arrived" toasts intentionally removed (too noisy during normal play).
 -- The ArmyCreated / ArmyMoveCompleted events still fire for other systems; we just don't toast them.
 
-local function onProvinceOccupied(data)
+local function occupiedToastPair(provinceId, newController, oldController)
 	broadcast(makePayload("good", "Province Occupied",
-		string.format("Province %s taken by %s.", tostring(data.provinceId), displayName(data.newController)),
-		"self", data.newController, "province.occupied"))
-	if data.oldController and data.oldController ~= data.newController then
+		string.format("Province %s taken by %s.", tostring(provinceId), displayName(newController)),
+		"self", newController, "province.occupied"))
+	if oldController and oldController ~= newController then
 		broadcast(makePayload("bad", "Province Lost",
-			string.format("Province %s has fallen to %s.", tostring(data.provinceId), displayName(data.newController)),
-			"self", data.oldController, "province.lost"))
+			string.format("Province %s has fallen to %s.", tostring(provinceId), displayName(newController)),
+			"self", oldController, "province.lost"))
 	end
+end
+
+-- Under instant capture an AutoCapture sweep flips a province every few seconds; per-tile
+-- toasts become spam for both players. Toast the FIRST flip of a (taker, loser) pair
+-- immediately, buffer the rest of the window, then flush one "N more provinces" summary.
+local occupiedBuffer = {}
+
+local function flushOccupiedBuffer(key)
+	local entry = occupiedBuffer[key]
+	occupiedBuffer[key] = nil
+	if not entry or entry.count <= 0 then return end
+	local takerName = displayName(entry.newController)
+	broadcast(makePayload("good", "Provinces Occupied",
+		string.format("%d more province%s taken by %s.", entry.count, entry.count == 1 and "" or "s", takerName),
+		"self", entry.newController, "province.occupied"))
+	if entry.oldController and entry.oldController ~= entry.newController then
+		broadcast(makePayload("bad", "Provinces Lost",
+			string.format("%d more province%s have fallen to %s.", entry.count, entry.count == 1 and "" or "s", takerName),
+			"self", entry.oldController, "province.lost"))
+	end
+end
+
+local function onProvinceOccupied(data)
+	if not ctx.WorldConstants.EnableInstantCapture then
+		occupiedToastPair(data.provinceId, data.newController, data.oldController)
+		return
+	end
+	local key = tostring(data.newController) .. "|" .. tostring(data.oldController)
+	local entry = occupiedBuffer[key]
+	if entry then
+		entry.count += 1
+		return
+	end
+	occupiedToastPair(data.provinceId, data.newController, data.oldController)
+	occupiedBuffer[key] = {
+		newController = data.newController,
+		oldController = data.oldController,
+		count = 0,
+	}
+	task.delay(ctx.WorldConstants.OccupiedToastWindowSec or 10, function()
+		flushOccupiedBuffer(key)
+	end)
+end
+
+local function onRecruitCancelled(data)
+	if data.reason ~= "occupied" then return end
+	broadcast(makePayload("warn", "Recruitment Cancelled",
+		string.format("Recruitment in province %s was cancelled — the province is occupied (costs refunded).",
+			tostring(data.provinceId or "?")),
+		"self", data.tag, "recruit.cancelled.occupied", { ttl = 8 }))
 end
 
 local function onBattleStarted(data)
@@ -274,6 +324,7 @@ local SUBSCRIPTIONS = {
 	PeaceProposalRejected   = onPeaceProposalRejected,
 	PeaceProposalExpired    = onPeaceProposalExpired,
 	ProvinceOccupied        = onProvinceOccupied,
+	RegimentRecruitCancelled = onRecruitCancelled,
 	BattleStarted           = onBattleStarted,
 	BattleResolved          = onBattleResolved,
 	CountryLawPassed        = onLawPassed,

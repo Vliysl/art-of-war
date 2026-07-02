@@ -251,7 +251,85 @@ local function enqueue(tag, provinceId, unitTypeId, count)
 	return true, ticket.id
 end
 
+local function cancelTicket(tag, ticketId, reason)
+	local queue = queuesByCountry[tag]
+	if not queue then return false, "no_queue" end
+	for i, ticket in ipairs(queue) do
+		if ticket.id == ticketId then
+			-- Refund treasury + manpower (full refund — design choice for v1)
+			local country = ctx.WorldState.getCountry(tag)
+			local unit = unitOf(ticket.unitTypeId)
+			if country and unit then
+				country.treasury = (country.treasury or 0) + unit.recruitCost * ticket.count
+				local pool = poolFieldForUnit(unit)
+				country[pool] = (country[pool] or 0) + unit.recruitManpower * ticket.count
+				ctx.WorldState.setCountry(tag, country)
+			end
+			table.remove(queue, i)
+			if #queue == 0 then queuesByCountry[tag] = nil end
+			pruneCountryQueue(tag)
+			ctx.EventBus.publish(ctx.Channels.RegimentRecruitCancelled, {
+				tag = tag, ticketId = ticketId, reason = reason or "cancelled",
+				provinceId = ticket.provinceId, unitTypeId = ticket.unitTypeId, count = ticket.count,
+			})
+			return true
+		end
+	end
+	return false, "no_ticket"
+end
+
+-- Occupation freeze (EnableOccupationFreeze): losing control of a province CANCELS its
+-- recruitment (full refund via cancelTicket) -- the levies scatter. Only the owner can ever
+-- hold tickets at a province (enqueue requires owner+controller), so cancelling every
+-- non-new-controller ticket at the tile is exact.
+local function cancelTicketsAt(provinceId, keepTag, reason)
+	local pending = {}
+	for tag, queue in pairs(queuesByCountry) do
+		if tag ~= keepTag then
+			for _, ticket in ipairs(queue) do
+				if ticket.provinceId == provinceId then
+					pending[#pending + 1] = { tag = tag, id = ticket.id }
+				end
+			end
+		end
+	end
+	for _, entry in ipairs(pending) do
+		cancelTicket(entry.tag, entry.id, reason)
+	end
+end
+
+local function onProvinceOccupied(payload)
+	if not ctx.WorldConstants.EnableOccupationFreeze then return end
+	if not payload or payload.provinceId == nil then return end
+	cancelTicketsAt(payload.provinceId, payload.newController, "occupied")
+end
+
+-- One-time sweep when the freeze turns on: cancel tickets in provinces that were already
+-- occupied before the flag shipped (the subscription only catches future flips).
+local occupationSweepDone = false
+local function occupationFreezeSweep()
+	if not ctx.WorldConstants.EnableOccupationFreeze then
+		occupationSweepDone = false
+		return
+	end
+	if occupationSweepDone then return end
+	occupationSweepDone = true
+	local pending = {}
+	for tag, queue in pairs(queuesByCountry) do
+		for _, ticket in ipairs(queue) do
+			local prov = ctx.WorldState.getProvince(ticket.provinceId)
+			if prov and prov.controllerTag ~= tag then
+				pending[#pending + 1] = { tag = tag, id = ticket.id }
+			end
+		end
+	end
+	for _, entry in ipairs(pending) do
+		cancelTicket(entry.tag, entry.id, "occupied")
+	end
+end
+
 local function tickQueues()
+	occupationFreezeSweep()
 	local now = ctx.TickScheduler.getSimTime()
 	for tag, queue in queuesByCountry do
 		local kept = {}
@@ -281,32 +359,6 @@ local function queuesOf(tag)
 	return queuesByCountry[tag] or {}
 end
 
-local function cancelTicket(tag, ticketId)
-	local queue = queuesByCountry[tag]
-	if not queue then return false, "no_queue" end
-	for i, ticket in ipairs(queue) do
-		if ticket.id == ticketId then
-			-- Refund treasury + manpower (full refund — design choice for v1)
-			local country = ctx.WorldState.getCountry(tag)
-			local unit = unitOf(ticket.unitTypeId)
-			if country and unit then
-				country.treasury = (country.treasury or 0) + unit.recruitCost * ticket.count
-				local pool = poolFieldForUnit(unit)
-				country[pool] = (country[pool] or 0) + unit.recruitManpower * ticket.count
-				ctx.WorldState.setCountry(tag, country)
-			end
-			table.remove(queue, i)
-			if #queue == 0 then queuesByCountry[tag] = nil end
-			pruneCountryQueue(tag)
-			ctx.EventBus.publish(ctx.Channels.RegimentRecruitCancelled, {
-				tag = tag, ticketId = ticketId, reason = "cancelled",
-			})
-			return true
-		end
-	end
-	return false, "no_ticket"
-end
-
 function RecruitSystem.register(context)
 	ctx = context
 	context.RecruitSystem = {
@@ -318,6 +370,7 @@ function RecruitSystem.register(context)
 		recomputeManpowerCaps = recomputeManpowerCaps,
 	}
 	for k, v in pairs(context.RecruitSystem) do RecruitSystem[k] = v end
+	context.EventBus.subscribe(context.Channels.ProvinceOccupied, onProvinceOccupied)
 	context.TickScheduler.register({
 		id = "RecruitSystem",
 		priority = 32,

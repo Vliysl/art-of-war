@@ -715,11 +715,25 @@ function ProvinceOverview.create(ctx)
 				shown += 1
 				local def = buildingTypes()[item.buildingId]
 				local bItem = item
+				-- Occupation freeze: a paused ticket's completesAt is stale, so the live
+				-- progressOf extrapolation would climb past 100%. Render a STATIC fill from
+				-- the banked remaining time instead, and skip the live updater.
+				local paused = bItem.paused == true
+				local staticProgress = 0
+				if paused then
+					local total = (bItem.completesAt or 0) - (bItem.startedAt or 0)
+					local remaining = bItem.remaining or total
+					staticProgress = total > 0 and math.clamp((total - remaining) / total, 0, 1) or 0
+				end
 				local _, fill = actionRow(body, {
 					order = qo,
 					icon = "Building",
-					label = (def and def.displayName) or titleCase(item.buildingId),
-					progress = { value = progressOf(bItem.startedAt, bItem.completesAt) * 100, max = 100 },
+					label = ((def and def.displayName) or titleCase(item.buildingId))
+						.. (paused and " — Paused (occupied)" or ""),
+					progress = {
+						value = (paused and staticProgress or progressOf(bItem.startedAt, bItem.completesAt)) * 100,
+						max = 100,
+					},
 					button = {
 						text = "\u{00D7}",
 						variant = "danger",
@@ -728,7 +742,7 @@ function ProvinceOverview.create(ctx)
 						end,
 					},
 				})
-				if fill then
+				if fill and not paused then
 					liveBars[#liveBars + 1] =
 						{ fill = fill, live = function() return progressOf(bItem.startedAt, bItem.completesAt) end }
 				end
@@ -853,9 +867,10 @@ function ProvinceOverview.create(ctx)
 			for _, item in ipairs(queue) do
 				if item.provinceId == prov.id then
 					q[#q + 1] = string.format(
-						"%s:%s",
+						"%s:%s%s",
 						tostring(item.id),
-						tostring(item.buildingId)
+						tostring(item.buildingId),
+						item.paused and ":p" or ""
 					)
 				end
 			end

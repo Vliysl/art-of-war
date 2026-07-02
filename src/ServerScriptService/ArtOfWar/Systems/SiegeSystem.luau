@@ -16,9 +16,27 @@ local function fortTierFor(prov)
 end
 
 local activeSieges = {}
+local sweptStaleOccupations = false
 
 local function tickSiege()
 	local C = ctx.WorldConstants
+	-- Instant capture replaces siege progress wholesale (CombatSystem.captureIfUndefended).
+	-- Keep the system registered so flipping the flag off restores sieges; on the first gated
+	-- tick, clear any lingering occupation records so stale capture rings can't replicate.
+	if C.EnableInstantCapture then
+		if not sweptStaleOccupations then
+			sweptStaleOccupations = true
+			for pid, prov in ctx.WorldState.allProvinces() do
+				if prov.occupation then
+					prov.occupation = nil
+					ctx.WorldState.setProvince(pid, prov)
+				end
+			end
+			table.clear(activeSieges)
+		end
+		return
+	end
+	sweptStaleOccupations = false
 	-- Provinces with an active battle (one pass) so the per-army siege check below is O(1) instead of
 	-- O(battles) per army -- the old getBattleAt-per-army call made this O(armies x battles).
 	local battleProvince = {}

@@ -466,29 +466,32 @@ local function buildBannerGui(adornee, studsOffset, _factionColor)
 	count.Parent = bg
 
 	-- Capture progress bar directly below the count box (hidden until occupying).
-	local capTrack = Instance.new("Frame")
-	capTrack.Name = "CaptureTrack"
-	capTrack.Position = UDim2.fromOffset(54, 55)
-	capTrack.Size = UDim2.fromOffset(114, 3)
-	capTrack.BackgroundColor3 = Color3.fromRGB(44, 32, 18)
-	capTrack.BackgroundTransparency = 0.1
-	capTrack.BorderSizePixel = 0
-	capTrack.Visible = false
-	capTrack.ZIndex = 2
-	capTrack.Parent = bg
-	local capCorner = Instance.new("UICorner")
-	capCorner.CornerRadius = UDim.new(0, 2)
-	capCorner.Parent = capTrack
-	local capFill = Instance.new("Frame")
-	capFill.Name = "CaptureFill"
-	capFill.Size = UDim2.fromScale(0, 1)
-	capFill.BackgroundColor3 = Color3.fromRGB(235, 196, 90)
-	capFill.BorderSizePixel = 0
-	capFill.ZIndex = 3
-	capFill.Parent = capTrack
-	local capFillCorner = Instance.new("UICorner")
-	capFillCorner.CornerRadius = UDim.new(0, 2)
-	capFillCorner.Parent = capFill
+	-- Instant capture has no progress to show -- skip building the bar entirely.
+	if not WorldConstants.EnableInstantCapture then
+		local capTrack = Instance.new("Frame")
+		capTrack.Name = "CaptureTrack"
+		capTrack.Position = UDim2.fromOffset(54, 55)
+		capTrack.Size = UDim2.fromOffset(114, 3)
+		capTrack.BackgroundColor3 = Color3.fromRGB(44, 32, 18)
+		capTrack.BackgroundTransparency = 0.1
+		capTrack.BorderSizePixel = 0
+		capTrack.Visible = false
+		capTrack.ZIndex = 2
+		capTrack.Parent = bg
+		local capCorner = Instance.new("UICorner")
+		capCorner.CornerRadius = UDim.new(0, 2)
+		capCorner.Parent = capTrack
+		local capFill = Instance.new("Frame")
+		capFill.Name = "CaptureFill"
+		capFill.Size = UDim2.fromScale(0, 1)
+		capFill.BackgroundColor3 = Color3.fromRGB(235, 196, 90)
+		capFill.BorderSizePixel = 0
+		capFill.ZIndex = 3
+		capFill.Parent = capTrack
+		local capFillCorner = Instance.new("UICorner")
+		capFillCorner.CornerRadius = UDim.new(0, 2)
+		capFillCorner.Parent = capFill
+	end
 
 	return bb
 end
@@ -1081,11 +1084,15 @@ local function reconcileOne(armyId)
 
 			-- Occupation: a persistent flag glyph whenever this army is the occupier (always visible, so
 			-- the signal survives when the detail bars are hidden) + the capture progress bar (detail only).
+			-- Instant capture writes no occupation records, so the glyph instead marks Auto Capture
+			-- (the "this army keeps taking tiles" signal) and the capture bar is never built.
 			local prov = ClientStateCache.getProvince(army.provinceId)
 			local occ = prov and prov.occupation
 			local occupying = occ ~= nil and occ.byTag == army.ownerTag and (occ.required or 0) > 0
 			local occGlyph = vbg:FindFirstChild("OccupyGlyph")
-			if occGlyph then occGlyph.Visible = occupying end
+			if occGlyph then
+				occGlyph.Visible = WorldConstants.EnableInstantCapture and army.autoCapture == true or occupying
+			end
 			local capTrack = vbg:FindFirstChild("CaptureTrack")
 			local capFill = capTrack and capTrack:FindFirstChild("CaptureFill")
 			if capTrack then

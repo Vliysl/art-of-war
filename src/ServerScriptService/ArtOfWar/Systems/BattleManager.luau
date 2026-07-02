@@ -327,6 +327,12 @@ local function endBattle(record, winnerSide, reason)
 				ctx.ArmySystem.setState(armyId, "idle")
 				if isAttacker then
 					ctx.ArmySystem.relocateArmy(armyId, provinceId)
+					-- relocateArmy publishes no arrival event (and no-ops when the winner already
+					-- stands on the tile), so the won tile would never flip under instant capture
+					-- without this explicit call. First winner pays the capture cost; the rest no-op.
+					if ctx.CombatSystem and ctx.CombatSystem.captureIfUndefended then
+						ctx.CombatSystem.captureIfUndefended(armyId, provinceId)
+					end
 				end
 			end
 		end

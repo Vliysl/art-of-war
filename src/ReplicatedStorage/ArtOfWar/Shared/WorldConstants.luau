@@ -40,14 +40,21 @@ WorldConstants.EnableNewEditor = false        -- Phase 5: reserved. Both editors
 -- its phase's code lands on this branch.
 WorldConstants.EnableAnnexArmyDisband = true      -- C1: full annexation disbands the loser's armies + fleets
 WorldConstants.EnableStrictRetreat = true         -- C1: retreat = adjacent allied/controlled LAND tile w/o battle or at-war army; none -> destroyed (encirclement)
-WorldConstants.EnableInstantCapture = false       -- C2: entering an undefended enemy tile flips it instantly (siege progress off)
-WorldConstants.EnableOccupationFreeze = false     -- C2: enemy occupation cancels recruitment (refunded) + pauses construction
+WorldConstants.EnableInstantCapture = true        -- C2: entering an undefended enemy tile flips it instantly (siege progress off)
+WorldConstants.EnableOccupationFreeze = true      -- C2: enemy occupation cancels recruitment (refunded) + pauses construction
 WorldConstants.EnableAdjacentEngagement = false   -- C3: attackers fight from their own tile; march in only on victory
 WorldConstants.EnableBattleDisc = false           -- C4: border battle disc (SurfaceGui 1-100) replaces the billboard battle bar
 WorldConstants.EnableNewInputScheme = false       -- C5: LMB select/move, RMB pan/inspect (MMB pan kept)
 WorldConstants.EnableMultiProvinceActions = false -- C6: ctrl/shift multi-province selection + batched recruit/build remotes
 WorldConstants.EnableNewUnitModels = false        -- C8: cavalry/dragoon horse model (+ C9 ship model at sea)
 WorldConstants.EnableSeaTransport = false         -- C9: armies path over sea tiles (embark/sail/disembark, sea battles)
+
+-- C2 instant-capture tunables: the walk-in cost. Forts no longer slow capture -- they bleed
+-- the captor harder instead (per-tier casualty scaling).
+WorldConstants.InstantCaptureCasualtyFrac = 0.02
+WorldConstants.InstantCaptureCasualtyPerFortTier = 0.01
+WorldConstants.InstantCaptureOrgLoss = 1.0
+WorldConstants.OccupiedToastWindowSec = 10
 
 -- Phase 2: unrest added per owned province the nation holds NO core on (cores suppress unrest). Default 0
 -- (opt-in) -- raise once balanced. Gated by EnableCores; computed O(owned) in UnrestSystem.targetUnrest.

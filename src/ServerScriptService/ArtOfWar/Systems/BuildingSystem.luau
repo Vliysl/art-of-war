@@ -75,10 +75,81 @@ local function pruneCountryQueue(tag)
 			provinceId = t.provinceId,
 			startedAt = t.startedAt,
 			completesAt = t.completesAt,
+			paused = t.paused,
+			remaining = t.remaining,
 		})
 	end
 	country.buildQueue = items
 	ctx.WorldState.setCountry(tag, country)
+end
+
+-- Occupation freeze (EnableOccupationFreeze): losing control of a province PAUSES its
+-- construction (progress banked as `remaining`); recapture -- including white-peace
+-- reversion, which publishes the same ProvinceOccupied channel -- resumes with the banked
+-- time. Only the owner can hold tickets at a province, so the tag<->newController compare
+-- is exact.
+local function onProvinceOccupied(payload)
+	if not ctx.WorldConstants.EnableOccupationFreeze then return end
+	if not payload or payload.provinceId == nil then return end
+	local pid = payload.provinceId
+	local now = ctx.TickScheduler.getSimTime()
+	for tag, queue in pairs(queuesByCountry) do
+		local changed = false
+		for _, t in queue do
+			if t.provinceId == pid then
+				if tag == payload.newController then
+					if t.paused then
+						t.completesAt = now + (t.remaining or 0)
+						t.paused = nil
+						t.remaining = nil
+						changed = true
+					end
+				elseif not t.paused then
+					t.paused = true
+					t.remaining = math.max(0, t.completesAt - now)
+					changed = true
+				end
+			end
+		end
+		if changed then pruneCountryQueue(tag) end
+	end
+end
+
+-- One-time sweep when the freeze turns on (pause tickets in already-occupied provinces);
+-- when it turns back off, unpause everything so no ticket is stranded.
+local freezeSweepDone = false
+local function occupationFreezeSweep()
+	local now = ctx.TickScheduler.getSimTime()
+	if not ctx.WorldConstants.EnableOccupationFreeze then
+		freezeSweepDone = false
+		for tag, queue in pairs(queuesByCountry) do
+			local changed = false
+			for _, t in queue do
+				if t.paused then
+					t.completesAt = now + (t.remaining or 0)
+					t.paused = nil
+					t.remaining = nil
+					changed = true
+				end
+			end
+			if changed then pruneCountryQueue(tag) end
+		end
+		return
+	end
+	if freezeSweepDone then return end
+	freezeSweepDone = true
+	for tag, queue in pairs(queuesByCountry) do
+		local changed = false
+		for _, t in queue do
+			local prov = ctx.WorldState.getProvince(t.provinceId)
+			if not t.paused and prov and prov.controllerTag ~= tag then
+				t.paused = true
+				t.remaining = math.max(0, t.completesAt - now)
+				changed = true
+			end
+		end
+		if changed then pruneCountryQueue(tag) end
+	end
 end
 
 local function fulfilBuilding(ticket)
@@ -205,12 +276,33 @@ local function cancel(tag, ticketId)
 end
 
 local function tickQueues()
+	occupationFreezeSweep()
 	local now = ctx.TickScheduler.getSimTime()
 	for tag, queue in queuesByCountry do
 		local kept = {}
 		local fulfilled = false
 		for _, t in queue do
-			if now >= t.completesAt then
+			if t.paused then
+				local prov = ctx.WorldState.getProvince(t.provinceId)
+				if prov and prov.ownerTag ~= t.tag then
+					-- The province was ceded away permanently (annex/peace), not just occupied:
+					-- the paused ticket can never resume. Cancel with the manual-cancel refund.
+					local building = buildingOf(t.buildingId)
+					local country = ctx.WorldState.getCountry(t.tag)
+					if country and building then
+						country.treasury = (country.treasury or 0) + math.floor((building.cost or 0) * 0.5)
+						ctx.WorldState.setCountry(t.tag, country)
+					end
+					ctx.EventBus.publish(ctx.Channels.BuildingCancelled, {
+						tag = t.tag, ticketId = t.id,
+						buildingId = t.buildingId, provinceId = t.provinceId,
+						reason = "province_ceded",
+					})
+					fulfilled = true
+				else
+					table.insert(kept, t)
+				end
+			elseif now >= t.completesAt then
 				fulfilBuilding(t)
 				fulfilled = true
 			else
@@ -253,6 +345,7 @@ function BuildingSystem.register(context)
 		queuesOf = queuesOf,
 		queueLengthAt = queueLengthAt,
 	}
+	context.EventBus.subscribe(context.Channels.ProvinceOccupied, onProvinceOccupied)
 	context.TickScheduler.register({
 		id = "BuildingSystem",
 		priority = 34,
