@@ -372,7 +372,10 @@ local function isVisibleInStack(armyId, army)
 	return s.strongestId == armyId
 end
 
-local function destroyModelFor(armyId)
+-- Forget all per-army tracking (anims, labels, selection, tweens) and hand back the model
+-- WITHOUT destroying it, so the caller can either drop it (destroyModelFor) or ragdoll it
+-- (a death). Returns the detached model or nil.
+local function cleanupTracking(armyId)
 	if combatAnimConns[armyId] then
 		local c = combatAnimConns[armyId]
 		if c.shoot then c.shoot:Disconnect() end
@@ -381,7 +384,6 @@ local function destroyModelFor(armyId)
 	end
 	combatAnimGen[armyId] = (combatAnimGen[armyId] or 0) + 1
 	local model = armyParts[armyId]
-	if model and model.Parent then model:Destroy() end
 	armyParts[armyId] = nil
 	labelRefs[armyId] = nil
 	lastKnownState[armyId] = nil
@@ -392,6 +394,65 @@ local function destroyModelFor(armyId)
 	if pulseTweens[armyId] then pulseTweens[armyId]:Cancel(); pulseTweens[armyId] = nil end
 	if selectedArmyId == armyId then selectedArmyId = nil end
 	selectedArmyIds[armyId] = nil
+	return model
+end
+
+local function destroyModelFor(armyId)
+	local model = cleanupTracking(armyId)
+	if model and model.Parent then model:Destroy() end
+end
+
+-- Death effect: play the classic Roblox "oof", strip the banner/selection, sever the joints so
+-- the body tumbles apart under gravity, fade every part, and clean up after DEATH_LIFETIME.
+-- Cosmetic only (client-side; no combat state), so math.random is fine here. Concurrency is
+-- capped so a mass wipe (an annexation disbanding a whole army list) can't spawn a physics storm.
+local DEATH_SOUND_ID = "rbxasset://sounds/uuhhh.mp3" -- the classic Roblox character "oof"
+local DEATH_FADE_TIME = 1.8
+local DEATH_LIFETIME = 2
+local DEATH_MAX_PHYSICS_PARTS = 40
+local DEATH_MAX_CONCURRENT = 24
+local activeDeaths = 0
+
+local function playDeathFx(model)
+	if not model then return end
+	if not model.Parent or activeDeaths >= DEATH_MAX_CONCURRENT then
+		model:Destroy()
+		return
+	end
+	activeDeaths += 1
+	for _, d in ipairs(model:GetDescendants()) do
+		if d:IsA("BillboardGui") or d:IsA("SurfaceGui") or d:IsA("Highlight") or d:IsA("Humanoid") then
+			d:Destroy()
+		end
+	end
+	local root = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+	if root then
+		local snd = Instance.new("Sound")
+		snd.SoundId = DEATH_SOUND_ID
+		snd.Volume = 0.6
+		snd.RollOffMaxDistance = 140
+		snd.Parent = root
+		snd:Play()
+	end
+	pcall(function() model:BreakJoints() end)
+	local n = 0
+	for _, p in ipairs(model:GetDescendants()) do
+		if p:IsA("BasePart") then
+			n += 1
+			if n <= DEATH_MAX_PHYSICS_PARTS then
+				p.Anchored = false
+				p.CanCollide = false
+				p.CanQuery = false
+				p.AssemblyLinearVelocity = Vector3.new((math.random() - 0.5) * 8, 4 + math.random() * 4, (math.random() - 0.5) * 8)
+				p.AssemblyAngularVelocity = Vector3.new((math.random() - 0.5) * 10, (math.random() - 0.5) * 10, (math.random() - 0.5) * 10)
+			end
+			TweenService:Create(p, TweenInfo.new(DEATH_FADE_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Transparency = 1 }):Play()
+		end
+	end
+	task.delay(DEATH_LIFETIME, function()
+		activeDeaths -= 1
+		if model then model:Destroy() end
+	end)
 end
 
 -- Men-per-regiment + the overhead count formatter: full numbers with a SPACE thousands-separator
@@ -1199,7 +1260,11 @@ end
 local function reconcileOne(armyId)
 	local army = ClientStateCache.allArmies()[armyId]
 	if not army then
-		destroyModelFor(armyId)
+		-- The army record is gone (destroyed/annexed/disbanded) -- ragdoll the model with the
+		-- oof instead of instantly deleting it. Stack-hide and model-kind-change removals below
+		-- keep the plain destroy (the army still exists; only its rendered model is swapped).
+		local model = cleanupTracking(armyId)
+		if model then playDeathFx(model) end
 		return
 	end
 

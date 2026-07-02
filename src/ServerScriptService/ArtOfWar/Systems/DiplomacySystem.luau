@@ -967,6 +967,22 @@ local function accrueMonthlyAndResolve(currentMonthIndex, months)
 	end
 end
 
+-- A nation with no owned provinces AND no armies has been fully knocked out -- it has no
+-- capacity to resist, so it must accept whatever the victor offers (human or AI alike).
+local function isFullyCapitulated(tag)
+	if ctx.ProvinceRegistry and ctx.ProvinceRegistry.byOwner then
+		if #ctx.ProvinceRegistry.byOwner(tag) > 0 then return false end
+	else
+		for _, prov in ctx.WorldState.allProvinces() do
+			if prov.ownerTag == tag then return false end
+		end
+	end
+	if ctx.ArmySystem and ctx.ArmySystem.armiesOfOwner then
+		if #ctx.ArmySystem.armiesOfOwner(tag) > 0 then return false end
+	end
+	return true
+end
+
 function proposePeace(fromTag, toTag, terms) -- fills the forward-declared upvalue (do NOT add local)
 	if not fromTag or not toTag then return false, nil, "missing_tag" end
 	local war = findActiveWar(fromTag, toTag)
@@ -1013,6 +1029,15 @@ function proposePeace(fromTag, toTag, terms) -- fills the forward-declared upval
 		terms = terms,
 		expiresAt = proposal.expiresAt,
 	})
+
+	-- Full capitulation overrides the usual accept/reject path (AI willingness OR a human's
+	-- modal): a nation with nothing left surrenders on any terms the victor proposes.
+	if isFullyCapitulated(toTag) then
+		proposal.status = "accepted"
+		ctx.WorldState.setPeaceProposal(id, proposal)
+		endWar(war.id, terms, { consented = true })
+		return true, id
+	end
 
 	if not isClaimedTag(toTag) then
 		if terms.type == "annex_occupied" and occupiedProvinceCount(fromTag, toTag) <= 0 then

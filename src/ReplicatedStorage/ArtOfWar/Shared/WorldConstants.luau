@@ -53,7 +53,7 @@ WorldConstants.EnableSeaTransport = true          -- C9: armies path over sea ti
 -- the captor harder instead (per-tier casualty scaling).
 WorldConstants.InstantCaptureCasualtyFrac = 0.02
 WorldConstants.InstantCaptureCasualtyPerFortTier = 0.01
-WorldConstants.InstantCaptureOrgLoss = 1.0
+WorldConstants.InstantCaptureOrgLoss = 6.0 -- massive org hit: org max is 10, so a walk-in leaves the army spent + vulnerable to a counter-attack
 WorldConstants.OccupiedToastWindowSec = 10
 
 -- C3: a beaten attacker stands down at home instead of retreating; AutoCapture waits this many
@@ -61,7 +61,7 @@ WorldConstants.OccupiedToastWindowSec = 10
 WorldConstants.FailedAttackCooldownSec = 20
 
 -- C4: world-space battle disc on the border between the attacker origin and the defended tile.
-WorldConstants.BattleDiscDiameter = 4
+WorldConstants.BattleDiscDiameter = 2
 
 -- C9 sea-transport tunables. Step costs ARE the embark mechanic: land->land keeps the 7-tick
 -- week, open water sails fast, and the land<->sea transition is the slow, vulnerable window.
@@ -468,6 +468,11 @@ WorldConstants.ProvinceSupplyLimitPerDev = 500 -- + per devTier
 WorldConstants.AttritionCrowdingRate = 0.05 -- monthly loss-frac per 1x supply overflow
 WorldConstants.AttritionTerrainScale = 0.02 -- low-supply terrain attrition scale
 WorldConstants.AttritionMaxPerMonth = 0.10 -- cap monthly attrition fraction
+-- Encirclement (a pocket: no adjacent owner/allied LAND supply line AND at least one adjacent
+-- at-war enemy land tile). While encircled an army bleeds extra manpower and organization each
+-- month. Set either to 0 to disable. Deliberately harsh -- a cut-off army should be a liability.
+WorldConstants.EncirclementAttritionPerMonth = 0.08
+WorldConstants.EncirclementOrgLossPerMonth = 3.0
 WorldConstants.AttritionTerrainFreeSupply = 8 -- terrain supplyLimit at/above which terrain attrition is 0
 WorldConstants.AttritionFrostRate = 0.03 -- hook: extra attrition in winter provinces (no season system yet)
 WorldConstants.WastelandMovementSlowdown = 0.5 -- hook: wasteland province speed x this

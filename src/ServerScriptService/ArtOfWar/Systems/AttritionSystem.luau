@@ -16,6 +16,40 @@ end
 
 local lastAttritionMonth = nil
 
+-- Encirclement: a land army is in a pocket when NO adjacent land province is controlled by it
+-- or an ally (supply line severed) AND at least one adjacent land province is held by an enemy
+-- it is at war with (a real front, not a peaceful island). Sea nodes (negative ids) are ignored:
+-- they neither supply nor besiege.
+local function isEncircled(army)
+	local pid = army.provinceId
+	if pid == nil or (type(pid) == "number" and pid < 0) then return false end
+	local adj = ctx.AdjacencyGraph
+	if not (adj and adj.getNeighbors) then return false end
+	local owner = army.ownerTag
+	local dipl = ctx.DiplomacySystem
+	local hasEnemy = false
+	for _, n in ipairs(adj.getNeighbors(pid)) do
+		if type(n) == "number" and n >= 0 then
+			local np = ctx.WorldState.getProvince(n)
+			if np then
+				local c = np.controllerTag
+				if c == owner then
+					return false
+				end
+				if c and c ~= "" and c ~= "NONE" then
+					if dipl and dipl.areAllied and dipl.areAllied(owner, c) then
+						return false
+					end
+					if dipl and dipl.areAtWar and dipl.areAtWar(owner, c) then
+						hasEnemy = true
+					end
+				end
+			end
+		end
+	end
+	return hasEnemy
+end
+
 local function runAttrition(months)
 	months = months or 1
 	local C = ctx.WorldConstants
@@ -40,6 +74,9 @@ local function runAttrition(months)
 	local terrFree = C.AttritionTerrainFreeSupply or 8
 	local frostRate = C.AttritionFrostRate or 0.03
 	local cap = (C.AttritionMaxPerMonth or 0.10) * months
+	local encircleAttr = C.EncirclementAttritionPerMonth or 0
+	local encircleOrg = C.EncirclementOrgLossPerMonth or 0
+	local encircleOn = encircleAttr > 0 or encircleOrg > 0
 
 	for pid, g in pairs(byProv) do
 		local prov = ctx.WorldState.getProvince(pid)
@@ -64,6 +101,16 @@ local function runAttrition(months)
 				if not friendly then rate += terrainAttr + frost end
 				rate = rate * months
 				if rate > cap then rate = cap end
+				-- Encirclement penalty sits ON TOP of the normal cap (a pocket bleeds worse than
+				-- any single terrain) and additionally drains organization, which has no passive regen.
+				if encircleOn and isEncircled(army) then
+					if encircleAttr > 0 then
+						rate += encircleAttr * months
+					end
+					if encircleOrg > 0 and AS.adjustOrganization then
+						AS.adjustOrganization(army.id, -encircleOrg * months)
+					end
+				end
 				if rate > 0 then
 					AS.applyCasualties(army.id, rate)
 				end
