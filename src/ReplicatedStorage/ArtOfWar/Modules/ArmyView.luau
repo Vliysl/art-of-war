@@ -33,9 +33,9 @@ local TINT_BY_STATE = {
 local FACTION_FALLBACK = Color3.fromRGB(140, 140, 140)
 local POLE_COLOR = Color3.fromRGB(40, 40, 50)
 
--- Unit IDs that get the placeholder Musketeer model. All other unit types use the
--- generic Banner-Pin (disc + pole + flag). Cavalry/dragoons/artillery stay generic
--- until their own placeholder models are added.
+-- Unit IDs that get the placeholder Musketeer model. Cavalry/dragoons get the horse
+-- (CavalryModel) when EnableNewUnitModels is on. All other unit types (artillery)
+-- use the generic Banner-Pin (disc + pole + flag) until their own models are added.
 local INFANTRY_UNIT_IDS = {
 	line_infantry = true,
 	light_infantry = true,
@@ -44,8 +44,16 @@ local INFANTRY_UNIT_IDS = {
 	professional_infantry = true,
 }
 
+local CAVALRY_UNIT_IDS = {
+	cavalry = true,
+	dragoons = true,
+}
+
 local MUSKETEER_TEMPLATE = nil
 local MUSKETEER_TARGET_HEIGHT = 1.85  -- world studs, scaled for 2048 map (was 16.8 @ 18665; x0.110)
+
+local CAVALRY_TEMPLATE = nil
+local CAVALRY_TARGET_HEIGHT = 1.7  -- world studs; horses read slightly under the 1.85 musketeer
 
 local function getMusketeerTemplate()
 	if MUSKETEER_TEMPLATE then return MUSKETEER_TEMPLATE end
@@ -56,8 +64,18 @@ local function getMusketeerTemplate()
 	return MUSKETEER_TEMPLATE
 end
 
+local function getCavalryTemplate()
+	if CAVALRY_TEMPLATE then return CAVALRY_TEMPLATE end
+	local rs = game:GetService("ReplicatedStorage")
+	local models = rs:FindFirstChild("Models")
+	local m = models and models:FindFirstChild("CavalryModel")
+	if m then CAVALRY_TEMPLATE = m end
+	return CAVALRY_TEMPLATE
+end
+
 local function modelTypeFor(unitTypeId)
 	if unitTypeId and INFANTRY_UNIT_IDS[unitTypeId] then return "musketeer" end
+	if WorldConstants.EnableNewUnitModels and unitTypeId and CAVALRY_UNIT_IDS[unitTypeId] then return "cavalry" end
 	return "banner_pin"
 end
 
@@ -781,6 +799,87 @@ local function buildMusketeerModel(armyId, factionColor)
 	return model
 end
 
+-- Static horse mesh (Body + Tail, no rig): every part is anchored and the whole model moves
+-- via PivotTo, exactly like the banner pin. No animTracks entry is ever created, so
+-- setAnimState no-ops for this kind.
+local function buildCavalryModel(armyId, factionColor)
+	local template = getCavalryTemplate()
+	if not template then
+		return buildBannerPinModel(armyId, factionColor)
+	end
+
+	local model = template:Clone()
+	model.Name = "army_" .. tostring(armyId)
+	model:SetAttribute("armyId", armyId)
+	model:SetAttribute("modelType", "cavalry")
+
+	for _, p in model:GetDescendants() do
+		if p:IsA("BasePart") then
+			p.Anchored = true
+			p.CanCollide = false
+			p.CanTouch = false
+			p.CanQuery = true
+			p.Massless = true
+			p.CastShadow = false
+			p.Locked = true
+		end
+	end
+
+	-- Faction color on the horse Body; the Tail stays black.
+	local body = model:FindFirstChild("Body")
+	if body and body:IsA("BasePart") then
+		body.Color = factionColor
+	end
+
+	-- Scale before placing the anchor (its 0.1 size must stay fixed).
+	-- Important: ScaleTo replaces the model's *absolute* scale; the template may already have
+	-- a non-unit scale (Roblox's GetScale()), so multiply by current scale, not just the ratio.
+	if model.ScaleTo and model.GetScale then
+		local currentScale = model:GetScale()
+		local _, bbSize0 = model:GetBoundingBox()
+		if bbSize0.Y > 0 then
+			model:ScaleTo(currentScale * (CAVALRY_TARGET_HEIGHT / bbSize0.Y))
+		end
+	end
+
+	-- Anchor: invisible PrimaryPart with NO rotation at the post-scale bounding-box bottom
+	-- center, so a ground-level pivot lands the hooves on the tile surface (no feetOffsetY
+	-- lift needed) and PivotTo/lookAt translates/turns the whole horse (banner-pin pattern).
+	local cf, bbSize = model:GetBoundingBox()
+	local anchor = Instance.new("Part")
+	anchor.Name = "Anchor"
+	anchor.Size = Vector3.new(0.1, 0.1, 0.1)
+	anchor.Transparency = 1
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanTouch = false
+	anchor.CanQuery = false
+	anchor.Massless = true
+	anchor.CFrame = CFrame.new(cf.Position.X, cf.Position.Y - bbSize.Y * 0.5, cf.Position.Z)
+	anchor.Parent = model
+	model.PrimaryPart = anchor
+
+	-- The anchor sits at ground level, so the offset clears the whole horse -- roughly the
+	-- same world height the musketeer label gets above its head.
+	local bb = buildBannerGui(anchor, Vector3.new(0, CAVALRY_TARGET_HEIGHT + 2.5, 0), factionColor)
+	bb.Parent = anchor
+
+	-- Selection highlight on the model
+	local hl = Instance.new("Highlight")
+	hl.Name = "Selection"
+	hl.FillColor = Color3.fromRGB(120, 220, 255)
+	hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+	hl.FillTransparency = 0.5
+	hl.OutlineTransparency = 0
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Adornee = model
+	hl.Enabled = false
+	hl.Parent = model
+
+	model.Parent = armiesFolder
+	return model
+end
+
 -- Unit tokens are pure presentation: never collide with the map, each other, or the player.
 -- The builders already set this, but enforce it uniformly here so a stray colliding part in a
 -- model template (or a future builder) can't reintroduce physics shoving.
@@ -815,6 +914,8 @@ local function buildModel(armyId, factionColor, dominantUnitId)
 	local model
 	if mt == "musketeer" then
 		model = buildMusketeerModel(armyId, factionColor)
+	elseif mt == "cavalry" then
+		model = buildCavalryModel(armyId, factionColor)
 	else
 		model = buildBannerPinModel(armyId, factionColor)
 	end
@@ -839,8 +940,9 @@ local function applyTransparency(model, target)
 			TweenService:Create(part, TweenInfo.new(0.35, Enum.EasingStyle.Quad), { Transparency = target }):Play()
 		end
 	end
-	-- Musketeer parts: tween every BasePart descendant (except invisible ones we own like Anchor)
-	if model:GetAttribute("modelType") == "musketeer" then
+	-- Musketeer/cavalry parts: tween every BasePart descendant (except invisible ones we own like Anchor)
+	local mt = model:GetAttribute("modelType")
+	if mt == "musketeer" or mt == "cavalry" then
 		for _, p in model:GetDescendants() do
 			if p:IsA("BasePart") and p.Name ~= "Anchor" and p.Name ~= "HumanoidRootPart" then
 				TweenService:Create(p, TweenInfo.new(0.35, Enum.EasingStyle.Quad), { Transparency = target }):Play()
@@ -859,7 +961,7 @@ end
 local function ensurePulse(armyId, model, on)
 	if on then
 		if pulseTweens[armyId] then return end
-		local target = model:FindFirstChild("Base") or model:FindFirstChild("Shako")
+		local target = model:FindFirstChild("Base") or model:FindFirstChild("Shako") or model:FindFirstChild("Body")
 		if not target then return end
 		local tween = TweenService:Create(target,
 			TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
@@ -871,7 +973,7 @@ local function ensurePulse(armyId, model, on)
 		if tween then
 			tween:Cancel()
 			pulseTweens[armyId] = nil
-			local target = model:FindFirstChild("Base") or model:FindFirstChild("Shako")
+			local target = model:FindFirstChild("Base") or model:FindFirstChild("Shako") or model:FindFirstChild("Body")
 			if target then target.Transparency = cameraMode == "command" and 1 or 0 end
 		end
 	end
@@ -992,6 +1094,7 @@ local function reconcileOne(armyId)
 	-- for the ~5 lookup sites below instead of repeating the FindFirstChild chain each reconcile.
 	local label = (model:FindFirstChild("Pole") and model.Pole:FindFirstChild("Label"))
 		or (model:FindFirstChild("Head") and model.Head:FindFirstChild("Label"))
+		or (model:FindFirstChild("Anchor") and model.Anchor:FindFirstChild("Label"))
 	local bg = label and label:FindFirstChild("Bg")
 
 	-- Recolor on owner change or first build
@@ -1006,7 +1109,10 @@ local function reconcileOne(armyId)
 		-- Musketeer parts
 		local shako = model:FindFirstChild("Shako")
 		if shako then shako.Color = applied end
-		-- Crest (works for both model types since Label is parented to Pole or Head): tint the plate
+		-- Cavalry parts (Tail stays black)
+		local horseBody = model:FindFirstChild("Body")
+		if horseBody then horseBody.Color = applied end
+		-- Crest (works for all model types since Label is parented to Pole, Head or Anchor): tint the plate
 		-- from the owner colour and stamp the 3-letter country tag.
 		local crest = bg and bg:FindFirstChild("Crest")
 		if crest then
@@ -1052,6 +1158,8 @@ local function reconcileOne(armyId)
 		if base then base.Color = applied end
 		local shako = model:FindFirstChild("Shako")
 		if shako then shako.Color = applied end
+		local horseBody = model:FindFirstChild("Body")
+		if horseBody then horseBody.Color = applied end
 		ensurePulse(armyId, model, state == "attacking")
 		setAnimState(armyId, state)
 	end
@@ -1147,7 +1255,8 @@ local function reconcileOne(armyId)
 				p.CanQuery = canQuery
 			end
 		end
-		if model:GetAttribute("modelType") == "musketeer" then
+		local mtAttr = model:GetAttribute("modelType")
+		if mtAttr == "musketeer" or mtAttr == "cavalry" then
 			for _, p in model:GetDescendants() do
 				if p:IsA("BasePart") and p.Name ~= "Anchor" and p.Name ~= "HumanoidRootPart" then
 					p.Transparency = target
@@ -1457,6 +1566,7 @@ function ArmyView.init()
 					if isNew then
 						local label = (model:FindFirstChild("Pole") and model.Pole:FindFirstChild("Label"))
 							or (model:FindFirstChild("Head") and model.Head:FindFirstChild("Label"))
+							or (model:FindFirstChild("Anchor") and model.Anchor:FindFirstChild("Label"))
 						if label then
 							local lbg = label:FindFirstChild("Bg")
 							refs = { bb = label, scale = lbg and lbg:FindFirstChildOfClass("UIScale") }
