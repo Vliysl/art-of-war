@@ -379,6 +379,11 @@ function HudWiring.start(modules)
 		if MapModeController then
 			MapModeController.requestMode("political")
 		end
+		-- A screen left open (e.g. Settings, where Switch Country lives) renders on its own
+		-- layer and would float over the selection UI -- close it before mounting.
+		if Hud.closeScreen then
+			Hud.closeScreen()
+		end
 		local handle = Hud.openNationSelection({
 			nations = buildClaimable(),
 			onPlay = function(tag)

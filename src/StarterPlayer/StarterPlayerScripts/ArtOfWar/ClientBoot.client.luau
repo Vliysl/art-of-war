@@ -54,6 +54,7 @@ local ArmyView            = safeRequire("ArmyView")
 local CombatView          = safeRequire("CombatView")
 local SimClock            = safeRequire("SimClock")
 local MoveArrowView       = safeRequire("MoveArrowView")
+local CapitalMarkerView   = safeRequire("CapitalMarkerView")
 
 local map = workspace:WaitForChild("ArtOfWarMap", 120)
 local provinces = map and map:WaitForChild("Provinces", 120)
@@ -287,6 +288,7 @@ safeCall(ProvinceInteraction, "init")
 safeCall(ArmyView, "init")
 safeCall(CombatView, "init")
 safeCall(MoveArrowView, "init")
+safeCall(CapitalMarkerView, "init")
 
 if Remotes then
 	local Command = Remotes:FindFirstChild("Command")

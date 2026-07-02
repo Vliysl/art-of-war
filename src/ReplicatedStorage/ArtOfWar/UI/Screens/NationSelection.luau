@@ -153,18 +153,8 @@ function NationSelection.create(ctx)
 	root.Size = UDim2.fromScale(1, 1)
 	root.BackgroundTransparency = 1
 
-	-- Dim the map behind the selection so the panel reads as a modal instead of floating in midair.
-	-- AoWInputSink=false (and a non-Active Frame) keeps map hover/click working, so you can still
-	-- pick a nation by clicking it on the map.
-	local scrim = Instance.new("Frame")
-	scrim.Name = "Scrim"
-	scrim.Size = UDim2.fromScale(1, 1)
-	scrim.BackgroundColor3 = Colors.SurfaceSunken
-	scrim.BackgroundTransparency = 0.4
-	scrim.BorderSizePixel = 0
-	scrim.ZIndex = 1
-	scrim:SetAttribute("AoWInputSink", false)
-	scrim.Parent = root
+	-- No scrim: the map stays fully visible behind the selection panel (owner preference;
+	-- picking a nation by clicking it on the map is a first-class flow, not a backdrop).
 
 	local leftPanel = Shells.create("panel_large_shell", {
 		Name = "LeftPanel",

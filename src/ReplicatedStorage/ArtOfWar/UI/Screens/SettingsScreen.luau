@@ -181,6 +181,23 @@ function SettingsScreen.create(ctx)
 				end
 			end, 14)
 
+			ScreenKit.section(body, "Nation", 16)
+			ScreenKit.note(body, "Release your current nation and return to the selection screen.", 17)
+			local nationRow = ScreenKit.buttonRow(body, 18)
+			Button.create({
+				parent = nationRow,
+				variant = "danger",
+				text = "Switch Country",
+				onClick = function()
+					-- Releasing the claim is all it takes: HudWiring's state-based reconcile
+					-- sees the unclaimed state replicate back and reopens nation selection
+					-- (which also closes this screen).
+					if ctx.fire then
+						ctx.fire("ReleaseCountry")
+					end
+				end,
+			})
+
 			ScreenKit.section(body, "Map Mode", 4)
 			ScreenKit.note(body, "Switch between commanding the map and walking your ruler across it.", 5)
 			local row = ScreenKit.buttonRow(body, 6)
