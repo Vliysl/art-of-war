@@ -47,7 +47,7 @@ WorldConstants.EnableBattleDisc = true            -- C4: border battle disc (Sur
 WorldConstants.EnableNewInputScheme = true        -- C5: LMB select/move, RMB pan/inspect (MMB pan kept)
 WorldConstants.EnableMultiProvinceActions = true  -- C6: ctrl/shift multi-province selection + batched recruit/build remotes
 WorldConstants.EnableNewUnitModels = true         -- C8: cavalry/dragoon horse model (+ C9 ship model at sea)
-WorldConstants.EnableSeaTransport = false         -- C9: armies path over sea tiles (embark/sail/disembark, sea battles)
+WorldConstants.EnableSeaTransport = true          -- C9: armies path over sea tiles (embark/sail/disembark, sea battles)
 
 -- C2 instant-capture tunables: the walk-in cost. Forts no longer slow capture -- they bleed
 -- the captor harder instead (per-tier casualty scaling).
