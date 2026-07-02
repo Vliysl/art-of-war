@@ -1,5 +1,10 @@
 local ScreenKit = require(script.Parent.ScreenKit)
 local Button = require(script.Parent.Parent.Components.Button)
+local WorldConstants = require(script.Parent.Parent.Parent.Shared.WorldConstants)
+local LeaderTraits = require(script.Parent.Parent.Parent.Data.LeaderTraits)
+-- Selecting a group's members on the map is a client-only view op; ArmyView isn't in the screen ctx
+-- (which only carries data/fire), so require it directly like ProvinceOverview requires SimClock.
+local ArmyView = require(script.Parent.Parent.Parent.Modules.ArmyView)
 
 local MilitaryScreen = {}
 
@@ -55,6 +60,31 @@ local function shipName(registries, id)
 	local types = registries and registries.ShipTypes
 	local def = types and types[id]
 	return (def and def.displayName) or titleCase(id)
+end
+
+-- Combat depth C: a roster general's "First Last" display name.
+local function generalName(g)
+	if type(g) ~= "table" then
+		return "\u{2014}"
+	end
+	local nm = string.format("%s %s", g.firstName or "", g.lastName or "")
+	nm = (nm:gsub("^%s+", ""):gsub("%s+$", ""))
+	return nm ~= "" and nm or "\u{2014}"
+end
+
+-- Combat depth C: a general's leader-trait display names (from Data/LeaderTraits), joined for a note.
+local function generalTraitLine(g)
+	local names = {}
+	if type(g) == "table" and type(g.traits) == "table" then
+		for _, tid in ipairs(g.traits) do
+			local def = LeaderTraits[tid]
+			names[#names + 1] = (def and def.displayName) or titleCase(tid)
+		end
+	end
+	if #names == 0 then
+		return nil
+	end
+	return table.concat(names, "  \u{00B7}  ")
 end
 
 local function armyStateLabel(army)
@@ -145,6 +175,38 @@ function MilitaryScreen.create(ctx)
 		return out
 	end
 
+	-- Combat depth B: the player's army groups (own its own replicated collection), sorted by name.
+	local function ownGroups()
+		local out = {}
+		for _, g in pairs(ctx.cache.allArmyGroups() or {}) do
+			if g.ownerTag == ctx.tag then
+				out[#out + 1] = g
+			end
+		end
+		table.sort(out, function(x, y)
+			return tostring(x.name) < tostring(y.name)
+		end)
+		return out
+	end
+
+	-- Combat depth C: the player's roster generals, sorted by name (nil roster -> empty list).
+	local function ownGenerals()
+		local out = {}
+		local country = ctx.cache.getCountry(ctx.tag)
+		local roster = country and country.generalRoster
+		if type(roster) == "table" then
+			for _, g in pairs(roster) do
+				if type(g) == "table" then
+					out[#out + 1] = g
+				end
+			end
+		end
+		table.sort(out, function(x, y)
+			return generalName(x) < generalName(y)
+		end)
+		return out
+	end
+
 	local function unitRow(parent, text, sub, order, onClick)
 		local btn = Instance.new("TextButton")
 		btn.Name = "UnitRow"
@@ -204,6 +266,73 @@ function MilitaryScreen.create(ctx)
 				end
 			else
 				ScreenKit.note(body, "No standing armies. Click one of your provinces, then Recruit.", 7)
+			end
+
+			-- Combat depth C: Generals roster + buy. Buy is gated on gold + PP (costs read from
+			-- WorldConstants, not hardcoded); disabled when either is short.
+			if WorldConstants.EnableGenerals and country then
+				local goldCost = WorldConstants.GeneralBuyGoldCost or 0
+				local ppCost = WorldConstants.GeneralBuyPpCost or 0
+				ScreenKit.section(body, "Generals", 100)
+				local generals = ownGenerals()
+				if #generals > 0 then
+					for i, g in ipairs(generals) do
+						local group = g.assignedGroupId and ctx.cache.getArmyGroup(g.assignedGroupId)
+						local assigned = group and (group.name or "Army Group") or "\u{2014}"
+						ScreenKit.stat(body, {
+							icon = "Star",
+							label = string.format("%s  \u{00B7}  Lvl %d", generalName(g), g.level or 0),
+							value = "Assigned: " .. assigned,
+							layoutOrder = 100 + i * 2,
+						})
+						local traitLine = generalTraitLine(g)
+						if traitLine then
+							ScreenKit.note(body, traitLine, 100 + i * 2 + 1)
+						end
+					end
+				else
+					ScreenKit.note(body, "No generals hired.", 149)
+				end
+				local canBuy = (country.treasury or 0) >= goldCost and (country.politicalPower or 0) >= ppCost
+				local buyRow = ScreenKit.buttonRow(body, 150)
+				Button.create({
+					parent = buyRow,
+					variant = "secondary",
+					text = string.format("Buy General \u{00B7} %d gold + %d PP", goldCost, ppCost),
+					disabled = not canBuy,
+					onClick = function()
+						ctx.fire("BuyGeneral")
+					end,
+				})
+			end
+
+			-- Combat depth B: Army Groups list. Clicking a row selects the group's members on the map
+			-- (ArmyView.focusArmy fires onArmySelected, which HudWiring coalesces into one ArmyPanel open).
+			if WorldConstants.EnableArmyGroups then
+				ScreenKit.section(body, "Army Groups", 200)
+				local groups = ownGroups()
+				if #groups > 0 then
+					for i, g in ipairs(groups) do
+						local roster = country and country.generalRoster
+						local commander = g.commanderId and roster and roster[g.commanderId]
+						local commanderText = commander and generalName(commander) or "No general"
+						local members = g.memberArmyIds or {}
+						unitRow(
+							body,
+							string.format("%s  \u{00B7}  %d armies", g.name or "Army Group", #members),
+							commanderText,
+							200 + i,
+							function()
+								ArmyView.deselect()
+								for _, memberId in ipairs(members) do
+									ArmyView.focusArmy(memberId, true)
+								end
+							end
+						)
+					end
+				else
+					ScreenKit.note(body, "No army groups. Select armies, then Form Group.", 201)
+				end
 			end
 		end,
 		navy = function(body)
@@ -361,6 +490,27 @@ function MilitaryScreen.create(ctx)
 					string.format("%s~%s~%d~%s", tostring(a.id), info.domName, info.total, tostring(a.state))
 			end
 			parts[#parts + 1] = "a:" .. table.concat(items, ",")
+			-- Combat depth C: generals list (name / level / assigned-group id) + buy affordability, so the
+			-- roster + button state rebuild when a general is hired/assigned or the treasury/PP crosses cost.
+			if WorldConstants.EnableGenerals and country then
+				local gs = {}
+				for _, g in ipairs(ownGenerals()) do
+					gs[#gs + 1] = string.format("%s~%d~%s", generalName(g), g.level or 0, tostring(g.assignedGroupId or "0"))
+				end
+				local canBuy = (country.treasury or 0) >= (WorldConstants.GeneralBuyGoldCost or 0)
+					and (country.politicalPower or 0) >= (WorldConstants.GeneralBuyPpCost or 0)
+				parts[#parts + 1] = "gen:" .. table.concat(gs, ",")
+				parts[#parts + 1] = "buy:" .. tostring(canBuy)
+			end
+			-- Combat depth B: groups list (name / member count / commander id) so it rebuilds on any change.
+			if WorldConstants.EnableArmyGroups then
+				local grs = {}
+				for _, g in ipairs(ownGroups()) do
+					grs[#grs + 1] =
+						string.format("%s~%d~%s", tostring(g.name), #(g.memberArmyIds or {}), tostring(g.commanderId or "0"))
+				end
+				parts[#parts + 1] = "grp:" .. table.concat(grs, ",")
+			end
 		end
 		return table.concat(parts, "|")
 	end
@@ -402,6 +552,10 @@ function MilitaryScreen.create(ctx)
 	table.insert(conns, ctx.cache.onChangePrefix("armies", scheduleRefresh))
 	table.insert(conns, ctx.cache.onChangePrefix("fleets", scheduleRefresh))
 	table.insert(conns, ctx.cache.onChangePrefix("countries", scheduleRefresh))
+	-- Combat depth B: the Army Groups list lives in the armyGroups collection.
+	if WorldConstants.EnableArmyGroups then
+		table.insert(conns, ctx.cache.onChangePrefix("armyGroups", scheduleRefresh))
+	end
 
 	return {
 		root = handle.root,

@@ -699,13 +699,25 @@ function HudWiring.start(modules)
 				local cmd = pendingCommand
 				pendingCommand = nil
 				local id = nil
+				local clickedRec = nil
 				if part then
-					local _, pid = provinceFromPart(part)
+					local prec, pid = provinceFromPart(part)
 					id = pid
+					clickedRec = prec
 				end
 				if id then
 					if cmd.kind == "attackProvince" and cmd.armyId then
 						fire("AttackProvince", cmd.armyId, id)
+					elseif cmd.kind == "coverBorder" and cmd.groupId then
+						-- Combat depth D: resolve the clicked tile's owner and cover the group's border
+						-- against that nation. Mirrors attackProvince; no-ops on an unowned/empty tile.
+						-- Prefer the live cache record, falling back to the resolver's part-built record
+						-- (id-mapped-but-uncached tiles carry their owner attribute on the part).
+						local prov = ClientStateCache.getProvince(id) or clickedRec
+						local target = prov and prov.ownerTag
+						if target and target ~= "" and target ~= "NONE" then
+							fire("SetBorderCover", cmd.groupId, target)
+						end
 					elseif cmd.kind == "reinforce" and cmd.armyId then
 						fire("Reinforce", cmd.armyId, id)
 					elseif cmd.kind == "moveFleet" and cmd.fleetId then

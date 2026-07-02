@@ -8,6 +8,7 @@ local Colors = DesignSystem.Colors
 local Typography = DesignSystem.Typography
 local Icons = DesignSystem.Icons
 local WorldConstants = require(script.Parent.Parent.Parent.Shared.WorldConstants)
+local LeaderTraits = require(script.Parent.Parent.Parent.Data.LeaderTraits)
 
 local ArmyPanel = {}
 
@@ -152,6 +153,28 @@ local function traitNames(registries, officer)
 		for _, tid in ipairs(traits) do
 			local def = defs and defs[tid]
 			table.insert(names, (def and def.displayName) or titleCase(tid))
+		end
+	end
+	return names
+end
+
+-- Combat depth C: a roster general's "First Last" display name (title omitted to keep rows short).
+local function generalName(g)
+	if type(g) ~= "table" then
+		return "\u{2014}"
+	end
+	local nm = string.format("%s %s", g.firstName or "", g.lastName or "")
+	nm = (nm:gsub("^%s+", ""):gsub("%s+$", ""))
+	return nm ~= "" and nm or "\u{2014}"
+end
+
+-- Combat depth C: a general's leader-trait display names (from Data/LeaderTraits), joined for a row.
+local function generalTraitNames(g)
+	local names = {}
+	if type(g) == "table" and type(g.traits) == "table" then
+		for _, tid in ipairs(g.traits) do
+			local def = LeaderTraits[tid]
+			names[#names + 1] = (def and def.displayName) or titleCase(tid)
 		end
 	end
 	return names
@@ -766,6 +789,190 @@ function ArmyPanel.create(ctx)
 		return out
 	end
 
+	-- Combat depth B: the group id shared by the WHOLE selection, or nil if the armies are ungrouped or
+	-- span different groups. Only a single-group selection exposes rename/disband/general/cover actions.
+	local function currentGroupId()
+		local targets = liveTargets()
+		if #targets == 0 then
+			return nil
+		end
+		local gid = nil
+		for _, id in ipairs(targets) do
+			local a = getArmy(id)
+			local g = a and a.groupId
+			if not g then
+				return nil
+			end
+			if gid == nil then
+				gid = g
+			elseif g ~= gid then
+				return nil
+			end
+		end
+		return gid
+	end
+
+	-- Combat depth B: at least one selected army the local player owns (Form Group prerequisite; the
+	-- server also filters to owned armies, so this only gates the button's appearance).
+	local function selectionHasOwned()
+		for _, id in ipairs(liveTargets()) do
+			local a = getArmy(id)
+			if a and a.ownerTag == ctx.tag then
+				return true
+			end
+		end
+		return false
+	end
+
+	-- A single-field name-entry modal (floating, footer Confirm) used by Form Group / Rename Group. The
+	-- TextBox seeds `default`; onConfirm receives the trimmed text (falls back to `default` when blank).
+	local function openNameEntry(cfg)
+		if picker and picker.kind == "name" then
+			closePicker()
+			return
+		end
+		closePicker()
+		local modal = Modal.create({
+			parent = handle.root,
+			floating = true,
+			keepOpenOver = handle.root,
+			anchorPoint = Vector2.new(1, 0),
+			position = UDim2.fromOffset(-8, 0),
+			name = "NameEntry",
+			title = cfg.title or "Name",
+			subtitle = cfg.subtitle,
+			width = 300,
+			height = 150,
+			footer = true,
+			onClose = function()
+				picker = nil
+			end,
+		})
+		picker = { handle = modal, kind = "name" }
+		local box = Instance.new("TextBox")
+		box.Size = UDim2.new(1, 0, 0, 36)
+		box.BackgroundColor3 = Colors.SurfaceSunken
+		box.BorderSizePixel = 0
+		box.Text = cfg.default or ""
+		box.PlaceholderText = cfg.placeholder or "Enter a name"
+		box.TextColor3 = Colors.TextPrimary
+		box.PlaceholderColor3 = Colors.TextTertiary
+		box.ClearTextOnFocus = false
+		box.TextXAlignment = Enum.TextXAlignment.Left
+		Typography.apply(box, "bodyMd")
+		local bp = Instance.new("UIPadding")
+		bp.PaddingLeft = UDim.new(0, 8)
+		bp.PaddingRight = UDim.new(0, 8)
+		bp.Parent = box
+		local bc = Instance.new("UICorner")
+		bc.CornerRadius = UDim.new(0, 6)
+		bc.Parent = box
+		box.Parent = modal.content
+		local function confirm()
+			local text = (box.Text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+			if text == "" then
+				text = cfg.default or "Army Group"
+			end
+			cfg.onConfirm(text)
+			modal.close()
+		end
+		box.FocusLost:Connect(function(enterPressed)
+			if enterPressed then
+				confirm()
+			end
+		end)
+		Button.create({
+			parent = modal.footer,
+			variant = "primary",
+			text = cfg.confirmText or "Confirm",
+			layoutOrder = 1,
+			onClick = confirm,
+		})
+	end
+
+	-- Combat depth C: pick an UNASSIGNED (or already-this-group) roster general to command `groupId`.
+	local function openGeneralPicker(groupId)
+		if not groupId then
+			return
+		end
+		if picker and picker.kind == "general" then
+			closePicker()
+			return
+		end
+		closePicker()
+		local country = ctx.cache.getCountry(ctx.tag)
+		local roster = country and country.generalRoster
+		local pool = {}
+		if type(roster) == "table" then
+			for _, g in pairs(roster) do
+				if type(g) == "table" and (g.assignedGroupId == nil or g.assignedGroupId == groupId) then
+					pool[#pool + 1] = g
+				end
+			end
+		end
+		table.sort(pool, function(a, b)
+			return generalName(a) < generalName(b)
+		end)
+
+		local modal = Modal.create({
+			parent = handle.root,
+			floating = true,
+			keepOpenOver = handle.root,
+			anchorPoint = Vector2.new(1, 0),
+			position = UDim2.fromOffset(-8, 0),
+			name = "GeneralPicker",
+			title = "Assign General",
+			subtitle = "Available generals",
+			width = 360,
+			height = 420,
+			onClose = function()
+				picker = nil
+			end,
+		})
+		picker = { handle = modal, kind = "general" }
+		local list = Instance.new("ScrollingFrame")
+		list.Size = UDim2.fromScale(1, 1)
+		list.BackgroundTransparency = 1
+		list.BorderSizePixel = 0
+		list.ScrollBarThickness = 4
+		list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+		list.CanvasSize = UDim2.new()
+		list.Parent = modal.content
+		local layout = Instance.new("UIListLayout")
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
+		layout.Padding = UDim.new(0, 6)
+		layout.Parent = list
+
+		if #pool == 0 then
+			ScreenKit.note(list, "No generals \u{2014} buy one from the Military screen.", 0)
+		else
+			for i, g in ipairs(pool) do
+				local row = ScreenKit.stat(list, {
+					icon = "Star",
+					label = string.format("%s  \u{00B7}  Lvl %d", generalName(g), g.level or 0),
+					layoutOrder = i * 2,
+				})
+				local assign = Button.create({
+					parent = row,
+					variant = "secondary",
+					text = "Assign",
+					width = 84,
+					size = "sm",
+					onClick = function()
+						ctx.fire("AssignGeneral", groupId, g.id)
+						modal.close()
+					end,
+				})
+				assign.AnchorPoint = Vector2.new(1, 0.5)
+				assign.Position = UDim2.fromScale(1, 0.5)
+				local names = generalTraitNames(g)
+				if #names > 0 then
+					ScreenKit.note(list, table.concat(names, "  \u{00B7}  "), i * 2 + 1)
+				end
+			end
+		end
+	end
+
 	-- Shared command actions; the command-bar buttons AND the hotkeys both call these, so they always
 	-- operate on the whole current selection and stay in sync.
 	local cmd = {}
@@ -872,6 +1079,167 @@ function ArmyPanel.create(ctx)
 		end
 	end
 
+	-- Combat depth B/C/D: "Groups & Command". UX choice (kept deliberately simple + reliable): Form Group
+	-- is the sole prerequisite -- Assign General / Cover Border appear ONLY once the selection is a single
+	-- group, so there is never an auto-form-then-re-invoke round trip. When ungrouped, only Form Group shows.
+	local function buildGroupBar(parent, order)
+		if not WorldConstants.EnableArmyGroups then
+			return
+		end
+		local gid = currentGroupId()
+
+		ScreenKit.section(parent, "Groups & Command", order)
+		local wrap = Instance.new("Frame")
+		wrap.Name = "GroupBar"
+		wrap.Size = UDim2.fromScale(1, 0)
+		wrap.AutomaticSize = Enum.AutomaticSize.Y
+		wrap.BackgroundTransparency = 1
+		wrap.LayoutOrder = order + 1
+		wrap.Parent = parent
+		local list = Instance.new("UIListLayout")
+		list.Padding = UDim.new(0, 6)
+		list.SortOrder = Enum.SortOrder.LayoutOrder
+		list.Parent = wrap
+
+		if not gid then
+			if not selectionHasOwned() then
+				ScreenKit.note(wrap, "Select your own armies to form a group.", 1)
+				return
+			end
+			local formBtn = Button.create({
+				parent = wrap,
+				variant = "secondary",
+				text = "Form Group",
+				fill = true,
+				onClick = function()
+					openNameEntry({
+						title = "Form Army Group",
+						subtitle = "Name the new group",
+						default = "Army Group",
+						confirmText = "Create",
+						onConfirm = function(name)
+							ctx.fire("FormArmyGroup", name, liveTargets())
+						end,
+					})
+				end,
+			})
+			formBtn.LayoutOrder = 1
+			return
+		end
+
+		local group = ctx.cache.getArmyGroup(gid)
+		local name = (group and group.name) or "Army Group"
+		chip(wrap, { icon = "Army", label = name, value = string.format("%d armies", group and #(group.memberArmyIds or {}) or #liveTargets()), order = 1 })
+
+		-- Assigned general (Combat depth C): resolve the commander id against the roster for a name.
+		if WorldConstants.EnableGenerals then
+			local country = ctx.cache.getCountry(ctx.tag)
+			local roster = country and country.generalRoster
+			local commander = group and group.commanderId and roster and roster[group.commanderId]
+			if commander then
+				local unassignRow = Instance.new("Frame")
+				unassignRow.Size = UDim2.new(1, 0, 0, 26)
+				unassignRow.BackgroundTransparency = 1
+				unassignRow.LayoutOrder = 2
+				unassignRow.Parent = wrap
+				local star = Icons.create("Star", 14, Colors.Accent)
+				star.AnchorPoint = Vector2.new(0, 0.5)
+				star.Position = UDim2.fromScale(0, 0.5)
+				star.Parent = unassignRow
+				local nm = Instance.new("TextLabel")
+				nm.BackgroundTransparency = 1
+				nm.AnchorPoint = Vector2.new(0, 0.5)
+				nm.Position = UDim2.fromOffset(20, 0)
+				nm.Size = UDim2.new(1, -110, 1, 0)
+				nm.RichText = true
+				nm.Text = string.format("%s <font color=\"%s\">\u{00B7} Lvl %d</font>", generalName(commander), MUTED_HEX, commander.level or 0)
+				nm.TextColor3 = Colors.TextPrimary
+				nm.TextXAlignment = Enum.TextXAlignment.Left
+				nm.TextTruncate = Enum.TextTruncate.AtEnd
+				Typography.apply(nm, "bodyMd")
+				nm.Parent = unassignRow
+				local unassign = Button.create({
+					parent = unassignRow,
+					variant = "ghost",
+					text = "Unassign",
+					width = 90,
+					size = "sm",
+					onClick = function()
+						ctx.fire("UnassignGeneral", gid)
+					end,
+				})
+				unassign.AnchorPoint = Vector2.new(1, 0.5)
+				unassign.Position = UDim2.fromScale(1, 0.5)
+			end
+		end
+
+		-- Border cover (Combat depth D): show the covered nation + a Clear when a target is set.
+		if WorldConstants.EnableBorderCover and group and group.borderCoverTargetTag then
+			local target = ctx.cache.getCountry(group.borderCoverTargetTag)
+			local targetName = (target and target.displayName) or group.borderCoverTargetTag
+			local coverRow = Instance.new("Frame")
+			coverRow.Size = UDim2.new(1, 0, 0, 26)
+			coverRow.BackgroundTransparency = 1
+			coverRow.LayoutOrder = 3
+			coverRow.Parent = wrap
+			local cv = Instance.new("TextLabel")
+			cv.BackgroundTransparency = 1
+			cv.AnchorPoint = Vector2.new(0, 0.5)
+			cv.Position = UDim2.fromScale(0, 0.5)
+			cv.Size = UDim2.new(1, -90, 1, 0)
+			cv.Text = string.format("Cover: %s", targetName)
+			cv.TextColor3 = Colors.TextPrimary
+			cv.TextXAlignment = Enum.TextXAlignment.Left
+			cv.TextTruncate = Enum.TextTruncate.AtEnd
+			Typography.apply(cv, "bodyMd")
+			cv.Parent = coverRow
+			local clearCover = Button.create({
+				parent = coverRow,
+				variant = "ghost",
+				text = "Clear",
+				width = 80,
+				size = "sm",
+				onClick = function()
+					ctx.fire("ClearBorderCover", gid)
+				end,
+			})
+			clearCover.AnchorPoint = Vector2.new(1, 0.5)
+			clearCover.Position = UDim2.fromScale(1, 0.5)
+		end
+
+		local actions = {
+			{ text = "Rename", variant = "secondary", onClick = function()
+				openNameEntry({
+					title = "Rename Group",
+					subtitle = name,
+					default = name,
+					confirmText = "Rename",
+					onConfirm = function(newName)
+						ctx.fire("RenameArmyGroup", gid, newName)
+					end,
+				})
+			end },
+			{ text = "Disband Group", variant = "danger", onClick = function()
+				ctx.fire("DisbandArmyGroup", gid)
+			end },
+		}
+		if WorldConstants.EnableGenerals then
+			actions[#actions + 1] = { text = "Assign General", variant = "secondary", onClick = function()
+				openGeneralPicker(gid)
+			end }
+		end
+		if WorldConstants.EnableBorderCover then
+			actions[#actions + 1] = { text = "Cover Border", variant = "secondary", onClick = function()
+				ctx.requestTarget({
+					kind = "coverBorder",
+					groupId = gid,
+					hint = "Click the nation to cover the border against.",
+				})
+			end }
+		end
+		actionGrid(wrap, actions, 10)
+	end
+
 	-- Two-tier orders: stateful toggle rows (Reinforcements / Auto-capture) above a compact action grid +
 	-- full-width Disband. Toggles show combined On/Off state; every control carries its hotkey hint.
 	local function buildCommandBar(parent, order)
@@ -923,6 +1291,8 @@ function ArmyPanel.create(ctx)
 
 		local disband = Button.create({ parent = wrap, variant = "danger", text = "Disband", fill = true, onClick = cmd.disband })
 		disband.LayoutOrder = 4
+
+		buildGroupBar(parent, order + 5)
 	end
 
 	-- Live-refresh machinery: a refresh only rebuilds the whole body when the STRUCTURE changes
@@ -953,16 +1323,51 @@ function ArmyPanel.create(ctx)
 			.. "#mv:" .. (a.movement and tostring(a.movement.toProvinceId) or "0")
 			.. "#re:" .. tostring(a.reinforceEnabled ~= false)
 			.. "#ac:" .. tostring(a.autoCapture == true)
+			.. "#gp:" .. tostring(a.groupId or "0")
+	end
+	-- Combat depth B/C/D: hash the selection's group record (name / commander / cover target) so the
+	-- Groups & Command section rebuilds when any of those change (they live in the armyGroups collection).
+	local function groupSig(targets)
+		local gid = nil
+		for _, id in ipairs(targets) do
+			local a = getArmy(id)
+			local g = a and a.groupId
+			if not g then
+				return "nogroup"
+			end
+			if gid == nil then
+				gid = g
+			elseif g ~= gid then
+				return "mixed"
+			end
+		end
+		if not gid then
+			return "nogroup"
+		end
+		local group = ctx.cache.getArmyGroup(gid)
+		if not group then
+			return "g:" .. tostring(gid)
+		end
+		return string.format(
+			"g:%s|n:%s|c:%s|b:%s",
+			tostring(gid),
+			tostring(group.name),
+			tostring(group.commanderId or "0"),
+			tostring(group.borderCoverTargetTag or "0")
+		)
 	end
 	local function computeSig(targets)
+		local base
 		if #targets ~= 1 then
 			local parts = { "agg", tostring(#targets) }
 			for _, id in ipairs(targets) do
 				parts[#parts + 1] = tostring(id) .. "=" .. sigForArmy(getArmy(id))
 			end
-			return table.concat(parts, "|")
+			base = table.concat(parts, "|")
+		else
+			base = "single:" .. tostring(targets[1]) .. ":" .. sigForArmy(getArmy(targets[1]))
 		end
-		return "single:" .. tostring(targets[1]) .. ":" .. sigForArmy(getArmy(targets[1]))
+		return base .. "##" .. groupSig(targets)
 	end
 
 	-- Aggregate view shown when more than one army is selected (RoN-style "N units selected").
@@ -1315,6 +1720,11 @@ function ArmyPanel.create(ctx)
 	end)
 	table.insert(conns, ctx.cache.onChangePrefix("armies", scheduleRefresh))
 	table.insert(conns, ctx.cache.onChangePrefix("countries", scheduleRefresh))
+	-- Combat depth B/C/D: group name / commander / cover live in the armyGroups collection, so watch it
+	-- too (guarded so the section still works if the flags are off -- the subscription is just inert).
+	if WorldConstants.EnableArmyGroups then
+		table.insert(conns, ctx.cache.onChangePrefix("armyGroups", scheduleRefresh))
+	end
 
 	return {
 		root = handle.root,
