@@ -359,10 +359,12 @@ local function endBattle(record, winnerSide, reason)
 				if isAttacker then
 					ctx.ArmySystem.relocateArmy(armyId, provinceId)
 					-- relocateArmy publishes no arrival event (and no-ops when the winner already
-					-- stands on the tile), so the won tile would never flip under instant capture
-					-- without this explicit call. First winner pays the capture cost; the rest no-op.
-					if ctx.CombatSystem and ctx.CombatSystem.captureIfUndefended then
-						ctx.CombatSystem.captureIfUndefended(armyId, provinceId)
+					-- stands on the tile). Route through onArmyArrival explicitly: it instant-
+					-- captures the won tile, and if an at-war straggler somehow still stands there
+					-- it starts the follow-up battle instead of leaving hostile armies co-located.
+					-- Safe re-entrancy-wise: this record was removed before side processing.
+					if ctx.CombatSystem and ctx.CombatSystem.onArmyArrival then
+						ctx.CombatSystem.onArmyArrival(armyId, provinceId)
 					end
 					-- Adjacent engagement: a queued multi-tile order paused for this battle;
 					-- resume it through the just-won tile.

@@ -49,6 +49,9 @@ local function claim(player, tag)
 	claimsByUser[player.UserId] = record
 	claimsByTag[tag] = record
 	writeClaimField(tag, player.UserId)
+	-- Client-readable claim: CombatView's viewer-relative battle colors (playerTide) and any
+	-- other local read of "my tag" key off this attribute -- it was read but never written.
+	player:SetAttribute("CountryTag", tag)
 	ctx.EventBus.publish(ctx.Channels.CountryClaimed, {
 		userId = player.UserId, tag = tag, name = player.Name,
 	})
@@ -62,6 +65,7 @@ local function release(player)
 	claimsByUser[player.UserId] = nil
 	claimsByTag[record.tag] = nil
 	writeClaimField(record.tag, nil)
+	player:SetAttribute("CountryTag", nil)
 	ctx.EventBus.publish(ctx.Channels.CountryReleased, {
 		userId = player.UserId, tag = record.tag, name = player.Name,
 	})
@@ -74,6 +78,10 @@ local function releaseByUserId(userId)
 	claimsByUser[userId] = nil
 	claimsByTag[record.tag] = nil
 	writeClaimField(record.tag, nil)
+	local player = Players:GetPlayerByUserId(userId)
+	if player then
+		player:SetAttribute("CountryTag", nil)
+	end
 	ctx.EventBus.publish(ctx.Channels.CountryReleased, {
 		userId = userId, tag = record.tag,
 	})

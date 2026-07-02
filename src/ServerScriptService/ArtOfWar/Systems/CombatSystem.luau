@@ -62,23 +62,23 @@ local function isDefendedAgainst(ownerTag, provinceId)
 	return hostileArmyAt(ownerTag, provinceId) ~= nil
 end
 
--- Defender draft for a NEW battle at a tile: the controller's armies first, else any
--- at-war army there (covers unowned tiles and third-party garrisons).
+-- Defender draft for a NEW battle at a tile: the controller's armies AND every at-war
+-- third party standing there (unioned -- a fallback-only draft left undrafted at-war
+-- stragglers co-located with the winners after the battle).
 local function buildDefendersAt(provinceId, attackerTag)
 	local province = ctx.WorldState.getProvince(provinceId)
 	local controllerTag = province and province.controllerTag
 	local dipl = ctx.DiplomacySystem
-	local defenders, fallback = {}, {}
+	local defenders = {}
 	for _, other in ctx.ArmySystem.armiesInProvince(provinceId) do
 		if other.ownerTag ~= attackerTag then
-			if not isUnowned(controllerTag) and other.ownerTag == controllerTag then
+			local isController = not isUnowned(controllerTag) and other.ownerTag == controllerTag
+			local atWar = dipl and dipl.areAtWar and dipl.areAtWar(attackerTag, other.ownerTag)
+			if isController or atWar then
 				table.insert(defenders, other.id)
-			elseif dipl and dipl.areAtWar and dipl.areAtWar(attackerTag, other.ownerTag) then
-				table.insert(fallback, other.id)
 			end
 		end
 	end
-	if #defenders == 0 then defenders = fallback end
 	return defenders
 end
 
@@ -263,13 +263,24 @@ local function onArmyArrival(armyId, provinceId)
 	-- Existing battle at province?
 	local existing = getBattleAt(provinceId)
 	if existing then
-		-- Decide role from controller
-		local role = "attacker"
-		if controllerTag == army.ownerTag then
+		-- Side by OWNERSHIP first: join whichever side already fields our countrymen.
+		-- Deciding purely from controllerTag mis-sided a winner marching onto a tile it
+		-- just captured while a follow-up battle raged there (controller == us would have
+		-- drafted us as a DEFENDER against our own side).
+		local role = nil
+		local function sideHas(ids)
+			for _, id in ipairs(ids or {}) do
+				local m = ctx.WorldState.getArmy(id)
+				if m and m.ownerTag == army.ownerTag then return true end
+			end
+			return false
+		end
+		if sideHas(existing.defenderArmyIds) then
 			role = "defender"
-		else
-			-- If controller is hostile to arriving, they're attacker
+		elseif sideHas(existing.attackerArmyIds) then
 			role = "attacker"
+		else
+			role = (controllerTag == army.ownerTag) and "defender" or "attacker"
 		end
 		ctx.BattleManager.joinBattle(existing.id, armyId, role)
 		return

@@ -337,10 +337,10 @@ end
 -- Set once at build and again only when the attacker origin changes or overlap relief
 -- shifts the midpoint — never per-frame (the disc is world-space; the camera does the rest).
 local function positionDisc(marker, pos, aimDir)
-	-- Yaw -90° on top of the flattening roll so the cap's canvas up-axis lands on world -Z:
-	-- side-face SurfaceGuis keep local +Y as canvas-up, the roll sends +Y to world -X, and
-	-- the yaw carries it on to -Z — upright for the top-down camera.
-	marker.anchor.CFrame = CFrame.new(pos) * CFrame.Angles(0, -math.pi / 2, 0) * CFrame.Angles(0, 0, math.pi / 2)
+	-- Yaw +90° on top of the flattening roll so the cap's canvas up-axis lands on world +Z
+	-- (the top-down camera looks down -Y with +Z as screen-up; the original -90° guess
+	-- rendered the numeral upside down in playtest).
+	marker.anchor.CFrame = CFrame.new(pos) * CFrame.Angles(0, math.pi / 2, 0) * CFrame.Angles(0, 0, math.pi / 2)
 	-- WedgePart's thin bottom edge is its front (-Z); lookAt points -Z at the defender.
 	local rim = pos + aimDir * (DISC_DIAMETER * 0.5 + DISC_DIAMETER / 6)
 	marker.wedge.CFrame = CFrame.lookAt(rim, rim + aimDir)

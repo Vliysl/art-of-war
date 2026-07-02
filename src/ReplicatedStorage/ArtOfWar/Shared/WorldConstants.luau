@@ -435,11 +435,14 @@ WorldConstants.OccupationOutputPenalty = 0.20 -- occupied province yields 20pct 
 WorldConstants.WarScoreMax = 100
 WorldConstants.WarScoreBattleWin = 5 -- field-battle victory
 WorldConstants.WarScoreNavalWin = 8 -- naval-battle victory (sink fleet)
-WorldConstants.WarScoreOccupyProvince = 8 -- fully occupy an enemy province
+-- Rebalanced for instant capture (C2): occupation used to take a 12-point siege, so 8/province
+-- was rare; walk-ins accrue per tile and 8 forced peace after ~13 captures. 3 keeps field
+-- battles (5) the primary driver and needs ~34 solo-occupied tiles to force peace outright.
+WorldConstants.WarScoreOccupyProvince = 3 -- fully occupy an enemy province
 WorldConstants.WarScoreForcedPeace = 100 -- at +/-100, war auto-ends in winner's favour
 WorldConstants.WarExhaustionMonthlyBase = 0.05 -- both sides gain this per month at war
 WorldConstants.WarExhaustionPerBattleLost = 0.5 -- loser of a battle gains this
-WorldConstants.WarExhaustionPerProvinceLost = 1.0 -- losing a province to occupation
+WorldConstants.WarExhaustionPerProvinceLost = 0.4 -- losing a province to occupation (rebalanced with instant capture)
 WorldConstants.WarExhaustionMax = 100
 WorldConstants.WarStalemateYears = 5 -- mandatory white peace after this many years
 -- Peace term war-score costs (paid by the side GAINING from the term):
