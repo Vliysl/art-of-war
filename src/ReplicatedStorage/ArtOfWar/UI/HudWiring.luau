@@ -8,6 +8,7 @@ local Registries = require(UI.Registries)
 local ProvinceTooltip = require(UI.Components.ProvinceTooltip)
 local Platform = require(ArtOfWar.Modules.Platform)
 local Button = require(UI.Components.Button)
+local PeaceInfo = require(UI.PeaceInfo)
 local WorldConstants = require(ArtOfWar.Shared.WorldConstants)
 local SeaNodes = require(ArtOfWar.Shared.SeaNodes)
 
@@ -293,6 +294,19 @@ function HudWiring.start(modules)
 		}
 	end
 
+	-- The single province whose ProvinceOverview context panel is open, tracked so the panel can be
+	-- rebuilt live when that province changes owner (annex/peace). Without this the header keeps the
+	-- open-time owner snapshot -- which greys out once that country is deleted (the annex "still shows
+	-- MCS" bug). Cleared implicitly: a new single province replaces it, the multi-select panel nils it,
+	-- and Hud.getContextName() guards against ever firing over a different panel.
+	local openProvinceId = nil
+	local openProvinceOwner = nil
+	local function showProvincePanel(rec, id)
+		openProvinceId = id
+		openProvinceOwner = rec and rec.ownerTag
+		Hud.openProvince(normalizeProvince(rec, id))
+	end
+
 	local function buildClaimable()
 		local nations = {}
 		local totals = provinceTotals()
@@ -474,39 +488,112 @@ function HudWiring.start(modules)
 	ClientStateCache.onChangePrefix("armies", scheduleCountryRefresh)
 	ClientStateCache.onChange("snapshot", scheduleCountryRefresh)
 
-	-- Pop the PeaceTreaty modal once when an incoming proposal addressed to the player arrives. The
-	-- modal + AcceptPeace/RejectPeace remotes already exist; only this trigger was missing.
-	local function describeTerms(terms)
-		local kind = type(terms) == "table" and terms.type or nil
-		if kind == "white_peace" then
-			return { { icon = "Core", label = "Terms", value = "White peace (status quo)" } }
-		elseif kind == "annex_occupied" then
-			return { { icon = "Core", label = "Terms", value = "Cede occupied territory" } }
-		end
-		return { { icon = "Core", label = "Terms", value = kind and prettify(kind) or "Negotiated peace" } }
+	-- Peace proposals: (1) pop the offer modal once for an incoming proposal addressed to the player,
+	-- now with war standing + a clear per-term breakdown; (2) notify on our OWN proposals'
+	-- transitions so proposing peace isn't a silent void (sent / accepted / rejected / expired).
+	local function countryName(tag)
+		local c = tag and ClientStateCache.getCountry(tag)
+		return (c and c.displayName) or tag or "?"
 	end
 	local seenProposals = {}
+	local myProposalStatus = {}
+	local seenWarStatus = {}
+	local peaceTrackedTag = nil
+	-- On a country switch, clear per-nation tracking so pending offers re-pop and notifications re-arm
+	-- for the new nation (and the old nation's ids don't wrongly suppress them).
+	local function syncPeaceTag()
+		if claimedTag ~= peaceTrackedTag then
+			seenProposals = {}
+			myProposalStatus = {}
+			seenWarStatus = {}
+			peaceTrackedTag = claimedTag
+		end
+	end
 	ClientStateCache.onChangePrefix("peaceProposals", function()
+		syncPeaceTag()
 		for id, p in pairs(ClientStateCache.allPeaceProposals() or {}) do
 			p.id = p.id or id
-			local mine = p.toTag == claimedTag and p.status == "pending"
-			if mine and not seenProposals[p.id] then
-				seenProposals[p.id] = true
-				local fromC = ClientStateCache.getCountry(p.fromTag)
-				Hud.openPeaceTreaty({
-					warName = "Peace offer from " .. ((fromC and fromC.displayName) or p.fromTag or "?"),
-					demands = describeTerms(p.terms),
-					costs = {},
-					onAccept = function()
-						fire("AcceptPeace", p.id)
-					end,
-					onRefuse = function()
-						fire("RejectPeace", p.id)
-					end,
-				})
-			elseif not mine then
-				-- Allow re-opening if the same id is later re-proposed to us.
-				seenProposals[p.id] = nil
+			if p.toTag == claimedTag then
+				if p.status == "pending" then
+					if not seenProposals[p.id] then
+						seenProposals[p.id] = true
+						Hud.openPeaceTreaty({
+							warName = "Peace offer from " .. countryName(p.fromTag),
+							warStanding = PeaceInfo.warStanding(ClientStateCache, p.warId, claimedTag),
+							terms = PeaceInfo.describeTerms(ClientStateCache, p.terms, p.fromTag, p.toTag, claimedTag),
+							onAccept = function()
+								fire("AcceptPeace", p.id)
+							end,
+							onRefuse = function()
+								fire("RejectPeace", p.id)
+							end,
+						})
+					end
+				else
+					-- Responded/expired -> allow a future re-proposal (new id) to pop again.
+					seenProposals[p.id] = nil
+				end
+			end
+			if p.fromTag == claimedTag then
+				local prev = myProposalStatus[p.id]
+				if prev ~= p.status then
+					myProposalStatus[p.id] = p.status
+					local who = countryName(p.toTag)
+					if p.status == "pending" and prev == nil then
+						Hud.notify({
+							kind = "info",
+							title = "Peace offer sent",
+							body = "Awaiting " .. who .. "'s response.",
+							ttl = 5,
+						})
+					elseif p.status == "accepted" then
+						Hud.notify({
+							kind = "success",
+							title = "Peace accepted",
+							body = who .. " accepted your terms \u{2014} the war ends.",
+							ttl = 6,
+						})
+					elseif p.status == "rejected" then
+						Hud.notify({
+							kind = "warning",
+							title = "Peace rejected",
+							body = who .. " rejected your peace offer.",
+							ttl = 6,
+						})
+					elseif p.status == "expired" then
+						Hud.notify({
+							kind = "warning",
+							title = "Peace offer expired",
+							body = who .. " did not respond in time.",
+							ttl = 6,
+						})
+					end
+				end
+			end
+		end
+	end)
+
+	-- War closure: notify when a war the player is in ends (seed silently on first sight so joining
+	-- mid-game with old ended wars doesn't spam).
+	ClientStateCache.onChangePrefix("wars", function()
+		syncPeaceTag()
+		for id, w in pairs(ClientStateCache.allWars() or {}) do
+			if w.attackerTag == claimedTag or w.defenderTag == claimedTag then
+				local prev = seenWarStatus[id]
+				if prev == nil then
+					seenWarStatus[id] = w.status
+				elseif prev ~= w.status then
+					seenWarStatus[id] = w.status
+					if w.status == "ended" then
+						local other = (w.attackerTag == claimedTag) and w.defenderTag or w.attackerTag
+						Hud.notify({
+							kind = "info",
+							title = "War concluded",
+							body = "Your war with " .. countryName(other) .. " has ended.",
+							ttl = 6,
+						})
+					end
+				end
 			end
 		end
 	end)
@@ -600,9 +687,30 @@ function HudWiring.start(modules)
 	local PathPreview = modules.PathPreview
 	-- Start PathPreview's reconcile backstop (the stuck-arrow fix). The live boot path never called
 	-- init() before -- only the dead UIController did -- which left the orphan-lane sweep inert.
-	if PathPreview and PathPreview.init then PathPreview.init() end
+	if PathPreview and PathPreview.init then
+		PathPreview.init()
+	end
 	local WaterBodies = modules.WaterBodies
 	local tooltip = ProvinceTooltip.create(Hud.getLayer("Tooltips"))
+
+	-- Army-group card strip (bottom-center HUD). Owns all group commands; needs fire/requestTarget/cache
+	-- and a live tag getter (claimedTag is reassigned on claim/switch, so pass a closure, not the value).
+	if WorldConstants.EnableArmyGroups and WorldConstants.EnableGroupCards then
+		local okStrip, ArmyGroupStrip = pcall(require, UI:WaitForChild("ArmyGroupStrip"))
+		if okStrip and ArmyGroupStrip and ArmyGroupStrip.init then
+			pcall(ArmyGroupStrip.init, {
+				parent = Hud.getLayer("Hud"),
+				cache = ClientStateCache,
+				armyView = ArmyView,
+				fire = fire,
+				requestTarget = requestTarget,
+				getTag = function()
+					return claimedTag
+				end,
+				registries = Registries,
+			})
+		end
+	end
 
 	local function selectedArmies()
 		if ArmyView and ArmyView.getSelectedArmyIds then
@@ -649,10 +757,14 @@ function HudWiring.start(modules)
 		local sel = selectedArmies()
 		if not sel or #sel == 0 then
 			-- Nothing selected -> nothing to preview. (Deselect/move-issued also clear explicitly elsewhere.)
-			if PathPreview.clear then PathPreview.clear() end
+			if PathPreview.clear then
+				PathPreview.clear()
+			end
 			return
 		end
-		if not toId then return end
+		if not toId then
+			return
+		end
 		-- One preview per distinct ORIGIN province (armies stacked on the same tile share a route),
 		-- so multi-select shows every selected unit's path, not just the first.
 		local seen, requests = {}, {}
@@ -766,7 +878,7 @@ function HudWiring.start(modules)
 			end
 			local rec, id = provinceFromPart(part)
 			if rec then
-				Hud.openProvince(normalizeProvince(rec, id))
+				showProvincePanel(rec, id)
 			else
 				Hud.closeContext()
 			end
@@ -797,7 +909,33 @@ function HudWiring.start(modules)
 				if #ids == 0 then
 					return
 				end
+				openProvinceId = nil -- the aggregate panel is not a single tracked province
 				Hud.openProvince({ multi = true, ids = ids, ownedIds = ownedIds, isOwn = #ownedIds > 0 })
+			end)
+		end
+
+		-- Rebuild the open province panel when ITS province changes owner (annex / peace / rebellion), so
+		-- the header crest + subtitle + owns-gated Build/Recruit tabs reflect the NEW owner instead of the
+		-- stale open-time snapshot. Gated to the single-province ProvinceOverview (getContextName) and to an
+		-- actual OWNER change, so it never fires over another panel nor churns on unrelated province ticks.
+		if ClientStateCache.onChangePrefix then
+			ClientStateCache.onChangePrefix("provinces", function(_, path)
+				if openProvinceId == nil then
+					return
+				end
+				local idStr = typeof(path) == "string" and path:match("^provinces%.([^%.]+)")
+				if not idStr or idStr ~= tostring(openProvinceId) then
+					return
+				end
+				if Hud.getContextName and Hud.getContextName() ~= "ProvinceOverview" then
+					return
+				end
+				local fresh = ClientStateCache.getProvince(openProvinceId)
+					or ClientStateCache.getProvince(tonumber(openProvinceId))
+				if not fresh or fresh.ownerTag == openProvinceOwner then
+					return
+				end
+				showProvincePanel(fresh, openProvinceId)
 			end)
 		end
 
@@ -998,8 +1136,54 @@ function HudWiring.start(modules)
 		end
 	end
 
+	-- Ctrl+M toggles all UI for clean screenshots: every enabled 2D ScreenGui plus the world-space
+	-- overlays (army banners, capture/battle bars, capital markers). Snapshot-based -- re-showing only
+	-- re-enables what we hid, never Guis that were already off.
+	local uiHidden = false
+	local hiddenGuis = {}
+	local function toggleUiVisibility()
+		if uiHidden then
+			for _, gui in ipairs(hiddenGuis) do
+				if gui.Parent then
+					gui.Enabled = true
+				end
+			end
+			table.clear(hiddenGuis)
+			uiHidden = false
+			return
+		end
+		table.clear(hiddenGuis)
+		local playerGui = Players.LocalPlayer and Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
+		if playerGui then
+			for _, gui in ipairs(playerGui:GetChildren()) do
+				if gui:IsA("ScreenGui") and gui.Enabled then
+					gui.Enabled = false
+					hiddenGuis[#hiddenGuis + 1] = gui
+				end
+			end
+		end
+		for _, inst in ipairs(workspace:GetDescendants()) do
+			if (inst:IsA("BillboardGui") or inst:IsA("SurfaceGui")) and inst.Enabled then
+				inst.Enabled = false
+				hiddenGuis[#hiddenGuis + 1] = inst
+			end
+		end
+		uiHidden = true
+	end
+
 	-- X deselects (X is otherwise unbound in the live HUD). gameProcessed guards typing in TextBoxes.
+	-- Ctrl+M is checked first so the screenshot toggle stays global even while a TextBox has focus.
 	UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		if
+			input.KeyCode == Enum.KeyCode.M
+			and (
+				UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
+				or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
+			)
+		then
+			toggleUiVisibility()
+			return
+		end
 		if gameProcessed then
 			return
 		end
@@ -1057,7 +1241,11 @@ function HudWiring.start(modules)
 				deselectBtn.Visible = visible
 				if multiBtn then
 					multiBtn.Visible = visible
-					if not visible and ProvinceInteraction.getMultiSelectMode and ProvinceInteraction.getMultiSelectMode() then
+					if
+						not visible
+						and ProvinceInteraction.getMultiSelectMode
+						and ProvinceInteraction.getMultiSelectMode()
+					then
 						ProvinceInteraction.setMultiSelectMode(false)
 						setMultiBtnText(false)
 					end

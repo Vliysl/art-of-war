@@ -104,11 +104,13 @@ local function reconcile()
 				m = buildMarker(tag, tmpl)
 				markers[tag] = m
 			end
-			-- Centre on the capital tile's XZ; keep the template's authored Y + rotation.
+			-- Centre on the capital tile's XZ, keep the template's authored Y, and force orientation
+			-- (90, 0, 0). The authored template rotation is (90, 90, 0), which spins the star 90deg about Y
+			-- the wrong way; (90, 0, 0) lays it flat facing up as intended.
 			local pivot = m.model:GetPivot()
 			local target = Vector3.new(part.Position.X, pivot.Position.Y, part.Position.Z)
 			if (pivot.Position - target).Magnitude > 0.05 then
-				m.model:PivotTo(CFrame.new(target) * pivot.Rotation)
+				m.model:PivotTo(CFrame.new(target) * CFrame.fromOrientation(math.rad(90), 0, 0))
 			end
 			local prov = ClientStateCache.getProvince(capId)
 			local occTag = prov and realTag(prov.controllerTag)

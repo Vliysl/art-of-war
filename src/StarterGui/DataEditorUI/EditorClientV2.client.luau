@@ -433,7 +433,7 @@ end
 -- The popup + a full-screen click-catcher live on the root ScreenGui so they overlay and close on outside click.
 -- Long option lists (> SEARCH_THRESHOLD) gain a type-to-search field; short/narrow ones stay a plain scroll list.
 local ROW_H, MAX_ROWS, SEARCH_H = 24, 8, 26
-local SEARCH_THRESHOLD, MIN_SEARCH_WIDTH = 8, 120
+local SEARCH_THRESHOLD, POPUP_MIN_WIDTH = 8, 180
 local openPopup
 local function dropdown(cfg)
 	local btn = Instance.new("TextButton")
@@ -463,9 +463,9 @@ local function dropdown(cfg)
 	btn.MouseButton1Click:Connect(function()
 		closePopup()
 		local abs, sz = btn.AbsolutePosition, btn.AbsoluteSize
-		-- Search only on lists too long to eyeball, and only when the button is wide enough for a usable field
-		-- (suppresses it on the 72px inline "+ add" chip -- that list still scrolls).
-		local useSearch = (#cfg.options > SEARCH_THRESHOLD) and (sz.X >= MIN_SEARCH_WIDTH)
+		-- Search on any list too long to eyeball. Narrow triggers (the 72px inline "+ add" cores/claims chip)
+		-- get it too: the popup widens to POPUP_MIN_WIDTH below so the search field + option rows stay usable.
+		local useSearch = #cfg.options > SEARCH_THRESHOLD
 
 		local catcher = Instance.new("TextButton")
 		catcher.BackgroundTransparency = 1
@@ -509,16 +509,21 @@ local function dropdown(cfg)
 		popup.Position = UDim2.fromOffset(0, listTop)
 		popup.Parent = container
 
+		-- Popup width matches the button, except a searchable narrow trigger (the "+ add" chip) widens to
+		-- POPUP_MIN_WIDTH so the search field and country names are readable.
+		local popW = useSearch and math.max(sz.X, POPUP_MIN_WIDTH) or sz.X
 		-- Decide open direction ONCE, at the popup's max possible height, so it doesn't flip up/down as the
 		-- filter changes the row count. Prefer opening below; flip up only when the full list would clip the
 		-- bottom and it does fit above. `gui` is the already-laid-out ScreenGui (a fresh catcher reads size 0).
-		local screenH = gui.AbsoluteSize.Y
+		local screenH, screenW = gui.AbsoluteSize.Y, gui.AbsoluteSize.X
 		if screenH < 1 then screenH = 720 end
+		if screenW < 1 then screenW = 1280 end
 		local maxH = listTop + MAX_ROWS * ROW_H
 		local openUp = (abs.Y + sz.Y + maxH > screenH) and (abs.Y - maxH >= 0)
 		local function place(totalH)
 			local y = openUp and (abs.Y - totalH) or (abs.Y + sz.Y)
-			return UDim2.fromOffset(abs.X, math.max(0, math.min(y, screenH - totalH)))
+			local x = math.max(0, math.min(abs.X, screenW - popW))
+			return UDim2.fromOffset(x, math.max(0, math.min(y, screenH - totalH)))
 		end
 
 		local matches = cfg.options -- alias while unfiltered (never mutated in place)
@@ -571,9 +576,9 @@ local function dropdown(cfg)
 			end
 			local visibleRows = math.min(math.max(m, 1), MAX_ROWS)
 			popup.CanvasSize = UDim2.fromOffset(0, m * ROW_H)
-			popup.Size = UDim2.fromOffset(sz.X, visibleRows * ROW_H)
+			popup.Size = UDim2.fromOffset(popW, visibleRows * ROW_H)
 			local totalH = listTop + visibleRows * ROW_H
-			container.Size = UDim2.fromOffset(sz.X, totalH)
+			container.Size = UDim2.fromOffset(popW, totalH)
 			container.Position = place(totalH)
 		end
 
@@ -928,19 +933,32 @@ local function renderCountries()
 		refreshSwatch()
 		for _, b in ipairs(boxes) do b:GetPropertyChangedSignal("Text"):Connect(refreshSwatch) end
 
-		-- Capital: editable province id when creating (must be an existing province); read-only otherwise.
-		-- Compose the nation's territory afterward by setting province owners in the Provinces tab.
-		local capBox = isNew and field("Capital prov ID", "", "province id") or nil
-		if not isNew then
-			readonlyRow(detail, "Capital", c.capitalProvinceId)
-		end
-
 		-- editable definition fields via dropdowns (options from the snapshot); derived/runtime fields
 		-- (manpower, treasury, ...) are intentionally omitted -- they're recomputed, not definition data.
 		local function ddRow(name, options, value)
 			local r = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 26) })
 			label(r, name, "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 90, 1, 0)
 			return dropdown({ parent = r, size = UDim2.new(1, -96, 1, 0), position = UDim2.fromOffset(96, 0), options = options, value = value })
+		end
+
+		-- Capital: on create, a province-id text box (must be an existing province). On edit, a picker over the
+		-- nation's OWNED provinces (searchable by id/name) -- a capital must be owned, else CapitalSystem relocates
+		-- it off the unheld tile. Territory itself is still composed via province owners in the Provinces tab.
+		local capBox = isNew and field("Capital prov ID", "", "province id") or nil
+		local capDD
+		if not isNew then
+			local function provLabel(id)
+				local p = snap.provinces[id]
+				return tostring(id) .. "  " .. ((p and p.name) or "?")
+			end
+			local owned = {}
+			for id, p in pairs(snap.provinces) do
+				if p.ownerTag == tag then owned[#owned + 1] = { id = id, label = provLabel(id) } end
+			end
+			table.sort(owned, function(a, b) return a.id < b.id end)
+			local capOptions = {}
+			for _, o in ipairs(owned) do capOptions[#capOptions + 1] = o.label end
+			capDD = ddRow("Capital", capOptions, c.capitalProvinceId and provLabel(c.capitalProvinceId) or "—")
 		end
 		local cultureDD = ddRow("Culture", sortedKeys(snap.cultures), c and c.primaryCulture)
 		local religionDD = ddRow("Religion", sortedKeys(snap.religions), c and c.stateReligion)
@@ -1004,6 +1022,11 @@ local function renderCountries()
 					governmentForm = govDD.get(),
 					ideology = ideoDD.get(),
 				}
+				-- Capital (edit mode): the picker holds "<id>  <name>"; pull the leading id, keeping the current
+				-- capital if nothing valid parses. Create mode sets capitalProvinceId from capBox below instead.
+				if capDD then
+					opts.capitalProvinceId = tonumber(tostring(capDD.get()):match("^%s*(%d+)")) or c.capitalProvinceId
+				end
 				if isNew then
 					local newTag = (tagBox.Text or ""):gsub("%s", "")
 					opts.capitalProvinceId = tonumber(capBox.Text)
@@ -1028,6 +1051,7 @@ local function renderCountries()
 						c.stateReligion = opts.stateReligion
 						c.governmentForm = opts.governmentForm
 						c.ideology = opts.ideology
+						c.capitalProvinceId = opts.capitalProvinceId
 						searchCache.countries[tag] = string.lower(tostring(tag) .. " " .. (opts.displayName or ""))
 						markDirty()
 						setStatus("Saved " .. tostring(tag), Colors.Positive)
@@ -1038,6 +1062,43 @@ local function renderCountries()
 			end,
 		})
 		saveBtn.LayoutOrder = 99
+
+		-- Delete (edit only): destructive -- removes the nation and frees all its provinces/tiles. Two-click
+		-- confirm here; the server ALSO rate-limits deletions (one per 2.5 min, max 5/hr) as the real guard.
+		if not isNew then
+			local armed = false
+			local delBtn
+			delBtn = Button.create({
+				parent = detail,
+				variant = "danger",
+				text = "Delete country",
+				width = 160,
+				onClick = function()
+					local lab = delBtn:FindFirstChild("Label")
+					if not armed then
+						armed = true
+						if lab then lab.Text = "Click again to delete " .. tostring(tag) end
+						setStatus("Deleting " .. tostring(tag) .. " removes the nation and frees its provinces. Click again to confirm.", Colors.Negative)
+						return
+					end
+					local res, err = editorCall("removeCountry", { tag = tag })
+					if res then
+						snap.countries[tag] = nil
+						searchCache.countries[tag] = nil
+						state.selected = nil
+						markDirty()
+						setStatus("Deleted " .. tostring(tag), Colors.Positive)
+						if listCol then listCol() end
+						showDetail(nil)
+					else
+						armed = false
+						if lab then lab.Text = "Delete country" end
+						setStatus("Delete failed: " .. tostring(err), Colors.Negative)
+					end
+				end,
+			})
+			delBtn.LayoutOrder = 100
+		end
 	end
 
 	local _, rebuildList = listColumn({

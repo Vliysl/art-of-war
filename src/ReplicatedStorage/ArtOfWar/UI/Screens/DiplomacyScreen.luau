@@ -15,6 +15,7 @@ local CountryBadge = require(Components.CountryBadge)
 local VirtualList = require(Components.VirtualList)
 local WorldConstants = require(script.Parent.Parent.Parent.Shared.WorldConstants)
 local SimClock = require(script.Parent.Parent.Parent.Modules.SimClock)
+local PeaceInfo = require(script.Parent.Parent.PeaceInfo)
 
 local DiplomacyScreen = {}
 
@@ -705,11 +706,13 @@ function DiplomacyScreen.create(ctx)
 			then
 				ensurePending()
 				local incoming = p.toTag == mineTag
+				local detail = PeaceInfo.summarize(cache, p.terms, p.fromTag, p.toTag, mineTag)
 				ScreenKit.note(
 					body,
 					(incoming and "Incoming" or "Outgoing")
-						.. " peace offer · "
-						.. (TERMS_LABEL[(p.terms or {}).type] or "Peace"),
+						.. " · "
+						.. (TERMS_LABEL[(p.terms or {}).type] or "Peace")
+						.. (detail ~= "" and ("  —  " .. detail) or ""),
 					ord()
 				)
 				offerButtons(incoming, "AcceptPeace", "RejectPeace", "CancelPeaceProposal", id)

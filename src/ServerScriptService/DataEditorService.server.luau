@@ -162,6 +162,11 @@ local CALL_COOLDOWN = 0.2
 local WRITE_COOLDOWN = 2.5
 local PAINT_COOLDOWN = 0.05
 local SNAPSHOT_COOLDOWN = 1.0
+-- Country deletion is destructive + potentially abusable, so it's throttled far harder than a normal write:
+-- at least DELETE_COOLDOWN between deletions AND at most DELETE_MAX within a rolling DELETE_WINDOW (per editor).
+local DELETE_COOLDOWN = 150 -- 2.5 minutes between country deletions
+local DELETE_WINDOW = 3600 -- rolling 1-hour window
+local DELETE_MAX = 5 -- max country deletions per rolling window
 
 local WRITE_COMMANDS = {
 	addCountry = true,
@@ -300,6 +305,31 @@ local function rateLimit(player, command)
 			return false, "painting too fast — slow down a bit"
 		end
 		entry.paint = now
+		entry.call = now
+		return true
+	end
+	if command == "removeCountry" then
+		-- Deleting a country is destructive; gate it far harder than a normal write. Prune the per-editor
+		-- delete log to the rolling window, then require both the spacing and the hourly cap. Nothing is
+		-- stamped on rejection, so a blocked delete doesn't consume the editor's other cooldowns.
+		if now - entry.call < CALL_COOLDOWN then
+			return false, "too many calls — slow down"
+		end
+		local kept = {}
+		for _, t in ipairs(entry.deletes or {}) do
+			if now - t < DELETE_WINDOW then
+				kept[#kept + 1] = t
+			end
+		end
+		local last = kept[#kept]
+		if last and now - last < DELETE_COOLDOWN then
+			return false, string.format("country deletes are limited to one every 2.5 min — wait %ds", math.ceil(DELETE_COOLDOWN - (now - last)))
+		end
+		if #kept >= DELETE_MAX then
+			return false, string.format("country delete limit reached (%d per hour) — try again later", DELETE_MAX)
+		end
+		kept[#kept + 1] = now
+		entry.deletes = kept
 		entry.call = now
 		return true
 	end

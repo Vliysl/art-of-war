@@ -28,30 +28,43 @@ WorldConstants.MapEditorPlaceId = 104399454095233
 
 -- Feature kill-switches for the country/province restructure (v4). Each gates a phase's new behavior so it
 -- can be disabled at runtime without a code revert -- flip false to fall back to the old behavior.
-WorldConstants.EnableFullAnnex = true         -- Phase 1: full-annex peace term + defeated-country deletion + zombie cleanup
-WorldConstants.EnableCores = false            -- Phase 2: cores suppress unrest / non-core unrest pressure
-WorldConstants.EnablePeaceConference = false  -- Phase 3: war-score peace conference
-WorldConstants.EnableFormables = true         -- Phase 4: formable nations (Iberia is the first; no releasable defs yet)
-WorldConstants.EnableRebellions = false       -- Phase 4: rebellions flip provinces
-WorldConstants.EnableNewEditor = false        -- Phase 5: reserved. Both editors currently run (legacy=backtick, new=backslash)
+WorldConstants.EnableFullAnnex = true -- Phase 1: full-annex peace term + defeated-country deletion + zombie cleanup
+WorldConstants.EnableCores = false -- Phase 2: cores suppress unrest / non-core unrest pressure
+WorldConstants.EnablePeaceConference = false -- Phase 3: war-score peace conference
+WorldConstants.EnableFormables = true -- Phase 4: formable nations (Iberia is the first; no releasable defs yet)
+WorldConstants.EnableRebellions = false -- Phase 4: rebellions flip provinces
+WorldConstants.EnableNewEditor = false -- Phase 5: reserved. Both editors currently run (legacy=backtick, new=backslash)
 
 -- Feature kill-switches for the combat update (2026-07). Same pattern: each gates one phase's new
 -- behavior; flip false to restore the old behavior without a code revert. A flag stays false until
 -- its phase's code lands on this branch.
-WorldConstants.EnableAnnexArmyDisband = true      -- C1: full annexation disbands the loser's armies + fleets
-WorldConstants.EnableStrictRetreat = true         -- C1: retreat = adjacent allied/controlled LAND tile w/o battle or at-war army; none -> destroyed (encirclement)
-WorldConstants.EnableInstantCapture = true        -- C2: entering an undefended enemy tile flips it instantly (siege progress off)
-WorldConstants.EnableOccupationFreeze = true      -- C2: enemy occupation cancels recruitment (refunded) + pauses construction
-WorldConstants.EnableAdjacentEngagement = true    -- C3: attackers fight from their own tile; march in only on victory
-WorldConstants.EnableBattleDisc = true            -- C4: border battle disc (SurfaceGui 1-100) replaces the billboard battle bar
-WorldConstants.EnableNewInputScheme = true        -- C5: LMB select/move, RMB pan/inspect (MMB pan kept)
-WorldConstants.EnableMultiProvinceActions = true  -- C6: ctrl/shift multi-province selection + batched recruit/build remotes
-WorldConstants.EnableNewUnitModels = true         -- C8: cavalry/dragoon horse model (+ C9 ship model at sea)
-WorldConstants.EnableSeaTransport = true          -- C9: armies path over sea tiles (embark/sail/disembark, sea battles)
-WorldConstants.EnableDefenseBreakdown = true      -- Combat depth A: show terrain/fort/entrench defender bonus in province + army UI
-WorldConstants.EnableArmyGroups = true            -- Combat depth B: persistent named army groups
-WorldConstants.EnableGenerals = true              -- Combat depth C: hire/assign named generals that boost a group
-WorldConstants.EnableBorderCover = true           -- Combat depth D: "Cover Border vs Nation" auto-front order
+WorldConstants.EnableAnnexArmyDisband = true -- C1: full annexation disbands the loser's armies + fleets
+WorldConstants.EnableStrictRetreat = true -- C1: retreat = adjacent allied/controlled LAND tile w/o battle or at-war army; none -> destroyed (encirclement)
+WorldConstants.EnableInstantCapture = true -- C2: entering an undefended enemy tile flips it instantly (siege progress off)
+WorldConstants.EnableOccupationFreeze = true -- C2: enemy occupation cancels recruitment (refunded) + pauses construction
+WorldConstants.EnableAdjacentEngagement = true -- C3: attackers fight from their own tile; march in only on victory
+WorldConstants.EnableBattleDisc = true -- C4: border battle disc (SurfaceGui 1-100) replaces the billboard battle bar
+WorldConstants.EnableNewInputScheme = true -- C5: LMB select/move, RMB pan/inspect (MMB pan kept)
+WorldConstants.EnableMultiProvinceActions = true -- C6: ctrl/shift multi-province selection + batched recruit/build remotes
+WorldConstants.EnableNewUnitModels = true -- C8: cavalry/dragoon horse model (+ C9 ship model at sea)
+WorldConstants.EnableSeaTransport = true -- C9: armies path over sea tiles (embark/sail/disembark, sea battles)
+WorldConstants.EnableDefenseBreakdown = true -- Combat depth A: show terrain/fort/entrench defender bonus in province + army UI
+WorldConstants.EnableArmyGroups = true -- Combat depth B: persistent named army groups
+WorldConstants.EnableGenerals = true -- Combat depth C: hire/assign named generals that boost a group
+WorldConstants.EnableBorderCover = true -- Combat depth D: "Cover Border vs Nation" auto-front order
+WorldConstants.EnableGroupCards = true -- HUD army-group card strip (moves group functions off the unit panel); off -> old ArmyPanel group bar
+
+-- Ownership unification (single source of truth = the WorldState record). See the ownership-restructure plan.
+WorldConstants.RecordDrivenMapColoring = true -- P2: client colours the political map + nation-select highlight from the replicated record, not part attributes
+WorldConstants.RecordOwnershipChokepoint = true -- P3: server ownership mutations route through WorldState.setProvinceOwnership
+-- (P3b "retire owner/controller attribute stamping" intentionally NOT done: those attrs are a DERIVED backup
+--  still load-bearing for ProvinceReconciler boot-seeding of painted tiles + the recordFromPart fallback +
+--  the Map Editor. See the note above ProvinceStamper.writeAttrs.)
+-- Phase 1 (record-replication reliability). OwnershipReconcile is safe-on: a low-frequency client heal that
+-- re-syncs any province whose cached record drifted from the server (kills the "annexed tile still shows the
+-- old owner" class). OwnershipReplicationDebug is log-only diagnostics (server delta + client apply).
+WorldConstants.OwnershipReconcile = true
+WorldConstants.OwnershipReplicationDebug = false
 
 -- Combat depth C: general hire cost + combat-fold caps (per-formation, so N grouped armies can't
 -- compound the general N times).
@@ -186,17 +199,17 @@ WorldConstants.LegitimacyBase = 50
 WorldConstants.LegitimacyAlignmentScale = 100
 
 -- Politics overhaul ("Authority & the Estates")
-WorldConstants.CrownAuthorityBase = 50          -- starting Authority for seeded countries
-WorldConstants.CrownAuthorityCapBase = 100      -- max Authority before privileges lower it
-WorldConstants.CrownAuthorityCapMin = 20        -- floor for the cap no matter how many privileges
+WorldConstants.CrownAuthorityBase = 50 -- starting Authority for seeded countries
+WorldConstants.CrownAuthorityCapBase = 100 -- max Authority before privileges lower it
+WorldConstants.CrownAuthorityCapMin = 20 -- floor for the cap no matter how many privileges
 WorldConstants.CrownAuthorityMin = 0
 WorldConstants.CrownAuthorityRegenPerTick = 0.5 -- passive drift toward the cap
 WorldConstants.EstateLoyaltyBase = 50
 WorldConstants.EstateLoyaltyMin = 0
 WorldConstants.EstateLoyaltyMax = 100
-WorldConstants.EstateLoyaltyDriftPerTick = 0.4  -- drift toward target loyalty
-WorldConstants.EstateSeizeAuthorityGain = 12    -- Authority gained by seizing power from an estate
-WorldConstants.EstateSeizeLoyaltyHit = 15       -- loyalty lost by the seized-from estate
+WorldConstants.EstateLoyaltyDriftPerTick = 0.4 -- drift toward target loyalty
+WorldConstants.EstateSeizeAuthorityGain = 12 -- Authority gained by seizing power from an estate
+WorldConstants.EstateSeizeLoyaltyHit = 15 -- loyalty lost by the seized-from estate
 WorldConstants.EstateSeizeInfluenceShift = 0.03 -- clout removed from the seized-from estate
 WorldConstants.EstateDemandLoyaltyThreshold = 40 -- below this an estate may issue a demand event
 WorldConstants.UnrestMin = 0
@@ -204,35 +217,35 @@ WorldConstants.UnrestMax = 100
 -- Unrest model (UnrestSystem): unrest drifts toward target = pressure - relief
 WorldConstants.UnrestTickInterval = 6
 WorldConstants.UnrestDriftPerTick = 0.15
-WorldConstants.UnrestEstateLoyaltyPivot = 50    -- estate loyalty below this adds pressure
-WorldConstants.UnrestEstateCloutWeight = 120    -- disloyalty(0..1) * clout(share) * weight
+WorldConstants.UnrestEstateLoyaltyPivot = 50 -- estate loyalty below this adds pressure
+WorldConstants.UnrestEstateCloutWeight = 120 -- disloyalty(0..1) * clout(share) * weight
 WorldConstants.UnrestLegitimacyPivot = 50
-WorldConstants.UnrestLegitimacyWeight = 20      -- * max(0,(pivot-legit)/pivot)
-WorldConstants.UnrestStabilityWeight = 6        -- * stability points below 0
-WorldConstants.UnrestWarExhaustionWeight = 15   -- * war exhaustion (0..1)
-WorldConstants.UnrestActiveTransitionFlat = 8   -- flat pressure while mid-transition (over-reform)
-WorldConstants.UnrestBaseDecay = 10             -- baseline relief; a content realm trends to 0
-WorldConstants.UnrestGoodGovReliefWeight = 15   -- * max(0,(legit-pivot)/pivot)
-WorldConstants.UnrestStabilityReliefWeight = 5  -- * stability points above 0
+WorldConstants.UnrestLegitimacyWeight = 20 -- * max(0,(pivot-legit)/pivot)
+WorldConstants.UnrestStabilityWeight = 6 -- * stability points below 0
+WorldConstants.UnrestWarExhaustionWeight = 15 -- * war exhaustion (0..1)
+WorldConstants.UnrestActiveTransitionFlat = 8 -- flat pressure while mid-transition (over-reform)
+WorldConstants.UnrestBaseDecay = 10 -- baseline relief; a content realm trends to 0
+WorldConstants.UnrestGoodGovReliefWeight = 15 -- * max(0,(legit-pivot)/pivot)
+WorldConstants.UnrestStabilityReliefWeight = 5 -- * stability points above 0
 WorldConstants.UnrestAuthorityReliefWeight = 12 -- * Crown Authority (0..1 of cap)
-WorldConstants.UnrestRebellionThreshold = 70    -- crossing up publishes RebellionTriggered
-WorldConstants.RebellionCooldownDays = 365      -- after a rebellion ends, no new trigger for a year
-WorldConstants.EventTickInterval = 5            -- seconds between EventSystem ticks
-WorldConstants.EventAmbientCheckDays = 120      -- min in-game days between ambient event checks per country
-WorldConstants.EventAmbientChance = 0.35        -- chance an ambient check fires a random opportunity
+WorldConstants.UnrestRebellionThreshold = 70 -- crossing up publishes RebellionTriggered
+WorldConstants.RebellionCooldownDays = 365 -- after a rebellion ends, no new trigger for a year
+WorldConstants.EventTickInterval = 5 -- seconds between EventSystem ticks
+WorldConstants.EventAmbientCheckDays = 120 -- min in-game days between ambient event checks per country
+WorldConstants.EventAmbientChance = 0.35 -- chance an ambient check fires a random opportunity
 -- Leadership & Succession (RulerSystem)
-WorldConstants.SuccessionTickInterval = 6        -- scheduler cadence (s); aging is year-gated inside
+WorldConstants.SuccessionTickInterval = 6 -- scheduler cadence (s); aging is year-gated inside
 WorldConstants.RulerStartAgeMin = 28
 WorldConstants.RulerStartAgeMax = 55
-WorldConstants.RulerDeathFloorAge = 45           -- below this, only the base death chance
-WorldConstants.RulerDeathBaseChance = 0.01       -- per-year baseline
-WorldConstants.RulerDeathChancePerYear = 0.012   -- +1.2%/yr over the floor age
-WorldConstants.RulerDeathMaxChance = 0.55        -- cap at extreme age
-WorldConstants.RulerOldAgeExtraChance = 0.10     -- surcharge if ruler has the "old_age" trait
-WorldConstants.RulerRegencyAge = 16              -- heir below this rules under a regent
-WorldConstants.RulerTermLengthDays = 360 * 6     -- republican_term length (~6 years)
-WorldConstants.SuccessionCandidates = 3          -- elective/term/tribal candidate pool size
-WorldConstants.HeirClaimLegitimacyDivisor = 5    -- legitimacy swing on accession = (claim-50)/this
+WorldConstants.RulerDeathFloorAge = 45 -- below this, only the base death chance
+WorldConstants.RulerDeathBaseChance = 0.01 -- per-year baseline
+WorldConstants.RulerDeathChancePerYear = 0.012 -- +1.2%/yr over the floor age
+WorldConstants.RulerDeathMaxChance = 0.55 -- cap at extreme age
+WorldConstants.RulerOldAgeExtraChance = 0.10 -- surcharge if ruler has the "old_age" trait
+WorldConstants.RulerRegencyAge = 16 -- heir below this rules under a regent
+WorldConstants.RulerTermLengthDays = 360 * 6 -- republican_term length (~6 years)
+WorldConstants.SuccessionCandidates = 3 -- elective/term/tribal candidate pool size
+WorldConstants.HeirClaimLegitimacyDivisor = 5 -- legitimacy swing on accession = (claim-50)/this
 WorldConstants.SuccessionDisputeLegitimacyFloor = 35
 WorldConstants.SuccessionDisputeClaimFloor = 40
 WorldConstants.SuccessionDisputeLegitimacyHit = 10
@@ -292,15 +305,15 @@ WorldConstants.FleetRecruitMaxPerCall = 5
 WorldConstants.MapModeField = "field"
 WorldConstants.MapModeCommand = "command"
 WorldConstants.MapModeDefault = "command"
-WorldConstants.FieldColliderTopY = 0.3       -- new map land top = 0.25; flat field-floor sits just above (was 6 @ 18665)
+WorldConstants.FieldColliderTopY = 0.3 -- new map land top = 0.25; flat field-floor sits just above (was 6 @ 18665)
 WorldConstants.FieldColliderThickness = 1
-WorldConstants.FieldSpawnHeight = 5          -- spawn just above the field floor (was 45)
-WorldConstants.FieldWalkSpeed = 16           -- characters no longer 6x-scaled; Roblox-default feel on the 2048 map (was 140)
-WorldConstants.FieldSprintSpeed = 32         -- was 600
-WorldConstants.FieldJumpHeight = 7.2         -- Roblox default (was 12)
-WorldConstants.FieldBodyScale = 1            -- characters no longer resized (was 6)
-WorldConstants.FieldHeadScale = 1            -- was 5
-WorldConstants.CommandPerchHeight = 100000   -- off-screen avatar park in command mode; scale-independent
+WorldConstants.FieldSpawnHeight = 5 -- spawn just above the field floor (was 45)
+WorldConstants.FieldWalkSpeed = 16 -- characters no longer 6x-scaled; Roblox-default feel on the 2048 map (was 140)
+WorldConstants.FieldSprintSpeed = 32 -- was 600
+WorldConstants.FieldJumpHeight = 7.2 -- Roblox default (was 12)
+WorldConstants.FieldBodyScale = 1 -- characters no longer resized (was 6)
+WorldConstants.FieldHeadScale = 1 -- was 5
+WorldConstants.CommandPerchHeight = 100000 -- off-screen avatar park in command mode; scale-independent
 
 -- Economy (province-driven income engine)
 WorldConstants.TaxIncomePerThousand = 0.05 -- gold per day per 1000 population per devTier
@@ -472,8 +485,8 @@ WorldConstants.PeaceAIExhaustionWeight = 0.5 -- each exhaustion point adds this 
 WorldConstants.PeaceAIAcceptMargin = 0 -- accept when willingness - cost >= this
 WorldConstants.PeaceVassalizeCost = 90 -- vassalize peace term: very high war-score cost (AI only when crushed)
 -- Phase 3 peace conference (gated by EnablePeaceConference): per-demand war-score costs.
-WorldConstants.PeaceTakeProvinceCost = 12   -- base cost to demand one province
-WorldConstants.PeaceCoreMultiplier = 1.5    -- x cost when the province is a CORE of the loser (homeland)
+WorldConstants.PeaceTakeProvinceCost = 12 -- base cost to demand one province
+WorldConstants.PeaceCoreMultiplier = 1.5 -- x cost when the province is a CORE of the loser (homeland)
 WorldConstants.PeaceClaimCostDiscount = 0.7 -- x cost when the demander holds a CLAIM on the province
 WorldConstants.ReleaseSubjectOpinionBonus = 30 -- a freed subject's opinion of its former overlord
 

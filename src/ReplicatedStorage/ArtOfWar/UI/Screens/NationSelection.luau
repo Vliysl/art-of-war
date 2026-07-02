@@ -22,6 +22,8 @@ local SectionDivider = require(Components.SectionDivider)
 
 local HudWiring = require(UI.HudWiring)
 
+local WorldConstants = require(ArtOfWar.Shared.WorldConstants)
+
 local Modules = ArtOfWar.Modules
 local CameraController = require(Modules.CameraController)
 local ProvincePositions = require(Modules.ProvincePositions)
@@ -427,13 +429,24 @@ function NationSelection.create(ctx)
 		if not map then
 			return
 		end
+		-- Record-driven (single source of truth): read owner from the replicated province RECORD via
+		-- province_id, not the part `owner` attribute, so the claimable-nation highlight matches the map +
+		-- panel. Gated by RecordDrivenMapColoring; off = the original attribute read, byte-identical.
+		local recordDriven = WorldConstants.RecordDrivenMapColoring and cache ~= nil and cache.getProvince ~= nil
 		local function scan(folder)
 			if not folder then
 				return
 			end
 			for _, p in ipairs(folder:GetChildren()) do
 				if p:IsA("BasePart") then
-					local owner = p:GetAttribute("owner")
+					local owner
+					if recordDriven then
+						local id = p:GetAttribute("province_id")
+						local rec = id ~= nil and cache.getProvince(id)
+						owner = rec and rec.ownerTag
+					else
+						owner = p:GetAttribute("owner")
+					end
 					if owner and owner ~= "" and owner ~= "NONE" then
 						local bucket = partsByOwner[owner]
 						if not bucket then
@@ -594,7 +607,8 @@ function NationSelection.create(ctx)
 		swatch.Parent = btn
 
 		-- px = 40 matches the colour accent swatch height (40) so the crest lines up with it (was 44).
-		local badge = CountryBadge.create({ code = vm.tag, countryColor = vm.color, size = "sm", px = 40, parent = btn })
+		local badge =
+			CountryBadge.create({ code = vm.tag, countryColor = vm.color, size = "sm", px = 40, parent = btn })
 		badge.AnchorPoint = Vector2.new(0, 0.5)
 		badge.Position = UDim2.new(0, 26, 0.5, 0)
 		badge.ZIndex = 4
@@ -1086,6 +1100,7 @@ function NationSelection.create(ctx)
 					return
 				end
 				buildViewModels()
+				buildPartsIndex() -- ownership may have shifted (annex); rebuild the record-driven highlight index
 				rebuildList()
 				if selectedTag then
 					local vm = viewModels[selectedTag]

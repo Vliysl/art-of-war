@@ -20,7 +20,9 @@ end
 -- The parent's highest-unrest owned province (fallback: first owned). Returns id or nil.
 local function pickRevoltProvince(parentTag)
 	local ids = ctx.ProvinceRegistry and ctx.ProvinceRegistry.byOwner(parentTag)
-	if not ids or #ids == 0 then return nil end
+	if not ids or #ids == 0 then
+		return nil
+	end
 	local bestId, bestUnrest = nil, -1
 	for _, id in ipairs(ids) do
 		local p = ctx.WorldState.getProvince(id)
@@ -34,11 +36,16 @@ end
 -- A releasable definition (not yet existing) whose homeland the parent FULLY holds and which includes
 -- `provinceId`, so a rebellion can restore a real historical nation. Returns formableTag or nil.
 local function matchingReleasable(parentTag, provinceId)
-	if not ctx.FormableSystem then return nil end
+	if not ctx.FormableSystem then
+		return nil
+	end
 	for tag, def in pairs(ctx.FormableSystem.allDefinitions()) do
-		if def.canRelease ~= false and def.requiredProvinceIds
+		if
+			def.canRelease ~= false
+			and def.requiredProvinceIds
 			and table.find(def.requiredProvinceIds, provinceId)
-			and not ctx.WorldState.getCountry(tag) then
+			and not ctx.WorldState.getCountry(tag)
+		then
 			local ownsAll = true
 			for _, pid in ipairs(def.requiredProvinceIds) do
 				local p = ctx.WorldState.getProvince(pid)
@@ -47,7 +54,9 @@ local function matchingReleasable(parentTag, provinceId)
 					break
 				end
 			end
-			if ownsAll then return tag end
+			if ownsAll then
+				return tag
+			end
 		end
 	end
 	return nil
@@ -55,31 +64,48 @@ end
 
 local function transferProvince(toTag, fromTag, id)
 	local p = ctx.WorldState.getProvince(id)
-	if not p or p.ownerTag ~= fromTag then return end
-	p.ownerTag = toTag
-	p.controllerTag = toTag
+	if not p or p.ownerTag ~= fromTag then
+		return
+	end
+	-- Add the rebel core on the record first so it rides the same dirty mark as the ownership flip.
 	p.cores = p.cores or {}
 	if not table.find(p.cores, toTag) then
 		table.insert(p.cores, toTag)
 	end
-	ctx.WorldState.setProvince(id, p)
-	ctx.EventBus.publish(ctx.Channels.ProvinceOwnershipChanged, {
-		provinceId = id,
-		oldOwner = fromTag,
-		newOwner = toTag,
-	})
+	if ctx.WorldConstants.RecordOwnershipChokepoint then
+		ctx.WorldState.setProvinceOwnership(id, { owner = toTag, controller = toTag, reason = "rebellion" })
+	else
+		p.ownerTag = toTag
+		p.controllerTag = toTag
+		ctx.WorldState.setProvince(id, p)
+		ctx.EventBus.publish(ctx.Channels.ProvinceOwnershipChanged, {
+			provinceId = id,
+			oldOwner = fromTag,
+			newOwner = toTag,
+		})
+	end
 end
 
 -- Spawn a rebellion against parentTag. `kind` is a descriptor ("popular"/"noble"/estate id/...).
 local function spawn(parentTag, kind, _context)
-	if not ctx.WorldConstants.EnableRebellions then return false end
-	if not ctx.NationFactory then return false end
-	if parentTag:sub(1, 4) == "REB_" then return false end -- rebels don't rebel
+	if not ctx.WorldConstants.EnableRebellions then
+		return false
+	end
+	if not ctx.NationFactory then
+		return false
+	end
+	if parentTag:sub(1, 4) == "REB_" then
+		return false
+	end -- rebels don't rebel
 	local parent = ctx.WorldState.getCountry(parentTag)
-	if not parent then return false end
+	if not parent then
+		return false
+	end
 
 	local target = pickRevoltProvince(parentTag)
-	if not target then return false end
+	if not target then
+		return false
+	end
 
 	local breakawayTag, provincesToTake, opts
 	local rel = matchingReleasable(parentTag, target)
@@ -142,7 +168,9 @@ function RebellionSystem.register(context)
 	context.RebellionSystem = { spawn = spawn }
 	if context.EventBus and context.EventBus.subscribe and context.Channels.RebellionTriggered then
 		context.EventBus.subscribe(context.Channels.RebellionTriggered, function(payload)
-			if not payload or not payload.tag then return end
+			if not payload or not payload.tag then
+				return
+			end
 			spawn(payload.tag, payload.estateId and "estate" or "popular", context)
 		end)
 	end

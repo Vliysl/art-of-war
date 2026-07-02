@@ -41,15 +41,22 @@ local function tickSiege()
 	-- O(battles) per army -- the old getBattleAt-per-army call made this O(armies x battles).
 	local battleProvince = {}
 	for _, b in ctx.WorldState.allBattles() do
-		if b.provinceId then battleProvince[b.provinceId] = true end
+		if b.provinceId then
+			battleProvince[b.provinceId] = true
+		end
 	end
 	-- Resolve a single uncontested besieger per province.
 	local occupierOf, contested, besiegers = {}, {}, {}
 	for _, army in ctx.WorldState.allArmies() do
 		local pid = army.provinceId
 		local prov = pid and ctx.WorldState.getProvince(pid)
-		if prov and army.ownerTag and prov.controllerTag ~= army.ownerTag
-			and not army.battleId and not battleProvince[pid] then
+		if
+			prov
+			and army.ownerTag
+			and prov.controllerTag ~= army.ownerTag
+			and not army.battleId
+			and not battleProvince[pid]
+		then
 			local controller = prov.controllerTag
 			local mayOccupy = isUnowned(controller)
 			if not mayOccupy and ctx.DiplomacySystem and ctx.DiplomacySystem.areAtWar then
@@ -84,8 +91,11 @@ local function tickSiege()
 					regiments += ctx.ArmySystem.totalRegimentCount(a.composition)
 				end
 			end
-			local sizeFactor = math.clamp(regiments / (C.SiegeArmySizeRef or 8),
-				C.SiegeMinSizeFactor or 0.5, C.SiegeMaxSizeFactor or 1.5)
+			local sizeFactor = math.clamp(
+				regiments / (C.SiegeArmySizeRef or 8),
+				C.SiegeMinSizeFactor or 0.5,
+				C.SiegeMaxSizeFactor or 1.5
+			)
 
 			local speed = (C.SiegeBaseSpeed or 1) * sizeFactor * (1 - fortMod)
 			if ctx.ModifierStack and ctx.ModifierStack.resolveAdditive then
@@ -94,7 +104,9 @@ local function tickSiege()
 			speed = math.max(0, speed)
 
 			local occ = prov.occupation
-			if not occ or occ.byTag ~= tag then occ = { byTag = tag, progress = 0 } end
+			if not occ or occ.byTag ~= tag then
+				occ = { byTag = tag, progress = 0 }
+			end
 			occ.progress += speed
 			-- Replicate the completion threshold so the client can show progress/required as a
 			-- world-space capture bar without knowing WorldConstants.OccupationProgressRequired.
@@ -110,16 +122,21 @@ local function tickSiege()
 
 			if occ.progress >= required then
 				local oldController = prov.controllerTag
-				prov.controllerTag = tag
 				prov.occupation = nil
 				activeSieges[pid] = nil
-				ctx.WorldState.setProvince(pid, prov)
-				ctx.EventBus.publish(ctx.Channels.ProvinceOccupied, {
-					provinceId = pid,
-					newController = tag,
-					oldController = oldController,
-					ownerTag = prov.ownerTag,
-				})
+				if ctx.WorldConstants.RecordOwnershipChokepoint then
+					-- occupation cleared above rides the chokepoint's dirty mark; it flips controller + publishes.
+					ctx.WorldState.setProvinceOwnership(pid, { controller = tag, reason = "siege" })
+				else
+					prov.controllerTag = tag
+					ctx.WorldState.setProvince(pid, prov)
+					ctx.EventBus.publish(ctx.Channels.ProvinceOccupied, {
+						provinceId = pid,
+						newController = tag,
+						oldController = oldController,
+						ownerTag = prov.ownerTag,
+					})
+				end
 			else
 				prov.occupation = occ
 				activeSieges[pid] = true
@@ -160,7 +177,9 @@ function SiegeSystem.register(context)
 	ctx = context
 	local api = { tickSiege = tickSiege }
 	context.SiegeSystem = api
-	for k, v in pairs(api) do SiegeSystem[k] = v end
+	for k, v in pairs(api) do
+		SiegeSystem[k] = v
+	end
 
 	context.TickScheduler.register({
 		id = "SiegeSystem",

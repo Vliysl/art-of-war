@@ -1,11 +1,31 @@
 local WorldState = {}
 
-local COLLECTIONS = { "provinces", "countries", "markets", "units", "fleets", "tradeRoutes", "ideologies", "leaders", "armies", "battles", "wars", "peaceProposals", "tradeOrders", "pacts", "armyGroups" }
+local COLLECTIONS = {
+	"provinces",
+	"countries",
+	"markets",
+	"units",
+	"fleets",
+	"tradeRoutes",
+	"ideologies",
+	"leaders",
+	"armies",
+	"battles",
+	"wars",
+	"peaceProposals",
+	"tradeOrders",
+	"pacts",
+	"armyGroups",
+}
 
 local store
 local dirty
 local tombstones
 local revision
+-- Injected once from Bootstrap so the ownership chokepoint can publish the canonical events without
+-- WorldState taking a hard dependency on the event framework.
+local eventBus
+local channels
 
 local function resetStore()
 	store = {}
@@ -36,8 +56,48 @@ local function tombstone(collection, key)
 	bump()
 end
 
-function WorldState.deleteCountry(tag) tombstone("countries", tag) end
-function WorldState.deleteProvince(id) tombstone("provinces", id) end
+-- Integrity guard (see the ownership-restructure): a country must NEVER be deleted while a province
+-- still names it as owner -- otherwise that province is STRANDED owning a dead tag (the observed
+-- "annexed nation gone from diplomacy, but the tile still shows it" orphan). Ownership lives in several
+-- representations kept in sync by convention (record / byOwner index / part attributes / client cache);
+-- if any desynced, annexCountry's index-driven transfer loop could miss a province. So before tombstoning
+-- we sweep the AUTHORITATIVE province store and reassign any straggler to `reassignTo` (the annexer) or
+-- "NONE", publishing the canonical event so the indices, stamper and clients self-heal. O(provinces) and
+-- country deletion is rare; the loop finds 0 in the normal (index-consistent) case.
+function WorldState.deleteCountry(tag, reassignTo)
+	local successor = reassignTo or "NONE"
+	for id, province in store.provinces do
+		if province.ownerTag == tag then
+			local oldController = province.controllerTag
+			province.ownerTag = successor
+			if province.controllerTag == tag then
+				province.controllerTag = successor
+			end
+			mark("provinces", id)
+			warn(
+				string.format(
+					"[WorldState] deleteCountry(%s): reassigned stranded province %s -> %s (ownership desync guard)",
+					tostring(tag),
+					tostring(id),
+					tostring(successor)
+				)
+			)
+			if eventBus and channels then
+				eventBus.publish(channels.ProvinceOwnershipChanged, {
+					provinceId = id,
+					oldOwner = tag,
+					newOwner = successor,
+					oldController = oldController,
+					reason = "orphan_guard",
+				})
+			end
+		end
+	end
+	tombstone("countries", tag)
+end
+function WorldState.deleteProvince(id)
+	tombstone("provinces", id)
+end
 
 function WorldState.getRevision()
 	return revision
@@ -49,17 +109,82 @@ function WorldState.bumpRevision()
 end
 
 function WorldState.setProvince(id, record)
+	-- Province ids are canonically NUMERIC (see ClientStateCache.provKey). Coerce defensively so the store,
+	-- dirty set, and delta can never acquire a string-keyed province that reads would then miss.
+	id = tonumber(id) or id
 	store.provinces[id] = record
 	mark("provinces", id)
 	bump()
 end
 
 function WorldState.getProvince(id)
-	return store.provinces[id]
+	return store.provinces[id] or store.provinces[tonumber(id)]
 end
 
 function WorldState.allProvinces()
 	return store.provinces
+end
+
+-- Compact ownership snapshot for the client self-heal reconcile (OwnershipReconcile): owner + controller
+-- only, so a client can cheaply detect + repair any province whose replicated record drifted from the
+-- server without re-pulling full records. `{ [id] = { o = ownerTag, c = controllerTag } }`.
+function WorldState.getOwnershipDigest()
+	local out = {}
+	for id, p in store.provinces do
+		out[id] = { o = p.ownerTag, c = p.controllerTag }
+	end
+	return out
+end
+
+function WorldState.bindEvents(bus, chan)
+	eventBus = bus
+	channels = chan
+end
+
+-- The single chokepoint for province OWNERSHIP + OCCUPATION mutations. Fuses the record write with
+-- the canonical event publish, so the WorldState record and every downstream representation (map
+-- render, ProvinceRegistry byOwner/byController, economy/market/capital reactions, ...) stay in sync
+-- by construction rather than by convention. `opts.owner`/`opts.controller` default to UNCHANGED when
+-- nil (a controller-only change is an occupation; sites that conditionally follow the owner pass the
+-- exact controller). Emits the SAME payloads the individual write sites used, so subscribers are
+-- untouched. Returns whether anything actually changed.
+function WorldState.setProvinceOwnership(id, opts)
+	local record = store.provinces[id]
+	if not record then
+		return false
+	end
+	opts = opts or {}
+	local oldOwner = record.ownerTag
+	local oldController = record.controllerTag
+	local newOwner = opts.owner ~= nil and opts.owner or oldOwner
+	local newController = opts.controller ~= nil and opts.controller or oldController
+	if newOwner == oldOwner and newController == oldController then
+		return false
+	end
+	record.ownerTag = newOwner
+	record.controllerTag = newController
+	mark("provinces", id)
+	bump()
+	if eventBus and channels then
+		if newOwner ~= oldOwner then
+			local payload = { provinceId = id, oldOwner = oldOwner, newOwner = newOwner, reason = opts.reason }
+			if type(opts.extra) == "table" then
+				for k, v in pairs(opts.extra) do
+					payload[k] = v
+				end
+			end
+			eventBus.publish(channels.ProvinceOwnershipChanged, payload)
+		else
+			eventBus.publish(channels.ProvinceOccupied, {
+				provinceId = id,
+				newController = newController,
+				oldController = oldController,
+				ownerTag = newOwner,
+				reason = opts.reason,
+			})
+		end
+	end
+	return true
 end
 
 function WorldState.setCountry(tag, record)
@@ -105,7 +230,10 @@ function WorldState.allUnits()
 end
 
 function WorldState.setFleet(id, record)
-	if record == nil then tombstone("fleets", id); return end
+	if record == nil then
+		tombstone("fleets", id)
+		return
+	end
 	store.fleets[id] = record
 	mark("fleets", id)
 	bump()
@@ -165,7 +293,10 @@ function WorldState.setArmy(id, record)
 	-- nil record == removal: tombstone so the delta carries it in `removed` (a plain
 	-- dirty mark would just emit a nil value that vanishes from the packet, leaving
 	-- the army stranded on every client -- this was the broken disband path).
-	if record == nil then tombstone("armies", id); return end
+	if record == nil then
+		tombstone("armies", id)
+		return
+	end
 	store.armies[id] = record
 	mark("armies", id)
 	bump()
@@ -180,7 +311,10 @@ function WorldState.allArmies()
 end
 
 function WorldState.setBattle(id, record)
-	if record == nil then tombstone("battles", id); return end
+	if record == nil then
+		tombstone("battles", id)
+		return
+	end
 	store.battles[id] = record
 	mark("battles", id)
 	bump()
@@ -251,7 +385,10 @@ function WorldState.allPacts()
 end
 
 function WorldState.setArmyGroup(id, record)
-	if record == nil then tombstone("armyGroups", id); return end
+	if record == nil then
+		tombstone("armyGroups", id)
+		return
+	end
 	store.armyGroups[id] = record
 	mark("armyGroups", id)
 	bump()
@@ -309,14 +446,18 @@ function WorldState.drainDirty()
 		removed[name] = removedKeys
 		table.clear(tombPool)
 	end
-	if not hasAny then return nil end
+	if not hasAny then
+		return nil
+	end
 	drained.revision = revision
 	drained.removed = removed
 	return drained
 end
 
 function WorldState.markDirty(collection, key)
-	if dirty[collection] then mark(collection, key) end
+	if dirty[collection] then
+		mark(collection, key)
+	end
 end
 
 function WorldState.clear()

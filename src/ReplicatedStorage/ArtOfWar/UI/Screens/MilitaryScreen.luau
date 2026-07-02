@@ -308,7 +308,8 @@ function MilitaryScreen.create(ctx)
 
 			-- Combat depth B: Army Groups list. Clicking a row selects the group's members on the map
 			-- (ArmyView.focusArmy fires onArmySelected, which HudWiring coalesces into one ArmyPanel open).
-			if WorldConstants.EnableArmyGroups then
+			-- Superseded by the bottom-center card strip; shown only as the EnableGroupCards flag-off fallback.
+			if WorldConstants.EnableArmyGroups and not WorldConstants.EnableGroupCards then
 				ScreenKit.section(body, "Army Groups", 200)
 				local groups = ownGroups()
 				if #groups > 0 then
@@ -552,8 +553,9 @@ function MilitaryScreen.create(ctx)
 	table.insert(conns, ctx.cache.onChangePrefix("armies", scheduleRefresh))
 	table.insert(conns, ctx.cache.onChangePrefix("fleets", scheduleRefresh))
 	table.insert(conns, ctx.cache.onChangePrefix("countries", scheduleRefresh))
-	-- Combat depth B: the Army Groups list lives in the armyGroups collection.
-	if WorldConstants.EnableArmyGroups then
+	-- Combat depth B: the Army Groups list lives in the armyGroups collection (only when the in-screen
+	-- list is the active surface; the card strip owns its own subscriptions otherwise).
+	if WorldConstants.EnableArmyGroups and not WorldConstants.EnableGroupCards then
 		table.insert(conns, ctx.cache.onChangePrefix("armyGroups", scheduleRefresh))
 	end
 

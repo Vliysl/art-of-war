@@ -9,7 +9,9 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SOURCE_EU4_MAP = require(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Data"):WaitForChild("EU4IDMap"))
 
 local EU4_ID_MAP = {}
-for k, v in pairs(SOURCE_EU4_MAP) do EU4_ID_MAP[k] = v end
+for k, v in pairs(SOURCE_EU4_MAP) do
+	EU4_ID_MAP[k] = v
+end
 do
 	local services = game:GetService("ServerStorage"):FindFirstChild("Services")
 	local overlayMod = services and services:FindFirstChild("DataOverlay")
@@ -35,22 +37,30 @@ local function refreshMode()
 		local ok, overlay = pcall(require, overlayMod)
 		if ok and overlay and overlay.isCollapsed then
 			local okC, collapsed = pcall(overlay.isCollapsed)
-			if okC then COLLAPSED = collapsed == true end
+			if okC then
+				COLLAPSED = collapsed == true
+			end
 		end
 	end
 end
 
 -- Resolve a province id to its physical part id. v3: the id IS the part id. v2: bridge via eu4Map.
 local function resolvePartId(provinceId)
-	if COLLAPSED then return provinceId end
+	if COLLAPSED then
+		return provinceId
+	end
 	return EU4_ID_MAP[provinceId]
 end
 
 local YIELD_EVERY = 500
 
 local function tunePart(part)
-	if part.CanTouch then part.CanTouch = false end
-	if part.CastShadow then part.CastShadow = false end
+	if part.CanTouch then
+		part.CanTouch = false
+	end
+	if part.CastShadow then
+		part.CastShadow = false
+	end
 end
 
 local function indexById(folder)
@@ -59,9 +69,13 @@ local function indexById(folder)
 		if part:IsA("BasePart") then
 			tunePart(part)
 			local pid = tonumber(part.Name:match("prov_(%d+)"))
-			if pid then partLookup[pid] = part end
+			if pid then
+				partLookup[pid] = part
+			end
 			n += 1
-			if n % YIELD_EVERY == 0 then task.wait() end
+			if n % YIELD_EVERY == 0 then
+				task.wait()
+			end
 		end
 	end
 end
@@ -73,7 +87,9 @@ local function indexByName(folder, target)
 			tunePart(part)
 			target[part.Name] = part
 			n += 1
-			if n % YIELD_EVERY == 0 then task.wait() end
+			if n % YIELD_EVERY == 0 then
+				task.wait()
+			end
 		end
 	end
 end
@@ -83,49 +99,79 @@ local function buildLookups()
 	table.clear(leftWrapLookup)
 	table.clear(rightWrapLookup)
 	local map = workspace:FindFirstChild("ArtOfWarMap")
-	if not map then return end
+	if not map then
+		return
+	end
 	local main = map:FindFirstChild("Provinces")
-	if main then indexById(main) end
+	if main then
+		indexById(main)
+	end
 	local lw = map:FindFirstChild("LeftWrap")
 	if lw then
 		local f = lw:FindFirstChild("Provinces")
-		if f then indexByName(f, leftWrapLookup) end
+		if f then
+			indexByName(f, leftWrapLookup)
+		end
 	end
 	local rw = map:FindFirstChild("RightWrap")
 	if rw then
 		local f = rw:FindFirstChild("Provinces")
-		if f then indexByName(f, rightWrapLookup) end
+		if f then
+			indexByName(f, rightWrapLookup)
+		end
 	end
 end
 
 local function applyTileMaterials()
 	local map = workspace:FindFirstChild("ArtOfWarMap")
-	if map and map:GetAttribute("tileMaterialsApplied") then return end
+	if map and map:GetAttribute("tileMaterialsApplied") then
+		return
+	end
 	local n = 0
 	for _, part in pairs(partLookup) do
 		if part:IsA("BasePart") and part.Material ~= Enum.Material.Concrete then
 			part.Material = Enum.Material.Concrete
 		end
 		n += 1
-		if n % YIELD_EVERY == 0 then task.wait() end
+		if n % YIELD_EVERY == 0 then
+			task.wait()
+		end
 	end
 	for _, part in pairs(leftWrapLookup) do
 		if part:IsA("BasePart") and part.Material ~= Enum.Material.Snow then
 			part.Material = Enum.Material.Snow
 		end
 		n += 1
-		if n % YIELD_EVERY == 0 then task.wait() end
+		if n % YIELD_EVERY == 0 then
+			task.wait()
+		end
 	end
 	for _, part in pairs(rightWrapLookup) do
 		if part:IsA("BasePart") and part.Material ~= Enum.Material.Snow then
 			part.Material = Enum.Material.Snow
 		end
 		n += 1
-		if n % YIELD_EVERY == 0 then task.wait() end
+		if n % YIELD_EVERY == 0 then
+			task.wait()
+		end
 	end
-	if map then map:SetAttribute("tileMaterialsApplied", true) end
+	if map then
+		map:SetAttribute("tileMaterialsApplied", true)
+	end
 end
 
+-- Stamp the province RECORD's fields onto its map part as Attributes.
+--
+-- OWNERSHIP-UNIFICATION NOTE (please don't "simplify" by deleting the owner/controller writes): the
+-- WorldState record is now the SINGLE SOURCE OF TRUTH for ownership. Clients read owner/controller from
+-- the replicated record (ClientStateCache), not from these attributes -- MapRenderer, NationSelection, and
+-- the province panel/tooltip are all record-driven; server writes route through WorldState.setProvinceOwnership
+-- (the chokepoint) which publishes the event that drives stampOne below. So these `owner`/`controller`
+-- attributes only ever FOLLOW the record, they never lead it -- a DERIVED, subordinate backup, not a
+-- competing channel. They are kept written because three consumers still depend on them: (1) at BOOT,
+-- ProvinceReconciler reads `owner`/`controller` to synthesise records for un-promoted Data-Editor-painted
+-- tiles (the attribute is their ONLY seed); (2) HudWiring.recordFromPart's rare cache-miss fallback (keeping
+-- them fresh keeps that fallback correct); (3) the Map Editor's paint-confirm. Never drop `province_id`.
 local function writeAttrs(part, record)
 	part:SetAttribute("province_id", record.id)
 	part:SetAttribute("province_name", record.displayCityName or record.name)
@@ -156,25 +202,63 @@ end
 local function stampTriple(mainPart, record)
 	writeAttrs(mainPart, record)
 	local lw = leftWrapLookup[mainPart.Name]
-	if lw then writeAttrs(lw, record) end
+	if lw then
+		writeAttrs(lw, record)
+	end
 	local rw = rightWrapLookup[mainPart.Name]
-	if rw then writeAttrs(rw, record) end
+	if rw then
+		writeAttrs(rw, record)
+	end
+end
+
+-- Fallback part lookup keyed by the authoritative province_id ATTRIBUTE, populated lazily. The boot
+-- lookup (partLookup, keyed by the prov_<n> name token / eu4 map) doesn't cover every province -- e.g.
+-- reconciled or late-registered tiles, or worlds where resolvePartId can't bridge the id. Without this,
+-- stampOne silently no-ops for those parts, so their map attributes never track the WorldState record:
+-- an annex/conquest updates the record but the tile keeps a stale (or nil) owner, rendering wrong on
+-- the client. Matching by province_id is always correct because writeAttrs stamps it alongside owner.
+local partByProvinceId = {}
+local function findPartByProvinceId(provinceId)
+	local cached = partByProvinceId[provinceId]
+	if cached and cached.Parent and cached:GetAttribute("province_id") == provinceId then
+		return cached
+	end
+	local map = workspace:FindFirstChild("ArtOfWarMap")
+	local main = map and map:FindFirstChild("Provinces")
+	if not main then
+		return nil
+	end
+	for _, part in ipairs(main:GetChildren()) do
+		if part:IsA("BasePart") and part:GetAttribute("province_id") == provinceId then
+			partByProvinceId[provinceId] = part
+			return part
+		end
+	end
+	return nil
 end
 
 local function stampOne(provinceId)
 	local record = ctx.WorldState.getProvince(provinceId)
-	if not record then return false end
+	if not record then
+		return false
+	end
 	local eu4Pid = resolvePartId(provinceId)
-	if not eu4Pid then return false end
-	local part = partLookup[eu4Pid]
-	if not part then return false end
+	local part = eu4Pid and partLookup[eu4Pid]
+	if not part then
+		part = findPartByProvinceId(provinceId)
+	end
+	if not part then
+		return false
+	end
 	stampTriple(part, record)
 	return true
 end
 
 local function stampUnowned()
 	local map = workspace:FindFirstChild("ArtOfWarMap")
-	if not map then return end
+	if not map then
+		return
+	end
 
 	local mainOwnerByName = {}
 
@@ -197,7 +281,9 @@ local function stampUnowned()
 				end
 				mainOwnerByName[part.Name] = owner
 				n += 1
-				if n % YIELD_EVERY == 0 then task.wait() end
+				if n % YIELD_EVERY == 0 then
+					task.wait()
+				end
 			end
 		end
 	end
@@ -218,41 +304,59 @@ local function stampUnowned()
 					part:SetAttribute("has_shipyard", false)
 				end
 				n += 1
-				if n % YIELD_EVERY == 0 then task.wait() end
+				if n % YIELD_EVERY == 0 then
+					task.wait()
+				end
 			end
 		end
 	end
 
 	local lw = map:FindFirstChild("LeftWrap")
-	if lw and lw:FindFirstChild("Provinces") then propagateWrap(lw.Provinces) end
+	if lw and lw:FindFirstChild("Provinces") then
+		propagateWrap(lw.Provinces)
+	end
 	local rw = map:FindFirstChild("RightWrap")
-	if rw and rw:FindFirstChild("Provinces") then propagateWrap(rw.Provinces) end
+	if rw and rw:FindFirstChild("Provinces") then
+		propagateWrap(rw.Provinces)
+	end
 end
 
 local function applyTileOwnershipOverlay()
 	local services = game:GetService("ServerStorage"):FindFirstChild("Services")
 	local overlayMod = services and services:FindFirstChild("DataOverlay")
-	if not overlayMod then return 0 end
+	if not overlayMod then
+		return 0
+	end
 	local ok, overlay = pcall(require, overlayMod)
-	if not ok or not overlay or not overlay.getTileOverrides then return 0 end
+	if not ok or not overlay or not overlay.getTileOverrides then
+		return 0
+	end
 	local overrides = overlay.getTileOverrides()
 	local applied = 0
 	local map = workspace:FindFirstChild("ArtOfWarMap")
-	if not map then return 0 end
+	if not map then
+		return 0
+	end
 	local main = map:FindFirstChild("Provinces")
-	if not main then return 0 end
+	if not main then
+		return 0
+	end
 
 	local countryCache = {}
 	local function lookup(tag)
 		local hit = countryCache[tag]
-		if hit ~= nil then return hit end
+		if hit ~= nil then
+			return hit
+		end
 		local country = ctx and ctx.WorldState and ctx.WorldState.getCountry and ctx.WorldState.getCountry(tag)
 		countryCache[tag] = country or false
 		return country
 	end
 
 	local function stampCountryAttrs(part, tag)
-		if not part then return end
+		if not part then
+			return
+		end
 		local country = lookup(tag)
 		if not country then
 			part:SetAttribute("owner", "NONE")
@@ -280,7 +384,9 @@ local function applyTileOwnershipOverlay()
 				applied += 1
 			end
 			n += 1
-			if n % YIELD_EVERY == 0 then task.wait() end
+			if n % YIELD_EVERY == 0 then
+				task.wait()
+			end
 		end
 	end
 	return applied
@@ -291,19 +397,31 @@ function ProvinceStamper.applyTileOwnership()
 end
 
 function ProvinceStamper.setTileOwner(partName, ownerTag)
-	if type(partName) ~= "string" or partName == "" then return false end
+	if type(partName) ~= "string" or partName == "" then
+		return false
+	end
 	local map = workspace:FindFirstChild("ArtOfWarMap")
-	if not map then return false end
+	if not map then
+		return false
+	end
 	local main = map:FindFirstChild("Provinces")
-	if not main then return false end
+	if not main then
+		return false
+	end
 	local part = main:FindFirstChild(partName)
-	if not part or not part:IsA("BasePart") then return false end
+	if not part or not part:IsA("BasePart") then
+		return false
+	end
 	local effective = (ownerTag == nil or ownerTag == "") and "NONE" or ownerTag
 	part:SetAttribute("owner", effective)
 	local lw = leftWrapLookup[partName]
-	if lw then lw:SetAttribute("owner", effective) end
+	if lw then
+		lw:SetAttribute("owner", effective)
+	end
 	local rw = rightWrapLookup[partName]
-	if rw then rw:SetAttribute("owner", effective) end
+	if rw then
+		rw:SetAttribute("owner", effective)
+	end
 	return true
 end
 
@@ -327,7 +445,9 @@ function ProvinceStamper.stamp()
 		else
 			unmatched += 1
 		end
-		if processed % YIELD_EVERY == 0 then task.wait() end
+		if processed % YIELD_EVERY == 0 then
+			task.wait()
+		end
 	end
 	stampUnowned()
 	applyTileOwnershipOverlay()
@@ -335,7 +455,9 @@ function ProvinceStamper.stamp()
 		warn(string.format("[ProvinceStamper] %d seed provinces had no matching map part", unmatched))
 	end
 	local map = workspace:FindFirstChild("ArtOfWarMap")
-	if map then map:SetAttribute("provincesStamped", true) end
+	if map then
+		map:SetAttribute("provincesStamped", true)
+	end
 	return stamped
 end
 
@@ -344,7 +466,9 @@ end
 -- all ~2,800 provinces on every retry. Assumes lookups are already built (stamp() ran at boot).
 function ProvinceStamper.stampMissing()
 	refreshMode()
-	if next(partLookup) == nil then buildLookups() end
+	if next(partLookup) == nil then
+		buildLookups()
+	end
 	local stamped, processed = 0, 0
 	for seedId, record in ctx.WorldState.allProvinces() do
 		processed += 1
@@ -354,7 +478,9 @@ function ProvinceStamper.stampMissing()
 			stampTriple(part, record)
 			stamped += 1
 		end
-		if processed % YIELD_EVERY == 0 then task.wait() end
+		if processed % YIELD_EVERY == 0 then
+			task.wait()
+		end
 	end
 	return stamped
 end
@@ -388,9 +514,13 @@ end
 function ProvinceStamper.refreshEU4Mappings()
 	local services = game:GetService("ServerStorage"):FindFirstChild("Services")
 	local overlayMod = services and services:FindFirstChild("DataOverlay")
-	if not overlayMod then return 0 end
+	if not overlayMod then
+		return 0
+	end
 	local ok, overlay = pcall(require, overlayMod)
-	if not ok or not overlay or not overlay.getEU4MapOverrides then return 0 end
+	if not ok or not overlay or not overlay.getEU4MapOverrides then
+		return 0
+	end
 	local overrides = overlay.getEU4MapOverrides()
 	local added = 0
 	for k, v in pairs(overrides or {}) do
@@ -410,7 +540,9 @@ function ProvinceStamper.register(context)
 		stampOne = stampOne,
 		stamp = ProvinceStamper.stamp,
 		stampMissing = ProvinceStamper.stampMissing,
-		isCollapsed = function() return COLLAPSED end,
+		isCollapsed = function()
+			return COLLAPSED
+		end,
 		setTileOwner = ProvinceStamper.setTileOwner,
 		applyTileOwnership = ProvinceStamper.applyTileOwnership,
 		refreshEU4Mappings = ProvinceStamper.refreshEU4Mappings,
@@ -420,15 +552,21 @@ function ProvinceStamper.register(context)
 	ctx.ProvinceStamper = ProvinceStamper.api
 
 	ctx.EventBus.subscribe(ctx.Channels.ProvinceOwnershipChanged, function(payload)
-		if not payload then return end
-		if payload.provinceId ~= nil then stampOne(payload.provinceId) end
+		if not payload then
+			return
+		end
+		if payload.provinceId ~= nil then
+			stampOne(payload.provinceId)
+		end
 		if payload.newCapitalId and payload.newCapitalId ~= payload.provinceId then
 			stampOne(payload.newCapitalId)
 		end
 	end)
 
 	ctx.EventBus.subscribe(ctx.Channels.ProvinceOccupied, function(payload)
-		if payload and payload.provinceId then stampOne(payload.provinceId) end
+		if payload and payload.provinceId then
+			stampOne(payload.provinceId)
+		end
 	end)
 end
 

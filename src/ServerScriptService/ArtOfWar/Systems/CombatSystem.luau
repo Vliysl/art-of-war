@@ -1,6 +1,8 @@
 local CombatSystem = {}
 
-local SeaNodes = require(game:GetService("ReplicatedStorage"):WaitForChild("ArtOfWar"):WaitForChild("Shared"):WaitForChild("SeaNodes"))
+local SeaNodes = require(
+	game:GetService("ReplicatedStorage"):WaitForChild("ArtOfWar"):WaitForChild("Shared"):WaitForChild("SeaNodes")
+)
 
 local ctx
 
@@ -14,7 +16,9 @@ local ctx
 local battleIdByProvince = {}
 
 local function tickBattles()
-	if not ctx.BattleManager then return end
+	if not ctx.BattleManager then
+		return
+	end
 	-- Snapshot ids to avoid mutation-during-iteration
 	local ids = {}
 	for id in ctx.WorldState.allBattles() do
@@ -22,7 +26,9 @@ local function tickBattles()
 	end
 	for _, id in ids do
 		local record = ctx.WorldState.getBattle(id)
-		if record then ctx.BattleManager.tickBattle(record) end
+		if record then
+			ctx.BattleManager.tickBattle(record)
+		end
 	end
 end
 
@@ -32,7 +38,9 @@ local function getBattleAt(provinceId)
 	local id = battleIdByProvince[provinceId]
 	if id then
 		local b = ctx.WorldState.getBattle(id)
-		if b and b.provinceId == provinceId then return b end
+		if b and b.provinceId == provinceId then
+			return b
+		end
 		battleIdByProvince[provinceId] = nil
 	end
 	return nil
@@ -48,7 +56,9 @@ end
 -- block movement.
 local function hostileArmyAt(ownerTag, provinceId)
 	local dipl = ctx.DiplomacySystem
-	if not (dipl and dipl.areAtWar) then return nil end
+	if not (dipl and dipl.areAtWar) then
+		return nil
+	end
 	for _, other in ctx.ArmySystem.armiesInProvince(provinceId) do
 		if other.ownerTag ~= ownerTag and dipl.areAtWar(ownerTag, other.ownerTag) then
 			return other
@@ -58,7 +68,9 @@ local function hostileArmyAt(ownerTag, provinceId)
 end
 
 local function isDefendedAgainst(ownerTag, provinceId)
-	if getBattleAt(provinceId) then return true end
+	if getBattleAt(provinceId) then
+		return true
+	end
 	return hostileArmyAt(ownerTag, provinceId) ~= nil
 end
 
@@ -87,12 +99,18 @@ end
 -- (BattleManager winner processing). Single engagement entry point for every attack path.
 local function engageFromAdjacent(armyId, targetProvinceId)
 	local army = ctx.WorldState.getArmy(armyId)
-	if not army then return false, "unknown_army" end
-	if army.battleId then return false, "in_battle" end
+	if not army then
+		return false, "unknown_army"
+	end
+	if army.battleId then
+		return false, "in_battle"
+	end
 	-- Sea nodes have no province record but ARE legal engagement targets (interception at
 	-- sea); without this the unknown_target guard would make sea battles unreachable.
 	local target = ctx.WorldState.getProvince(targetProvinceId)
-	if not target and not SeaNodes.isSea(targetProvinceId) then return false, "unknown_target" end
+	if not target and not SeaNodes.isSea(targetProvinceId) then
+		return false, "unknown_target"
+	end
 	local defenderTag = target and target.controllerTag
 	if not isUnowned(defenderTag) and defenderTag ~= army.ownerTag then
 		local dipl = ctx.DiplomacySystem
@@ -101,7 +119,9 @@ local function engageFromAdjacent(armyId, targetProvinceId)
 		end
 	end
 	local adjacency = ctx.AdjacencyGraph
-	if not adjacency or not adjacency.areNeighbors then return false, "no_adjacency" end
+	if not adjacency or not adjacency.areNeighbors then
+		return false, "no_adjacency"
+	end
 	if not adjacency.areNeighbors(army.provinceId, targetProvinceId) then
 		return false, "not_adjacent"
 	end
@@ -122,7 +142,9 @@ local function engageFromAdjacent(armyId, targetProvinceId)
 	end
 
 	local defenders = buildDefendersAt(targetProvinceId, army.ownerTag)
-	if #defenders == 0 then return false, "no_defenders" end
+	if #defenders == 0 then
+		return false, "no_defenders"
+	end
 
 	-- Home defense preempts offense: a draftee currently attacking ELSEWHERE (its battleId
 	-- points at another tile -- it fights from its own tile now) abandons that offensive
@@ -141,12 +163,16 @@ local function engageFromAdjacent(armyId, targetProvinceId)
 			end
 		end
 	end
-	if #drafted == 0 then return false, "no_defenders" end
+	if #drafted == 0 then
+		return false, "no_defenders"
+	end
 
 	if army.movement and ctx.MovementSystem and ctx.MovementSystem.cancelMovement then
 		ctx.MovementSystem.cancelMovement(armyId, "engaged")
 		army = ctx.WorldState.getArmy(armyId)
-		if not army then return false, "unknown_army" end
+		if not army then
+			return false, "unknown_army"
+		end
 	end
 	army.originProvinceId = army.provinceId
 	ctx.WorldState.setArmy(armyId, army)
@@ -154,7 +180,9 @@ local function engageFromAdjacent(armyId, targetProvinceId)
 	local warId = nil
 	if ctx.DiplomacySystem and ctx.DiplomacySystem.findActiveWar and not isUnowned(defenderTag) then
 		local war = ctx.DiplomacySystem.findActiveWar(army.ownerTag, defenderTag)
-		if war then warId = war.id end
+		if war then
+			warId = war.id
+		end
 	end
 	ctx.BattleManager.startBattle(targetProvinceId, { armyId }, drafted, { [armyId] = army.provinceId }, warId)
 	return true
@@ -162,10 +190,16 @@ end
 
 local function attackProvince(armyId, targetProvinceId)
 	local army = ctx.WorldState.getArmy(armyId)
-	if not army then return false, "unknown_army" end
-	if army.battleId then return false, "in_battle" end
+	if not army then
+		return false, "unknown_army"
+	end
+	if army.battleId then
+		return false, "in_battle"
+	end
 	local target = ctx.WorldState.getProvince(targetProvinceId)
-	if not target and not SeaNodes.isSea(targetProvinceId) then return false, "unknown_target" end
+	if not target and not SeaNodes.isSea(targetProvinceId) then
+		return false, "unknown_target"
+	end
 	-- Diplomacy gate: attacker must be at war with the controller (unless unowned;
 	-- sea nodes have no controller -- hostility is settled per army by the defender draft)
 	local defenderTag = target and target.controllerTag
@@ -180,7 +214,9 @@ local function attackProvince(armyId, targetProvinceId)
 	end
 	-- Adjacency
 	local adjacency = ctx.AdjacencyGraph
-	if not adjacency or not adjacency.areNeighbors then return false, "no_adjacency" end
+	if not adjacency or not adjacency.areNeighbors then
+		return false, "no_adjacency"
+	end
 	if not adjacency.areNeighbors(army.provinceId, targetProvinceId) then
 		return false, "not_adjacent"
 	end
@@ -188,13 +224,21 @@ local function attackProvince(armyId, targetProvinceId)
 	-- legacy march (walk-in -> instant capture on arrival).
 	if ctx.WorldConstants.EnableAdjacentEngagement then
 		local ok, reason = engageFromAdjacent(armyId, targetProvinceId)
-		if ok then return true end
-		if reason ~= "no_defenders" then return false, reason end
+		if ok then
+			return true
+		end
+		if reason ~= "no_defenders" then
+			return false, reason
+		end
 	end
 	-- Dispatch movement
-	if not ctx.MovementSystem or not ctx.MovementSystem.beginMove then return false, "no_movement" end
+	if not ctx.MovementSystem or not ctx.MovementSystem.beginMove then
+		return false, "no_movement"
+	end
 	local ok, reason = ctx.MovementSystem.beginMove(armyId, targetProvinceId)
-	if not ok then return false, reason end
+	if not ok then
+		return false, reason
+	end
 	return true
 end
 
@@ -206,20 +250,30 @@ end
 -- unchanged.
 local function captureIfUndefended(armyId, provinceId)
 	local C = ctx.WorldConstants
-	if not C.EnableInstantCapture then return false end
+	if not C.EnableInstantCapture then
+		return false
+	end
 	local army = ctx.WorldState.getArmy(armyId)
-	if not army or army.battleId then return false end
+	if not army or army.battleId then
+		return false
+	end
 	local prov = ctx.WorldState.getProvince(provinceId)
-	if not prov then return false end
+	if not prov then
+		return false
+	end
 	local controller = prov.controllerTag
-	if controller == army.ownerTag then return false end
+	if controller == army.ownerTag then
+		return false
+	end
 	local dipl = ctx.DiplomacySystem
 	if not isUnowned(controller) then
 		if not (dipl and dipl.areAtWar and dipl.areAtWar(army.ownerTag, controller)) then
 			return false
 		end
 	end
-	if getBattleAt(provinceId) then return false end
+	if getBattleAt(provinceId) then
+		return false
+	end
 	if dipl and dipl.areAtWar then
 		for _, other in ctx.ArmySystem.armiesInProvince(provinceId) do
 			if other.ownerTag ~= army.ownerTag and dipl.areAtWar(army.ownerTag, other.ownerTag) then
@@ -229,9 +283,15 @@ local function captureIfUndefended(armyId, provinceId)
 	end
 
 	local oldController = prov.controllerTag
-	prov.controllerTag = army.ownerTag
 	prov.occupation = nil
-	ctx.WorldState.setProvince(provinceId, prov)
+	local chokepoint = C.RecordOwnershipChokepoint
+	if chokepoint then
+		-- occupation cleared above rides the chokepoint's dirty mark; it flips the controller + publishes.
+		ctx.WorldState.setProvinceOwnership(provinceId, { controller = army.ownerTag, reason = "instant_capture" })
+	else
+		prov.controllerTag = army.ownerTag
+		ctx.WorldState.setProvince(provinceId, prov)
+	end
 
 	local fortTier = prov.effectiveFortTier or prov.fortTier or 0
 	local casualtyFrac = (C.InstantCaptureCasualtyFrac or 0.02)
@@ -244,21 +304,27 @@ local function captureIfUndefended(armyId, provinceId)
 		ctx.ArmySystem.adjustOrganization(armyId, -orgLoss)
 	end
 
-	ctx.EventBus.publish(ctx.Channels.ProvinceOccupied, {
-		provinceId = provinceId,
-		newController = army.ownerTag,
-		oldController = oldController,
-		ownerTag = prov.ownerTag,
-	})
+	if not chokepoint then
+		ctx.EventBus.publish(ctx.Channels.ProvinceOccupied, {
+			provinceId = provinceId,
+			newController = army.ownerTag,
+			oldController = oldController,
+			ownerTag = prov.ownerTag,
+		})
+	end
 	return true
 end
 
 local function onArmyArrival(armyId, provinceId)
 	local army = ctx.WorldState.getArmy(armyId)
-	if not army then return end
+	if not army then
+		return
+	end
 	local province = ctx.WorldState.getProvince(provinceId)
 	local controllerTag = province and province.controllerTag
-	if not ctx.BattleManager or not ctx.ArmySystem then return end
+	if not ctx.BattleManager or not ctx.ArmySystem then
+		return
+	end
 
 	-- Existing battle at province?
 	local existing = getBattleAt(provinceId)
@@ -271,7 +337,9 @@ local function onArmyArrival(armyId, provinceId)
 		local function sideHas(ids)
 			for _, id in ipairs(ids or {}) do
 				local m = ctx.WorldState.getArmy(id)
-				if m and m.ownerTag == army.ownerTag then return true end
+				if m and m.ownerTag == army.ownerTag then
+					return true
+				end
 			end
 			return false
 		end
@@ -300,8 +368,13 @@ local function onArmyArrival(armyId, provinceId)
 		-- so a walk-on battle start should be unreachable; log if it ever fires (co-located
 		-- armies whose owners declared war mid-tick is the only known path).
 		if ctx.WorldConstants.EnableAdjacentEngagement then
-			warn(string.format("[CombatSystem] walk-on battle fallback at province %s (army %s)",
-				tostring(provinceId), tostring(armyId)))
+			warn(
+				string.format(
+					"[CombatSystem] walk-on battle fallback at province %s (army %s)",
+					tostring(provinceId),
+					tostring(armyId)
+				)
+			)
 		end
 		-- Build defender side from province controller's armies
 		local defenders = {}
@@ -318,7 +391,9 @@ local function onArmyArrival(armyId, provinceId)
 		local warId = nil
 		if ctx.DiplomacySystem and ctx.DiplomacySystem.findActiveWar and not isUnowned(controllerTag) then
 			local war = ctx.DiplomacySystem.findActiveWar(army.ownerTag, controllerTag)
-			if war then warId = war.id end
+			if war then
+				warId = war.id
+			end
 		end
 		ctx.BattleManager.startBattle(provinceId, { armyId }, defenders, origins, warId)
 		return
@@ -339,7 +414,9 @@ function CombatSystem.register(context)
 		hostileArmyAt = hostileArmyAt,
 	}
 	context.CombatSystem = api
-	for k, v in pairs(api) do CombatSystem[k] = v end
+	for k, v in pairs(api) do
+		CombatSystem[k] = v
+	end
 
 	-- perf: maintain the provinceId->battleId index from the canonical battle
 	-- lifecycle channels. These fire AFTER WorldState.setBattle (EventBus drains

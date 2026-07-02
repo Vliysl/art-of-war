@@ -153,9 +153,13 @@ local function squareButton(parent, variant, glyph, width, sizeKey, onClick, gly
 		bg.Size = UDim2.fromOffset(side, side)
 		bg.Rotation = 45
 		local corner = bg:FindFirstChildOfClass("UICorner")
-		if corner then corner:Destroy() end
+		if corner then
+			corner:Destroy()
+		end
 		local outer = bg:FindFirstChildOfClass("UIStroke")
-		if outer then outer.Thickness = 1.5 end
+		if outer then
+			outer.Thickness = 1.5
+		end
 		if variant ~= "danger" then
 			local inner = Instance.new("Frame")
 			inner.Name = "InnerBorder"
@@ -177,7 +181,9 @@ local function squareButton(parent, variant, glyph, width, sizeKey, onClick, gly
 	-- + / × from centre-anchored bars so it's perfectly centred regardless of font.
 	local lbl = btn:FindFirstChild("Label")
 	local glyphColor = (lbl and lbl.TextColor3) or Colors.TextPrimary
-	if lbl then lbl.Text = "" end
+	if lbl then
+		lbl.Text = ""
+	end
 	local gsize = glyphSize or GLYPH_SIZE
 	local barLen = math.floor(gsize * 0.42 + 0.5)
 	local barThick = math.max(1, math.floor(gsize * 0.06 + 0.5))
@@ -370,7 +376,11 @@ local function createMulti(ctx)
 
 	local body = handle.body
 	if #ownedIds == 0 then
-		ScreenKit.note(body, "None of the selected provinces are yours \u{2014} batch actions need owned, controlled land.", 1)
+		ScreenKit.note(
+			body,
+			"None of the selected provinces are yours \u{2014} batch actions need owned, controlled land.",
+			1
+		)
 	else
 		ScreenKit.section(body, string.format("Recruit in all (%d owned)", #ownedIds), 10)
 		local pool = {}
@@ -627,6 +637,42 @@ function ProvinceOverview.create(ctx)
 		-- Cores row (RoN-style): a small crest per core, GOLD-outlined for default/homeland cores and
 		-- un-outlined for acquired ones. Read from the live replicated record (prov lacks cores/claims).
 		local live = liveProvince()
+
+		-- Occupation status (occupation is NOT ownership): when the province is held by someone other than
+		-- its owner, lead with an explicit banner so the lighter map tint / stripes are never mistaken for a
+		-- conquest. If WE occupy but do not own it, spell out why Build/Recruit are unavailable (annex at peace).
+		do
+			local ownerTag = (live and live.ownerTag) or prov.ownerTag
+			local controllerTag = live and live.controllerTag
+			if controllerTag and ownerTag and controllerTag ~= ownerTag then
+				local function nameOf(tag)
+					local c = ctx.cache and ctx.cache.getCountry and ctx.cache.getCountry(tag)
+					return (c and (c.displayName or c.name)) or tag
+				end
+				local occName = nameOf(controllerTag)
+				local ownName = (ownerTag == prov.ownerTag and prov.ownerName) or nameOf(ownerTag)
+				ScreenKit.stat(body, {
+					icon = "Fort",
+					label = "Occupied by",
+					value = occName,
+					valueColor = "negative",
+					layoutOrder = -2,
+				})
+				if controllerTag == ctx.tag and ownerTag ~= ctx.tag then
+					ScreenKit.note(
+						body,
+						string.format(
+							"You occupy this province but %s still owns it. Annex it in a peace deal to build or recruit here.",
+							ownName
+						),
+						-1
+					)
+				else
+					ScreenKit.note(body, string.format("Owned by %s.", ownName), -1)
+				end
+			end
+		end
+
 		local cores = (live and live.cores) or {}
 		local defaultCores = (live and live.defaultCores) or {}
 		if #cores > 0 then
@@ -705,8 +751,12 @@ function ProvinceOverview.create(ctx)
 		ScreenKit.stat(body, { icon = "Goods", label = "Trade Good", value = val(prov.tradeGood), layoutOrder = 6 })
 		local fortTier = prov.effectiveFortTier or prov.fortTier or 0
 		local fortValue = tostring(math.floor(fortTier))
-		if WorldConstants.EnableDefenseBreakdown and prov.effectiveFortTier and prov.fortTier
-			and prov.effectiveFortTier > prov.fortTier then
+		if
+			WorldConstants.EnableDefenseBreakdown
+			and prov.effectiveFortTier
+			and prov.fortTier
+			and prov.effectiveFortTier > prov.fortTier
+		then
 			fortValue = fortValue .. "  \u{2605}capital"
 		end
 		ScreenKit.stat(body, {
@@ -752,9 +802,15 @@ function ProvinceOverview.create(ctx)
 			valueColor = "positive",
 			layoutOrder = 15,
 		})
-		-- National manpower as current / max with a bar (replaces the old static per-province baseManpower
-		-- value), mirroring the dev/infra "value/max" presentation.
-		local mpCountry = country()
+		-- This province's manpower CONTRIBUTION to its owner's national pool -- NOT the whole national pool
+		-- (which is identical on every province). Mirrors RecruitSystem.provinceManpowerContribution exactly:
+		-- max(floor(population * ManpowerPopFraction), ManpowerProvinceFloor).
+		local mpLive = liveProvince()
+		local mpPop = (mpLive and mpLive.population) or 0
+		local mpContribution = math.max(
+			math.floor(mpPop * (WorldConstants.ManpowerPopFraction or 0.15)),
+			WorldConstants.ManpowerProvinceFloor or 5000
+		)
 		local function fmtMP(n)
 			n = math.floor(tonumber(n) or 0)
 			return (n >= 1000) and string.format("%.1fK", n / 1000) or tostring(n)
@@ -762,13 +818,7 @@ function ProvinceOverview.create(ctx)
 		ScreenKit.stat(body, {
 			icon = "Manpower",
 			label = "Manpower",
-			value = mpCountry and string.format("%s / %s", fmtMP(mpCountry.manpower), fmtMP(mpCountry.manpowerCap))
-				or "\u{2014}",
-			progress = mpCountry and {
-				value = mpCountry.manpower or 0,
-				max = math.max(1, mpCountry.manpowerCap or 1),
-				color = "amber",
-			} or nil,
+			value = fmtMP(mpContribution),
 			mono = true,
 			layoutOrder = 16,
 		})
@@ -786,7 +836,13 @@ function ProvinceOverview.create(ctx)
 			if item.provinceId == prov.id then
 				local g = groups[item.unitTypeId]
 				if not g then
-					g = { unitTypeId = item.unitTypeId, count = 0, active = item, lastId = item.id, lastQueuedAt = -math.huge }
+					g = {
+						unitTypeId = item.unitTypeId,
+						count = 0,
+						active = item,
+						lastId = item.id,
+						lastQueuedAt = -math.huge,
+					}
 					groups[item.unitTypeId] = g
 					groupOrder[#groupOrder + 1] = g
 				end
@@ -822,8 +878,12 @@ function ProvinceOverview.create(ctx)
 				},
 			})
 			if fill then
-				liveBars[#liveBars + 1] =
-					{ fill = fill, live = function() return progressOf(active.queuedAt, active.completesAt) end }
+				liveBars[#liveBars + 1] = {
+					fill = fill,
+					live = function()
+						return progressOf(active.queuedAt, active.completesAt)
+					end,
+				}
 			end
 			order += 1
 		end
@@ -937,8 +997,12 @@ function ProvinceOverview.create(ctx)
 					},
 				})
 				if fill and not paused then
-					liveBars[#liveBars + 1] =
-						{ fill = fill, live = function() return progressOf(bItem.startedAt, bItem.completesAt) end }
+					liveBars[#liveBars + 1] = {
+						fill = fill,
+						live = function()
+							return progressOf(bItem.startedAt, bItem.completesAt)
+						end,
+					}
 				end
 				qo += 1
 			end

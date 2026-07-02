@@ -1095,7 +1095,9 @@ function ArmyPanel.create(ctx)
 	-- is the sole prerequisite -- Assign General / Cover Border appear ONLY once the selection is a single
 	-- group, so there is never an auto-form-then-re-invoke round trip. When ungrouped, only Form Group shows.
 	local function buildGroupBar(parent, order)
-		if not WorldConstants.EnableArmyGroups then
+		-- Group management now lives on the bottom-center card strip (ArmyGroupStrip); this in-panel bar is
+		-- the flag-off fallback. When EnableGroupCards is on, render nothing here.
+		if not WorldConstants.EnableArmyGroups or WorldConstants.EnableGroupCards then
 			return
 		end
 		local gid = currentGroupId()

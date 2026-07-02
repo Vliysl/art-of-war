@@ -1,10 +1,14 @@
-if not game:IsLoaded() then game.Loaded:Wait() end
+if not game:IsLoaded() then
+	game.Loaded:Wait()
+end
 
 local rs = game:GetService("ReplicatedStorage")
 
 local aow = rs:WaitForChild("ArtOfWar")
 local mods = aow:WaitForChild("Modules", 10)
-if not mods then return end
+if not mods then
+	return
+end
 
 -- Lock to landscape: the HUD is laid out for landscape, so portrait would break it.
 do
@@ -32,7 +36,9 @@ local function safeRequire(name)
 end
 
 local function safeCall(mod, method, ...)
-	if not mod or not mod[method] then return false end
+	if not mod or not mod[method] then
+		return false
+	end
 	local ok, err = pcall(mod[method], ...)
 	if not ok then
 		warn("[ArtOfWar] " .. method .. " failed: " .. tostring(err))
@@ -40,25 +46,29 @@ local function safeCall(mod, method, ...)
 	return ok
 end
 
-local CharacterHandler    = safeRequire("CharacterHandler")
-local CameraController    = safeRequire("CameraController")
-local MapRenderer         = safeRequire("MapRenderer")
-local MapStyling          = safeRequire("MapStyling")
+local CharacterHandler = safeRequire("CharacterHandler")
+local CameraController = safeRequire("CameraController")
+local MapRenderer = safeRequire("MapRenderer")
+local MapStyling = safeRequire("MapStyling")
 local ProvinceInteraction = safeRequire("ProvinceInteraction")
-local ClientStateCache    = safeRequire("ClientStateCache")
-local PeerVisibility      = safeRequire("PeerVisibility")
-local SprintController    = safeRequire("SprintController")
-local MapModeController   = safeRequire("MapModeController")
-local ChatCommands        = safeRequire("ChatCommands")
-local ArmyView            = safeRequire("ArmyView")
-local CombatView          = safeRequire("CombatView")
-local SimClock            = safeRequire("SimClock")
-local MoveArrowView       = safeRequire("MoveArrowView")
-local CapitalMarkerView   = safeRequire("CapitalMarkerView")
+local ClientStateCache = safeRequire("ClientStateCache")
+local PeerVisibility = safeRequire("PeerVisibility")
+local SprintController = safeRequire("SprintController")
+local MapModeController = safeRequire("MapModeController")
+local ChatCommands = safeRequire("ChatCommands")
+local ArmyView = safeRequire("ArmyView")
+local CombatView = safeRequire("CombatView")
+local SimClock = safeRequire("SimClock")
+local MoveArrowView = safeRequire("MoveArrowView")
+local CapitalMarkerView = safeRequire("CapitalMarkerView")
+local WorldConstants = require(aow:WaitForChild("Shared"):WaitForChild("WorldConstants"))
+local provinceRecolorWired = false
 
 local map = workspace:WaitForChild("ArtOfWarMap", 120)
 local provinces = map and map:WaitForChild("Provinces", 120)
-if not provinces then return end
+if not provinces then
+	return
+end
 
 local deadline = os.clock() + 60
 while #provinces:GetChildren() == 0 and os.clock() < deadline do
@@ -67,14 +77,18 @@ end
 
 safeCall(CharacterHandler, "start")
 safeCall(CameraController, "init")
-if CameraController then CameraController.disable() end
+if CameraController then
+	CameraController.disable()
+end
 safeCall(MapRenderer, "init")
 
 local countries = nil
 local countriesMod = aow:FindFirstChild("Data") and aow.Data:FindFirstChild("Countries")
 if countriesMod then
 	local ok, loaded = pcall(require, countriesMod)
-	if ok then countries = loaded end
+	if ok then
+		countries = loaded
+	end
 end
 
 local countryColors, countryNames = {}, {}
@@ -90,13 +104,20 @@ end
 local Remotes = aow:WaitForChild("Remotes")
 local StateSync = Remotes and Remotes:WaitForChild("StateSync", 120)
 local RequestFullState = Remotes and Remotes:WaitForChild("RequestFullState", 120)
+local RequestOwnershipDigest = Remotes and Remotes:WaitForChild("RequestOwnershipDigest", 120)
 
 if StateSync and ClientStateCache then
 	StateSync.OnClientEvent:Connect(function(packet)
 		ClientStateCache.applyDelta(packet)
 	end)
 else
-	warn(string.format("[ArtOfWar] StateSync wire failed: StateSync=%s cache=%s", tostring(StateSync), tostring(ClientStateCache)))
+	warn(
+		string.format(
+			"[ArtOfWar] StateSync wire failed: StateSync=%s cache=%s",
+			tostring(StateSync),
+			tostring(ClientStateCache)
+		)
+	)
 end
 
 local Hud = nil
@@ -105,7 +126,9 @@ do
 	local hudMod = uiFolder and uiFolder:FindFirstChild("Hud")
 	if hudMod then
 		local ok, loaded = pcall(require, hudMod)
-		if ok then Hud = loaded end
+		if ok then
+			Hud = loaded
+		end
 	end
 end
 
@@ -135,7 +158,9 @@ end
 local NotificationChannel = Remotes and Remotes:WaitForChild("NotificationChannel", 120)
 if NotificationChannel then
 	NotificationChannel.OnClientEvent:Connect(function(payload)
-		if type(payload) ~= "table" then return end
+		if type(payload) ~= "table" then
+			return
+		end
 		if Hud and Hud.notify then
 			Hud.notify({
 				title = payload.title,
@@ -163,7 +188,7 @@ do
 					ClientStateCache = ClientStateCache,
 					MapModeController = MapModeController,
 					ProvinceInteraction = ProvinceInteraction,
-										ArmyView = ArmyView,
+					ArmyView = ArmyView,
 					PathPreview = safeRequire("PathPreview"),
 					WaterBodies = safeRequire("WaterBodies"),
 				})
@@ -184,7 +209,9 @@ do
 	local usMod = uiFolder and uiFolder:FindFirstChild("UISound")
 	if usMod then
 		local ok, UISound = pcall(require, usMod)
-		if ok and UISound and UISound.start then pcall(UISound.start) end
+		if ok and UISound and UISound.start then
+			pcall(UISound.start)
+		end
 	end
 end
 
@@ -201,6 +228,29 @@ task.defer(function()
 		if ok and type(snapshot) == "table" then
 			ClientStateCache.applyDelta(snapshot)
 		end
+	end
+
+	-- Self-heal reconcile (OwnershipReconcile): periodically pull the compact server ownership digest and
+	-- repair any province whose cached record drifted from the server -- a backstop so a single dropped
+	-- ownership delta can never leave a tile/panel permanently stale. Cheap: the digest is owner+controller
+	-- only, and reconcileProvinces notifies ONLY the provinces that actually changed.
+	if
+		WorldConstants.OwnershipReconcile
+		and RequestOwnershipDigest
+		and ClientStateCache
+		and ClientStateCache.reconcileProvinces
+	then
+		task.spawn(function()
+			while true do
+				task.wait(15)
+				local okD, digest = pcall(function()
+					return RequestOwnershipDigest:InvokeServer()
+				end)
+				if okD and type(digest) == "table" then
+					ClientStateCache.reconcileProvinces(digest)
+				end
+			end
+		end)
 	end
 
 	local stampDeadline = os.clock() + 30
@@ -221,15 +271,41 @@ task.defer(function()
 		end
 		if next(live) ~= nil then
 			for tag in pairs(countryColors) do
-				if not live[tag] then countryColors[tag] = nil end
+				if not live[tag] then
+					countryColors[tag] = nil
+				end
 			end
 			for tag in pairs(countryNames) do
-				if not live[tag] then countryNames[tag] = nil end
+				if not live[tag] then
+					countryNames[tag] = nil
+				end
 			end
 		end
 	end
 	if MapRenderer then
-		MapRenderer.setMode("political", { countryColors = countryColors })
+		-- Record-driven political coloring (single source of truth): read ownership from the replicated
+		-- province RECORD, not the part attributes, so the map can't show a stale owner (the annex /
+		-- Mecca / Tibet divergence class). Gated by WorldConstants.RecordDrivenMapColoring; off = the
+		-- original attribute path, byte-identical.
+		local getProvinceRecord = nil
+		if WorldConstants.RecordDrivenMapColoring and ClientStateCache and ClientStateCache.getProvince then
+			getProvinceRecord = function(id)
+				return ClientStateCache.getProvince(id) or ClientStateCache.getProvince(tonumber(id))
+			end
+		end
+		MapRenderer.setMode("political", { countryColors = countryColors, getProvinceRecord = getProvinceRecord })
+		-- Record-driven mode has no per-part attribute watchers, so drive incremental recolors off the
+		-- replicated province delta. (UIController carries a copy of this wiring but is dead in the live
+		-- boot path, so it must be wired here.)
+		if getProvinceRecord and ClientStateCache.onChangePrefix and not provinceRecolorWired then
+			provinceRecolorWired = true
+			ClientStateCache.onChangePrefix("provinces", function(_, path)
+				local idStr = typeof(path) == "string" and path:match("^provinces%.([^%.]+)")
+				if idStr then
+					MapRenderer.recolorProvince(idStr)
+				end
+			end)
+		end
 	end
 	if MapStyling then
 		-- Always rebuild: buildCountryLabels self-destroys any existing folder first, and the
@@ -292,7 +368,9 @@ safeCall(CapitalMarkerView, "init")
 
 if Remotes then
 	local Command = Remotes:FindFirstChild("Command")
-	if Command then Command:FireServer("ready") end
+	if Command then
+		Command:FireServer("ready")
+	end
 end
 
 -- Hold the loading cover until the client is genuinely RENDERED, not just data-ready. The HUD is built

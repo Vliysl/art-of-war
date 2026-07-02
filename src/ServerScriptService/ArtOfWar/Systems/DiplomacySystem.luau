@@ -41,11 +41,15 @@ local function dayToSeconds(days)
 end
 
 local function findActiveWar(tagA, tagB)
-	if not tagA or not tagB or tagA == tagB then return nil end
+	if not tagA or not tagB or tagA == tagB then
+		return nil
+	end
 	for _, war in ctx.WorldState.allWars() do
 		if war.status == "active" then
-			if (war.attackerTag == tagA and war.defenderTag == tagB)
-				or (war.attackerTag == tagB and war.defenderTag == tagA) then
+			if
+				(war.attackerTag == tagA and war.defenderTag == tagB)
+				or (war.attackerTag == tagB and war.defenderTag == tagA)
+			then
 				return war
 			end
 		end
@@ -58,9 +62,13 @@ local function areAtWar(tagA, tagB)
 end
 
 local function readTruce(country, otherTag)
-	if not country or not country.truces then return nil end
+	if not country or not country.truces then
+		return nil
+	end
 	local ends = country.truces[otherTag]
-	if not ends then return nil end
+	if not ends then
+		return nil
+	end
 	if ends < now() then
 		country.truces[otherTag] = nil
 		ctx.WorldState.setCountry(country.tag, country)
@@ -92,10 +100,16 @@ end
 -- war, decayed monthly toward a baseline from historical friends/rivals.
 -- =====================================================================
 local function containsTag(list, tag)
-	if type(list) ~= "table" then return false end
-	if list[tag] ~= nil then return true end
+	if type(list) ~= "table" then
+		return false
+	end
+	if list[tag] ~= nil then
+		return true
+	end
 	for _, v in ipairs(list) do
-		if v == tag then return true end
+		if v == tag then
+			return true
+		end
 	end
 	return false
 end
@@ -103,8 +117,12 @@ end
 local function opinionBaseline(country, otherTag)
 	local C = ctx.WorldConstants
 	if country then
-		if containsTag(country.historicalFriends, otherTag) then return C.OpinionFriendBase or 50 end
-		if containsTag(country.historicalRivals, otherTag) then return C.OpinionRivalBase or -50 end
+		if containsTag(country.historicalFriends, otherTag) then
+			return C.OpinionFriendBase or 50
+		end
+		if containsTag(country.historicalRivals, otherTag) then
+			return C.OpinionRivalBase or -50
+		end
 	end
 	return 0
 end
@@ -118,28 +136,44 @@ local function getOpinion(tagA, tagB)
 end
 
 local function addOpinion(tagA, tagB, delta)
-	if not delta or delta == 0 then return end
+	if not delta or delta == 0 then
+		return
+	end
 	local a = ctx.WorldState.getCountry(tagA)
-	if not a then return end
+	if not a then
+		return
+	end
 	local C = ctx.WorldConstants
 	a.opinion = a.opinion or {}
 	local cur = a.opinion[tagB]
-	if cur == nil then cur = opinionBaseline(a, tagB) end
+	if cur == nil then
+		cur = opinionBaseline(a, tagB)
+	end
 	a.opinion[tagB] = math.clamp(cur + delta, C.OpinionMin or -200, C.OpinionMax or 200)
 	ctx.WorldState.setCountry(tagA, a)
 end
 
 local function improveRelations(fromTag, toTag)
-	if not fromTag or not toTag or fromTag == toTag then return false, "bad_target" end
+	if not fromTag or not toTag or fromTag == toTag then
+		return false, "bad_target"
+	end
 	if not ctx.WorldState.getCountry(fromTag) or not ctx.WorldState.getCountry(toTag) then
 		return false, "unknown_country"
 	end
 	local C = ctx.WorldConstants
 	local from = ctx.WorldState.getCountry(fromTag)
 	local cooldownUntil = from.opinionCooldown and from.opinionCooldown[toTag]
-	if cooldownUntil and cooldownUntil > now() then return false, "on_cooldown" end
+	if cooldownUntil and cooldownUntil > now() then
+		return false, "on_cooldown"
+	end
 	local cost = C.OpinionImproveCost or 25
-	if not (ctx.PoliticalPower and ctx.PoliticalPower.spend and ctx.PoliticalPower.spend(fromTag, cost, "improve_relations")) then
+	if
+		not (
+			ctx.PoliticalPower
+			and ctx.PoliticalPower.spend
+			and ctx.PoliticalPower.spend(fromTag, cost, "improve_relations")
+		)
+	then
 		return false, "insufficient_pp"
 	end
 	-- Re-fetch: the PP spend mutated + persisted the country, so stamp the cooldown on the fresh copy.
@@ -162,7 +196,9 @@ end
 local function decayOpinionMonthly(months)
 	local C = ctx.WorldConstants
 	local step = (C.OpinionDecayPerMonth or 3) * months
-	if step <= 0 then return end
+	if step <= 0 then
+		return
+	end
 	for tag, country in ctx.WorldState.allCountries() do
 		if country.opinion then
 			local changed = false
@@ -178,7 +214,9 @@ local function decayOpinionMonthly(months)
 					changed = true
 				end
 			end
-			if changed then ctx.WorldState.setCountry(tag, country) end
+			if changed then
+				ctx.WorldState.setCountry(tag, country)
+			end
 		end
 	end
 end
@@ -189,9 +227,13 @@ end
 -- lives in the replicated `pacts` collection (handled further down).
 -- =====================================================================
 local function readNap(country, otherTag)
-	if not country or not country.naps then return nil end
+	if not country or not country.naps then
+		return nil
+	end
 	local ends = country.naps[otherTag]
-	if not ends then return nil end
+	if not ends then
+		return nil
+	end
 	if ends < now() then
 		country.naps[otherTag] = nil
 		ctx.WorldState.setCountry(country.tag, country)
@@ -287,7 +329,9 @@ local function isSubject(tag)
 end
 
 local function setSubject(overlordTag, subjectTag)
-	if overlordTag == subjectTag then return end
+	if overlordTag == subjectTag then
+		return
+	end
 	local s = ctx.WorldState.getCountry(subjectTag)
 	if s then
 		-- Transfer of subjugation: drop the previous overlord's claim before reassigning so a subject
@@ -325,16 +369,34 @@ local function clearSubject(overlordTag, subjectTag)
 end
 
 local function declareWar(attackerTag, defenderTag)
-	if not attackerTag or not defenderTag then return false, "missing_tag" end
-	if attackerTag == defenderTag then return false, "self_war" end
-	if not ctx.WorldState.getCountry(attackerTag) then return false, "unknown_attacker" end
-	if not ctx.WorldState.getCountry(defenderTag) then return false, "unknown_defender" end
-	if findActiveWar(attackerTag, defenderTag) then return false, "already_at_war" end
+	if not attackerTag or not defenderTag then
+		return false, "missing_tag"
+	end
+	if attackerTag == defenderTag then
+		return false, "self_war"
+	end
+	if not ctx.WorldState.getCountry(attackerTag) then
+		return false, "unknown_attacker"
+	end
+	if not ctx.WorldState.getCountry(defenderTag) then
+		return false, "unknown_defender"
+	end
+	if findActiveWar(attackerTag, defenderTag) then
+		return false, "already_at_war"
+	end
 	local atkCountry = ctx.WorldState.getCountry(attackerTag)
-	if readTruce(atkCountry, defenderTag) then return false, "truce_active" end
-	if readNap(atkCountry, defenderTag) then return false, "nap_active" end
-	if areAllied(attackerTag, defenderTag) then return false, "allied" end
-	if isSubject(attackerTag) then return false, "is_subject" end
+	if readTruce(atkCountry, defenderTag) then
+		return false, "truce_active"
+	end
+	if readNap(atkCountry, defenderTag) then
+		return false, "nap_active"
+	end
+	if areAllied(attackerTag, defenderTag) then
+		return false, "allied"
+	end
+	if isSubject(attackerTag) then
+		return false, "is_subject"
+	end
 
 	local id = generateWarId(attackerTag, defenderTag)
 	local war = {
@@ -350,7 +412,10 @@ local function declareWar(attackerTag, defenderTag)
 		-- Phase 3: a direct war is the root of its own conflict; co-belligerents share this id.
 		conflictId = id,
 		callReason = "direct",
-		declaredMonthIndex = (function() local gd = ctx.TickScheduler.getGameDate and ctx.TickScheduler.getGameDate(); return gd and (gd.year * 12 + (gd.month - 1)) or nil end)(),
+		declaredMonthIndex = (function()
+			local gd = ctx.TickScheduler.getGameDate and ctx.TickScheduler.getGameDate()
+			return gd and (gd.year * 12 + (gd.month - 1)) or nil
+		end)(),
 	}
 	ctx.WorldState.setWar(id, war)
 	ctx.EventBus.publish(ctx.Channels.WarDeclared, {
@@ -369,9 +434,7 @@ end
 
 local function cancelOutstandingProposalsBetween(fromTag, toTag)
 	for _, proposal in ctx.WorldState.allPeaceProposals() do
-		if proposal.status == "pending"
-			and proposal.fromTag == fromTag
-			and proposal.toTag == toTag then
+		if proposal.status == "pending" and proposal.fromTag == fromTag and proposal.toTag == toTag then
 			proposal.status = "cancelled"
 			ctx.WorldState.setPeaceProposal(proposal.id, proposal)
 		end
@@ -393,17 +456,23 @@ local function applyTermsWhitePeace(war)
 		if province.controllerTag ~= province.ownerTag then
 			local controller = province.controllerTag
 			local owner = province.ownerTag
-			if (controller == war.attackerTag and owner == war.defenderTag)
-				or (controller == war.defenderTag and owner == war.attackerTag) then
-				local oldController = controller
-				province.controllerTag = owner
-				ctx.WorldState.setProvince(id, province)
-				ctx.EventBus.publish(ctx.Channels.ProvinceOccupied, {
-					provinceId = id,
-					newController = owner,
-					oldController = oldController,
-					ownerTag = owner,
-				})
+			if
+				(controller == war.attackerTag and owner == war.defenderTag)
+				or (controller == war.defenderTag and owner == war.attackerTag)
+			then
+				if ctx.WorldConstants.RecordOwnershipChokepoint then
+					ctx.WorldState.setProvinceOwnership(id, { controller = owner, reason = "white_peace" })
+				else
+					local oldController = controller
+					province.controllerTag = owner
+					ctx.WorldState.setProvince(id, province)
+					ctx.EventBus.publish(ctx.Channels.ProvinceOccupied, {
+						provinceId = id,
+						newController = owner,
+						oldController = oldController,
+						ownerTag = owner,
+					})
+				end
 			end
 		end
 	end
@@ -427,19 +496,25 @@ local function applyTermsAnnexOccupied(war, winnerTag, loserTag)
 	for _, id in ipairs(ids) do
 		local province = ctx.WorldState.getProvince(id)
 		if province and province.controllerTag == winnerTag and province.ownerTag == loserTag then
-			province.ownerTag = winnerTag
-			ctx.WorldState.setProvince(id, province)
-			ctx.EventBus.publish(ctx.Channels.ProvinceOwnershipChanged, {
-				provinceId = id,
-				oldOwner = loserTag,
-				newOwner = winnerTag,
-			})
+			if ctx.WorldConstants.RecordOwnershipChokepoint then
+				ctx.WorldState.setProvinceOwnership(id, { owner = winnerTag, reason = "annex_occupied" })
+			else
+				province.ownerTag = winnerTag
+				ctx.WorldState.setProvince(id, province)
+				ctx.EventBus.publish(ctx.Channels.ProvinceOwnershipChanged, {
+					provinceId = id,
+					oldOwner = loserTag,
+					newOwner = winnerTag,
+				})
+			end
 		end
 	end
 end
 
 local function endActiveBattlesBetween(tagA, tagB)
-	if not ctx.BattleManager then return end
+	if not ctx.BattleManager then
+		return
+	end
 	local toEnd = {}
 	for id, battle in ctx.WorldState.allBattles() do
 		-- End if any attacker is tagA and any defender is tagB, or vice versa
@@ -447,7 +522,8 @@ local function endActiveBattlesBetween(tagA, tagB)
 		for _, armyId in battle.attackerArmyIds do
 			local army = ctx.WorldState.getArmy(armyId)
 			if army and (army.ownerTag == tagA or army.ownerTag == tagB) then
-				relevant = true; break
+				relevant = true
+				break
 			end
 		end
 		if relevant then
@@ -456,19 +532,25 @@ local function endActiveBattlesBetween(tagA, tagB)
 	end
 	for _, id in toEnd do
 		local b = ctx.WorldState.getBattle(id)
-		if b then ctx.BattleManager.endBattle(b, nil, "draw_war_ended") end
+		if b then
+			ctx.BattleManager.endBattle(b, nil, "draw_war_ended")
+		end
 	end
 end
 
 local function cancelStaleAttackMoves(tagA, tagB)
-	if not ctx.MovementSystem then return end
+	if not ctx.MovementSystem then
+		return
+	end
 	for armyId, army in ctx.WorldState.allArmies() do
 		if army.movement then
 			local target = ctx.WorldState.getProvince(army.movement.toProvinceId)
 			if target then
 				local toController = target.controllerTag
-				if (army.ownerTag == tagA and toController == tagB)
-					or (army.ownerTag == tagB and toController == tagA) then
+				if
+					(army.ownerTag == tagA and toController == tagB)
+					or (army.ownerTag == tagB and toController == tagA)
+				then
 					ctx.MovementSystem.cancelMovement(armyId, "war_ended")
 				end
 			end
@@ -481,7 +563,9 @@ end
 -- route toward -- beginMovePath re-applies the real traversability/war gating leg by leg.
 local function nearestControlledProvince(ownerTag, fromId)
 	local adj = ctx.AdjacencyGraph
-	if not adj or not adj.getNeighbors then return nil end
+	if not adj or not adj.getNeighbors then
+		return nil
+	end
 	local visited = { [fromId] = true }
 	local frontier = { fromId }
 	while #frontier > 0 do
@@ -507,7 +591,9 @@ end
 -- back to their nearest controlled province. Idle/disengaged armies only (battles were already
 -- ended above); if no home is reachable the army is left in place rather than stranded-disbanded.
 local function returnTrespassers(tagA, tagB)
-	if not ctx.MovementSystem or not ctx.MovementSystem.beginMovePath then return end
+	if not ctx.MovementSystem or not ctx.MovementSystem.beginMovePath then
+		return
+	end
 	for armyId, army in ctx.WorldState.allArmies() do
 		if not army.battleId and not army.movement and (army.ownerTag == tagA or army.ownerTag == tagB) then
 			local prov = ctx.WorldState.getProvince(army.provinceId)
@@ -529,7 +615,8 @@ local function warHasHuman(war)
 	-- so without this flag a player who disconnects mid-war could be auto-peaced/annexed while away
 	-- (the sim keeps resolving the war). The flag is stamped by stampHumanWars (each Diplomacy tick,
 	-- while a belligerent is connected) and is never cleared.
-	return war ~= nil and (war.humanBelligerent == true or isClaimedTag(war.attackerTag) or isClaimedTag(war.defenderTag))
+	return war ~= nil
+		and (war.humanBelligerent == true or isClaimedTag(war.attackerTag) or isClaimedTag(war.defenderTag))
 end
 
 -- Persist "this war involves a human" onto any active war that currently has a connected belligerent,
@@ -537,8 +624,11 @@ end
 -- Diplomacy tick. AI-vs-AI wars never get the flag, so they still auto-resolve.
 local function stampHumanWars()
 	for id, war in ctx.WorldState.allWars() do
-		if war.status == "active" and not war.humanBelligerent
-			and (isClaimedTag(war.attackerTag) or isClaimedTag(war.defenderTag)) then
+		if
+			war.status == "active"
+			and not war.humanBelligerent
+			and (isClaimedTag(war.attackerTag) or isClaimedTag(war.defenderTag))
+		then
 			war.humanBelligerent = true
 			ctx.WorldState.setWar(id, war)
 		end
@@ -561,11 +651,15 @@ end
 local function offerPeaceToHuman(war, terms)
 	local aHuman = isClaimedTag(war.attackerTag)
 	local dHuman = isClaimedTag(war.defenderTag)
-	if aHuman and dHuman then return end
+	if aHuman and dHuman then
+		return
+	end
 	-- Flagged human-involved (warHasHuman) but NEITHER side is currently connected: the human is offline.
 	-- HOLD the war (do not conclude, do not offer) -- proposePeace to an offline tag is treated as AI and
 	-- would auto-accept, concluding the war behind the disconnected player's back. The war waits for them.
-	if not aHuman and not dHuman then return end
+	if not aHuman and not dHuman then
+		return
+	end
 	local human = aHuman and war.attackerTag or war.defenderTag
 	local ai = aHuman and war.defenderTag or war.attackerTag
 	local termType = terms and terms.type or "white_peace"
@@ -573,11 +667,15 @@ local function offerPeaceToHuman(war, terms)
 	if (termType == "annex_occupied" or termType == "vassalize") and winner == human then
 		return
 	end
-	if hasPendingProposalForWar(war.id, human) then return end
+	if hasPendingProposalForWar(war.id, human) then
+		return
+	end
 	-- Cooldown so a repeatedly-tripped forced peace (winning battle after battle at max war score) does
 	-- not re-pop the modal on every event after the player rejects an offer.
 	local cd = ctx.WorldConstants.PeaceProposalLifetimeSeconds or 60
-	if war.autoPeaceOfferAt and (now() - war.autoPeaceOfferAt) < cd then return end
+	if war.autoPeaceOfferAt and (now() - war.autoPeaceOfferAt) < cd then
+		return
+	end
 	war.autoPeaceOfferAt = now()
 	ctx.WorldState.setWar(war.id, war)
 	local offerTerms
@@ -613,13 +711,19 @@ local function conferenceDemandCost(demand, winnerTag, loserTag)
 		return C.PeaceVassalizeCost or 90
 	elseif t == "take_province" then
 		local p = ctx.WorldState.getProvince(demand.provinceId)
-		if not p or p.ownerTag ~= loserTag then return math.huge end -- not the loser's -> not takeable
+		if not p or p.ownerTag ~= loserTag then
+			return math.huge
+		end -- not the loser's -> not takeable
 		local cost = C.PeaceTakeProvinceCost or 12
 		-- Cores/claims only modify cost once the cores phase is enabled (mirrors hasClaimOn's gate), so the
 		-- surcharge/discount stay inert -- and match the client preview -- while EnableCores is off.
 		if C.EnableCores then
-			if provinceHasTag(p.cores, loserTag) then cost *= (C.PeaceCoreMultiplier or 1.5) end
-			if provinceHasTag(p.claims, winnerTag) then cost *= (C.PeaceClaimCostDiscount or 0.7) end
+			if provinceHasTag(p.cores, loserTag) then
+				cost *= (C.PeaceCoreMultiplier or 1.5)
+			end
+			if provinceHasTag(p.claims, winnerTag) then
+				cost *= (C.PeaceClaimCostDiscount or 0.7)
+			end
 		end
 		return cost
 	end
@@ -642,20 +746,34 @@ end
 local function takeConferenceProvince(winnerTag, loserTag, provinceId)
 	local p = ctx.WorldState.getProvince(provinceId)
 	if not p or p.ownerTag ~= loserTag then
-		warn(string.format("[Diplomacy] takeConferenceProvince skipped: province %s no longer owned by %s",
-			tostring(provinceId), tostring(loserTag)))
+		warn(
+			string.format(
+				"[Diplomacy] takeConferenceProvince skipped: province %s no longer owned by %s",
+				tostring(provinceId),
+				tostring(loserTag)
+			)
+		)
 		return
 	end
-	p.ownerTag = winnerTag
-	if p.controllerTag == loserTag then
-		p.controllerTag = winnerTag
+	if ctx.WorldConstants.RecordOwnershipChokepoint then
+		-- Only take the controller if the loser still occupies it (else an enemy occupier keeps it).
+		local controller = (p.controllerTag == loserTag) and winnerTag or nil
+		ctx.WorldState.setProvinceOwnership(
+			provinceId,
+			{ owner = winnerTag, controller = controller, reason = "conference" }
+		)
+	else
+		p.ownerTag = winnerTag
+		if p.controllerTag == loserTag then
+			p.controllerTag = winnerTag
+		end
+		ctx.WorldState.setProvince(provinceId, p)
+		ctx.EventBus.publish(ctx.Channels.ProvinceOwnershipChanged, {
+			provinceId = provinceId,
+			oldOwner = loserTag,
+			newOwner = winnerTag,
+		})
 	end
-	ctx.WorldState.setProvince(provinceId, p)
-	ctx.EventBus.publish(ctx.Channels.ProvinceOwnershipChanged, {
-		provinceId = provinceId,
-		oldOwner = loserTag,
-		newOwner = winnerTag,
-	})
 end
 
 -- Apply a conference's demands, re-validating the STORED total vs the live score (no recompute).
@@ -670,8 +788,12 @@ local function applyConference(war, winnerTag, loserTag, terms, warId)
 		-- off the stale stamped cost. Unknown/ineligible demands return math.huge from conferenceDemandCost.
 		local liveCost = conferenceDemandCost(d, winnerTag, loserTag)
 		if liveCost == math.huge then
-			warn(string.format("[Diplomacy] applyConference skipped demand '%s' (live cost is impossible)",
-				tostring(d.type)))
+			warn(
+				string.format(
+					"[Diplomacy] applyConference skipped demand '%s' (live cost is impossible)",
+					tostring(d.type)
+				)
+			)
 		elseif d.type == "annex_all" then
 			if ctx.WorldConstants.EnableFullAnnex and not isClaimedTag(loserTag) then
 				annexCountry(winnerTag, loserTag, warId)
@@ -685,9 +807,13 @@ local function applyConference(war, winnerTag, loserTag, terms, warId)
 		end
 	end
 	-- Zombie cleanup: an AI loser reduced to 0 provinces (and not already deleted) is removed.
-	if ctx.WorldConstants.EnableFullAnnex and not isClaimedTag(loserTag)
+	if
+		ctx.WorldConstants.EnableFullAnnex
+		and not isClaimedTag(loserTag)
 		and ctx.WorldState.getCountry(loserTag)
-		and ctx.ProvinceRegistry and #ctx.ProvinceRegistry.byOwner(loserTag) == 0 then
+		and ctx.ProvinceRegistry
+		and #ctx.ProvinceRegistry.byOwner(loserTag) == 0
+	then
 		annexCountry(winnerTag, loserTag, warId)
 	end
 	return true
@@ -695,7 +821,9 @@ end
 
 local function endWar(warId, terms, opts)
 	local war = ctx.WorldState.getWar(warId)
-	if not war or war.status ~= "active" then return false, "war_not_active" end
+	if not war or war.status ~= "active" then
+		return false, "war_not_active"
+	end
 
 	-- Player-consent gate (see helpers above): unless this is an explicit player decision
 	-- (opts.consented -- set by acceptPeace, or by the AI accepting the player's OWN offer), a war with
@@ -720,8 +848,12 @@ local function endWar(warId, terms, opts)
 		applyTermsAnnexOccupied(war, winner, loser)
 		-- Zombie cleanup: an AI loser reduced to 0 owned provinces is deleted outright, so it can't
 		-- linger owning un-occupied land (the old bug). Humans are never auto-deleted.
-		if ctx.WorldConstants.EnableFullAnnex and not isClaimedTag(loser)
-			and ctx.ProvinceRegistry and #ctx.ProvinceRegistry.byOwner(loser) == 0 then
+		if
+			ctx.WorldConstants.EnableFullAnnex
+			and not isClaimedTag(loser)
+			and ctx.ProvinceRegistry
+			and #ctx.ProvinceRegistry.byOwner(loser) == 0
+		then
 			annexCountry(winner, loser, warId)
 		end
 	elseif termType == "annex_all" then
@@ -781,7 +913,9 @@ local function endWar(warId, terms, opts)
 end
 
 function isClaimedTag(tag) -- fills the forward-declared upvalue (do NOT add `local`)
-	return ctx.PlayerAuthority ~= nil and ctx.PlayerAuthority.playerFor ~= nil and ctx.PlayerAuthority.playerFor(tag) ~= nil
+	return ctx.PlayerAuthority ~= nil
+		and ctx.PlayerAuthority.playerFor ~= nil
+		and ctx.PlayerAuthority.playerFor(tag) ~= nil
 end
 
 local function occupiedProvinceCount(occupierTag, ownerTag)
@@ -812,7 +946,9 @@ end
 
 -- Decisive-victory auto-end at +/-WarScoreForcedPeace (winner dictates terms).
 local function forcePeace(war, winnerTag)
-	if not war or war.status ~= "active" then return end
+	if not war or war.status ~= "active" then
+		return
+	end
 	local loserTag = (winnerTag == war.attackerTag) and war.defenderTag or war.attackerTag
 	local terms
 	if occupiedProvinceCount(winnerTag, loserTag) > 0 then
@@ -824,7 +960,9 @@ local function forcePeace(war, winnerTag)
 end
 
 local function checkForcedPeace(war)
-	if not war or war.status ~= "active" then return end
+	if not war or war.status ~= "active" then
+		return
+	end
 	local threshold = ctx.WorldConstants.WarScoreForcedPeace or 100
 	local s = war.score or 0
 	if s >= threshold then
@@ -837,10 +975,14 @@ end
 -- Detect a naval battle from a resolved-battle payload (any surviving naval formation).
 local function battlePayloadIsNaval(payload)
 	local function anyNaval(ids)
-		if not ids then return false end
+		if not ids then
+			return false
+		end
 		for _, aid in ipairs(ids) do
 			local a = ctx.WorldState.getArmy(aid)
-			if a and a.domain == "naval" then return true end
+			if a and a.domain == "naval" then
+				return true
+			end
 		end
 		return false
 	end
@@ -866,11 +1008,17 @@ local function applyBattleScore(war, winnerTag, loserTag, delta)
 end
 
 local function onBattleResolved(payload)
-	if not payload then return end
+	if not payload then
+		return
+	end
 	local winnerTag, loserTag = payload.winnerTag, payload.loserTag
-	if not winnerTag or not loserTag then return end -- draw / war-end teardown
+	if not winnerTag or not loserTag then
+		return
+	end -- draw / war-end teardown
 	local war = (payload.warId and ctx.WorldState.getWar(payload.warId)) or findActiveWar(winnerTag, loserTag)
-	if not war or war.status ~= "active" then return end
+	if not war or war.status ~= "active" then
+		return
+	end
 	local C = ctx.WorldConstants
 	local delta = battlePayloadIsNaval(payload) and (C.WarScoreNavalWin or 8) or (C.WarScoreBattleWin or 5)
 	applyBattleScore(war, winnerTag, loserTag, delta)
@@ -879,25 +1027,39 @@ end
 -- Phase 6: naval battles share the war-score model. NavalBattleResolved carries
 -- attackerTag/defenderTag (fleet owners) + winner in {attacker,defender,mutual}.
 local function onNavalBattleResolved(payload)
-	if not payload then return end
+	if not payload then
+		return
+	end
 	local winner = payload.winner
-	if winner ~= "attacker" and winner ~= "defender" then return end -- skip mutual/unknown
+	if winner ~= "attacker" and winner ~= "defender" then
+		return
+	end -- skip mutual/unknown
 	local aTag, dTag = payload.attackerTag, payload.defenderTag
-	if not aTag or not dTag then return end
+	if not aTag or not dTag then
+		return
+	end
 	local war = findActiveWar(aTag, dTag)
-	if not war or war.status ~= "active" then return end
+	if not war or war.status ~= "active" then
+		return
+	end
 	local winnerTag = (winner == "attacker") and aTag or dTag
-	local loserTag  = (winner == "attacker") and dTag or aTag
+	local loserTag = (winner == "attacker") and dTag or aTag
 	applyBattleScore(war, winnerTag, loserTag, ctx.WorldConstants.WarScoreNavalWin or 8)
 end
 
 local function onProvinceOccupied(payload)
-	if not payload then return end
+	if not payload then
+		return
+	end
 	local newController, ownerTag = payload.newController, payload.ownerTag
 	-- Skip peace-deal reversions (province returned to owner); only score hostile takes.
-	if not newController or not ownerTag or newController == ownerTag then return end
+	if not newController or not ownerTag or newController == ownerTag then
+		return
+	end
 	local war = findActiveWar(newController, ownerTag)
-	if not war or war.status ~= "active" then return end
+	if not war or war.status ~= "active" then
+		return
+	end
 	local C = ctx.WorldConstants
 	local delta = C.WarScoreOccupyProvince or 8
 	if newController == war.attackerTag and ownerTag == war.defenderTag then
@@ -922,7 +1084,8 @@ local function aiWouldAccept(war, fromTag, toTag, terms)
 	local C = ctx.WorldConstants
 	local attackerPOV = war.score or 0
 	local recipientScore = (toTag == war.attackerTag) and attackerPOV or -attackerPOV
-	local recipientExhaustion = (toTag == war.attackerTag) and (war.attackerExhaustion or 0) or (war.defenderExhaustion or 0)
+	local recipientExhaustion = (toTag == war.attackerTag) and (war.attackerExhaustion or 0)
+		or (war.defenderExhaustion or 0)
 	local willingness = -recipientScore + recipientExhaustion * (C.PeaceAIExhaustionWeight or 0.5)
 	local cost
 	if terms.type == "annex_occupied" then
@@ -950,7 +1113,9 @@ local function accrueMonthlyAndResolve(currentMonthIndex, months)
 	local stalemateMonths = (C.WarStalemateYears or 5) * 12
 	local ids = {}
 	for id, war in ctx.WorldState.allWars() do
-		if war.status == "active" then table.insert(ids, id) end
+		if war.status == "active" then
+			table.insert(ids, id)
+		end
 	end
 	for _, id in ipairs(ids) do
 		local war = ctx.WorldState.getWar(id)
@@ -967,28 +1132,59 @@ local function accrueMonthlyAndResolve(currentMonthIndex, months)
 	end
 end
 
--- A nation with no owned provinces AND no armies has been fully knocked out -- it has no
--- capacity to resist, so it must accept whatever the victor offers (human or AI alike).
+-- A nation that can no longer resist -- no armies left AND it controls none of its own territory --
+-- has been knocked out, so it must accept whatever the victor offers (human or AI alike). Occupation
+-- flips controllerTag, NOT ownerTag, so a nation whose entire homeland is occupied still "owns" that
+-- land but controls none of it: that counts as capitulated too (the France-occupies-Lorraine gap --
+-- the old check only looked at ownership, so an occupied-but-un-annexed nation could still refuse).
 local function isFullyCapitulated(tag)
-	if ctx.ProvinceRegistry and ctx.ProvinceRegistry.byOwner then
-		if #ctx.ProvinceRegistry.byOwner(tag) > 0 then return false end
+	-- Any surviving army anywhere means it can still fight.
+	if ctx.ArmySystem and ctx.ArmySystem.armiesOfOwner then
+		if #ctx.ArmySystem.armiesOfOwner(tag) > 0 then
+			return false
+		end
 	else
-		for _, prov in ctx.WorldState.allProvinces() do
-			if prov.ownerTag == tag then return false end
+		for _, army in ctx.WorldState.allArmies() do
+			if army.ownerTag == tag then
+				return false
+			end
 		end
 	end
-	if ctx.ArmySystem and ctx.ArmySystem.armiesOfOwner then
-		if #ctx.ArmySystem.armiesOfOwner(tag) > 0 then return false end
+	-- Holds (controls) any province it owns -> still has a homeland base to resist from. controllerTag
+	-- nil defaults to the owner, so guard for that.
+	if ctx.ProvinceRegistry and ctx.ProvinceRegistry.byOwner then
+		for _, id in ipairs(ctx.ProvinceRegistry.byOwner(tag)) do
+			local prov = ctx.WorldState.getProvince(id)
+			if prov and (prov.controllerTag or prov.ownerTag) == tag then
+				return false
+			end
+		end
+	else
+		for _, prov in ctx.WorldState.allProvinces() do
+			if prov.ownerTag == tag and (prov.controllerTag or prov.ownerTag) == tag then
+				return false
+			end
+		end
 	end
 	return true
 end
 
 function proposePeace(fromTag, toTag, terms) -- fills the forward-declared upvalue (do NOT add local)
-	if not fromTag or not toTag then return false, nil, "missing_tag" end
+	if not fromTag or not toTag then
+		return false, nil, "missing_tag"
+	end
 	local war = findActiveWar(fromTag, toTag)
-	if not war then return false, nil, "no_war" end
+	if not war then
+		return false, nil, "no_war"
+	end
 	terms = terms or { type = "white_peace" }
-	if terms.type ~= "white_peace" and terms.type ~= "annex_occupied" and terms.type ~= "vassalize" and terms.type ~= "annex_all" and terms.type ~= "conference" then
+	if
+		terms.type ~= "white_peace"
+		and terms.type ~= "annex_occupied"
+		and terms.type ~= "vassalize"
+		and terms.type ~= "annex_all"
+		and terms.type ~= "conference"
+	then
 		return false, nil, "bad_terms"
 	end
 	-- Stamp proposer for annex resolution
@@ -1078,9 +1274,15 @@ end
 
 local function acceptPeace(proposalId, byTag)
 	local proposal = ctx.WorldState.getPeaceProposal(proposalId)
-	if not proposal then return false, "no_proposal" end
-	if proposal.status ~= "pending" then return false, "not_pending" end
-	if proposal.toTag ~= byTag then return false, "not_recipient" end
+	if not proposal then
+		return false, "no_proposal"
+	end
+	if proposal.status ~= "pending" then
+		return false, "not_pending"
+	end
+	if proposal.toTag ~= byTag then
+		return false, "not_recipient"
+	end
 	proposal.status = "accepted"
 	ctx.WorldState.setPeaceProposal(proposalId, proposal)
 	endWar(proposal.warId, proposal.terms, { consented = true }) -- explicit player decision (AcceptPeace)
@@ -1089,9 +1291,15 @@ end
 
 local function rejectPeace(proposalId, byTag)
 	local proposal = ctx.WorldState.getPeaceProposal(proposalId)
-	if not proposal then return false, "no_proposal" end
-	if proposal.status ~= "pending" then return false, "not_pending" end
-	if proposal.toTag ~= byTag then return false, "not_recipient" end
+	if not proposal then
+		return false, "no_proposal"
+	end
+	if proposal.status ~= "pending" then
+		return false, "not_pending"
+	end
+	if proposal.toTag ~= byTag then
+		return false, "not_recipient"
+	end
 	proposal.status = "rejected"
 	ctx.WorldState.setPeaceProposal(proposalId, proposal)
 	ctx.EventBus.publish(ctx.Channels.PeaceProposalRejected, {
@@ -1104,9 +1312,15 @@ end
 
 local function cancelPeaceProposal(proposalId, byTag)
 	local proposal = ctx.WorldState.getPeaceProposal(proposalId)
-	if not proposal then return false, "no_proposal" end
-	if proposal.status ~= "pending" then return false, "not_pending" end
-	if proposal.fromTag ~= byTag then return false, "not_proposer" end
+	if not proposal then
+		return false, "no_proposal"
+	end
+	if proposal.status ~= "pending" then
+		return false, "not_pending"
+	end
+	if proposal.fromTag ~= byTag then
+		return false, "not_proposer"
+	end
 	proposal.status = "cancelled"
 	ctx.WorldState.setPeaceProposal(proposalId, proposal)
 	ctx.EventBus.publish(ctx.Channels.PeaceProposalCancelled, {
@@ -1203,7 +1417,9 @@ local function activateNap(pact)
 end
 
 local function proposeNap(fromTag, toTag)
-	if hasNap(fromTag, toTag) then return false, nil, "already_nap" end
+	if hasNap(fromTag, toTag) then
+		return false, nil, "already_nap"
+	end
 	cancelOutstandingPactsBetween(fromTag, toTag, "nap")
 	local C = ctx.WorldConstants
 	local id = generatePactId(fromTag, toTag)
@@ -1247,10 +1463,14 @@ local function proposeNap(fromTag, toTag)
 end
 
 local function guaranteeIndependence(guarantorTag, protectedTag)
-	if isGuaranteeing(guarantorTag, protectedTag) then return false, "already_guaranteed" end
+	if isGuaranteeing(guarantorTag, protectedTag) then
+		return false, "already_guaranteed"
+	end
 	local g = ctx.WorldState.getCountry(guarantorTag)
 	local p = ctx.WorldState.getCountry(protectedTag)
-	if not g or not p then return false, "unknown_country" end
+	if not g or not p then
+		return false, "unknown_country"
+	end
 	g.guarantees = g.guarantees or {}
 	g.guarantees[protectedTag] = true
 	ctx.WorldState.setCountry(guarantorTag, g)
@@ -1268,7 +1488,9 @@ local function guaranteeIndependence(guarantorTag, protectedTag)
 end
 
 local function revokeGuarantee(guarantorTag, protectedTag)
-	if not isGuaranteeing(guarantorTag, protectedTag) then return false, "not_guaranteeing" end
+	if not isGuaranteeing(guarantorTag, protectedTag) then
+		return false, "not_guaranteeing"
+	end
 	local g = ctx.WorldState.getCountry(guarantorTag)
 	if g and g.guarantees then
 		g.guarantees[protectedTag] = nil
@@ -1301,7 +1523,9 @@ local function activateAlliance(pact)
 end
 
 local function proposeAlliance(fromTag, toTag)
-	if areAllied(fromTag, toTag) then return false, nil, "already_allied" end
+	if areAllied(fromTag, toTag) then
+		return false, nil, "already_allied"
+	end
 	cancelOutstandingPactsBetween(fromTag, toTag, "alliance")
 	local C = ctx.WorldConstants
 	local id = generatePactId(fromTag, toTag)
@@ -1344,7 +1568,9 @@ local function proposeAlliance(fromTag, toTag)
 end
 
 local function breakAlliance(fromTag, otherTag)
-	if not areAllied(fromTag, otherTag) then return false, "not_allied" end
+	if not areAllied(fromTag, otherTag) then
+		return false, "not_allied"
+	end
 	clearAlliance(fromTag, otherTag)
 	local penalty = ctx.WorldConstants.AllianceBreakPenalty or 60
 	addOpinion(fromTag, otherTag, -penalty)
@@ -1358,7 +1584,9 @@ local function breakAlliance(fromTag, otherTag)
 end
 
 local function releaseSubject(overlordTag, subjectTag)
-	if overlordOf(subjectTag) ~= overlordTag then return false, "not_your_subject" end
+	if overlordOf(subjectTag) ~= overlordTag then
+		return false, "not_your_subject"
+	end
 	clearSubject(overlordTag, subjectTag)
 	addOpinion(subjectTag, overlordTag, ctx.WorldConstants.ReleaseSubjectOpinionBonus or 30)
 	ctx.EventBus.publish(ctx.Channels.SubjectReleased, {
@@ -1371,15 +1599,27 @@ end
 -- Phase 4: voluntarily release a formable nation from your cores (independent, or as a puppet). Creates
 -- the nation (NationFactory), transfers + cores its homeland provinces, and optionally subjugates it.
 local function releaseNation(holderTag, formableTag, asPuppet)
-	if not ctx.WorldConstants.EnableFormables then return false, "disabled" end
-	if not ctx.FormableSystem or not ctx.NationFactory then return false, "unavailable" end
+	if not ctx.WorldConstants.EnableFormables then
+		return false, "disabled"
+	end
+	if not ctx.FormableSystem or not ctx.NationFactory then
+		return false, "unavailable"
+	end
 	local def = ctx.FormableSystem.getDefinition(formableTag)
-	if not def or def.canRelease == false then return false, "not_releasable" end
-	if not def.requiredProvinceIds or #def.requiredProvinceIds == 0 then return false, "no_provinces" end
-	if ctx.WorldState.getCountry(formableTag) then return false, "already_exists" end
+	if not def or def.canRelease == false then
+		return false, "not_releasable"
+	end
+	if not def.requiredProvinceIds or #def.requiredProvinceIds == 0 then
+		return false, "no_provinces"
+	end
+	if ctx.WorldState.getCountry(formableTag) then
+		return false, "already_exists"
+	end
 	for _, id in ipairs(def.requiredProvinceIds) do
 		local p = ctx.WorldState.getProvince(id)
-		if not p or p.ownerTag ~= holderTag then return false, "must_own_all" end
+		if not p or p.ownerTag ~= holderTag then
+			return false, "must_own_all"
+		end
 	end
 	local holder = ctx.WorldState.getCountry(holderTag)
 	local capProv = ctx.WorldState.getProvince(def.requiredProvinceIds[1])
@@ -1396,22 +1636,31 @@ local function releaseNation(holderTag, formableTag, asPuppet)
 	for _, id in ipairs(def.requiredProvinceIds) do
 		local p = ctx.WorldState.getProvince(id)
 		if p and p.ownerTag == holderTag then
-			p.ownerTag = formableTag
-			-- Only hand over the controller if the holder still occupies it; an enemy-occupied core stays
-			-- occupied (mirrors annexCountry) rather than being silently freed to the new nation.
-			if p.controllerTag == holderTag then
-				p.controllerTag = formableTag
-			end
+			-- Add the formable's core on the record first so it rides the same dirty mark as the ownership flip.
 			p.cores = p.cores or {}
 			if not table.find(p.cores, formableTag) then
 				table.insert(p.cores, formableTag)
 			end
-			ctx.WorldState.setProvince(id, p)
-			ctx.EventBus.publish(ctx.Channels.ProvinceOwnershipChanged, {
-				provinceId = id,
-				oldOwner = holderTag,
-				newOwner = formableTag,
-			})
+			-- Only hand over the controller if the holder still occupies it; an enemy-occupied core stays
+			-- occupied (mirrors annexCountry) rather than being silently freed to the new nation.
+			if ctx.WorldConstants.RecordOwnershipChokepoint then
+				local controller = (p.controllerTag == holderTag) and formableTag or nil
+				ctx.WorldState.setProvinceOwnership(
+					id,
+					{ owner = formableTag, controller = controller, reason = "formable" }
+				)
+			else
+				p.ownerTag = formableTag
+				if p.controllerTag == holderTag then
+					p.controllerTag = formableTag
+				end
+				ctx.WorldState.setProvince(id, p)
+				ctx.EventBus.publish(ctx.Channels.ProvinceOwnershipChanged, {
+					provinceId = id,
+					oldOwner = holderTag,
+					newOwner = formableTag,
+				})
+			end
 		end
 	end
 	if asPuppet then
@@ -1444,7 +1693,11 @@ function annexCountry(winnerTag, loserTag, exceptWarId)
 				ctx.NotificationBroadcaster.push({
 					kind = "info",
 					title = "War Ended",
-					body = string.format("%s has been annexed by %s; our war with them is over.", loserName, winnerName),
+					body = string.format(
+						"%s has been annexed by %s; our war with them is over.",
+						loserName,
+						winnerName
+					),
 					audience = "self",
 					tag = otherTag,
 					eventType = "war.enemy.annexed",
@@ -1470,24 +1723,37 @@ function annexCountry(winnerTag, loserTag, exceptWarId)
 	for _, id in ipairs(ids) do
 		local province = ctx.WorldState.getProvince(id)
 		if province and province.ownerTag == loserTag then
-			province.ownerTag = winnerTag
-			if province.controllerTag == loserTag then
-				province.controllerTag = winnerTag
+			if ctx.WorldConstants.RecordOwnershipChokepoint then
+				local controller = (province.controllerTag == loserTag) and winnerTag or nil
+				ctx.WorldState.setProvinceOwnership(
+					id,
+					{ owner = winnerTag, controller = controller, reason = "annex" }
+				)
+			else
+				province.ownerTag = winnerTag
+				if province.controllerTag == loserTag then
+					province.controllerTag = winnerTag
+				end
+				ctx.WorldState.setProvince(id, province)
+				ctx.EventBus.publish(ctx.Channels.ProvinceOwnershipChanged, {
+					provinceId = id,
+					oldOwner = loserTag,
+					newOwner = winnerTag,
+				})
 			end
-			ctx.WorldState.setProvince(id, province)
-			ctx.EventBus.publish(ctx.Channels.ProvinceOwnershipChanged, {
-				provinceId = id,
-				oldOwner = loserTag,
-				newOwner = winnerTag,
-			})
 		end
 	end
 	-- Releasable conquered nation (v1, in-memory/session-scoped): register the just-deleted loser as a
 	-- release-only formable definition so a later rebellion (civil war) in the conqueror can restore it.
 	-- Homeland = the provinces we just transferred (capital first if present). NOT persisted via
 	-- FormableStore to avoid replicating hundreds of dormant defs; gated by EnableFormables.
-	if ctx.WorldConstants.EnableFormables and ctx.FormableSystem and ctx.FormableSystem.addDefinition
-		and loserCountry and #ids > 0 then
+	if
+		ctx.WorldConstants.EnableFormables
+		and ctx.FormableSystem
+		and ctx.FormableSystem.addDefinition
+		and loserCountry
+		and #ids > 0
+	then
 		local homeland = {}
 		local capital = loserCountry.capitalProvinceId
 		if capital ~= nil and table.find(ids, capital) then
@@ -1523,15 +1789,21 @@ function annexCountry(winnerTag, loserTag, exceptWarId)
 			ctx.NavalSystem.disbandAllFor(loserTag)
 		end
 	end
-	ctx.WorldState.deleteCountry(loserTag)
+	-- Pass the winner so the deleteCountry integrity guard reassigns any province the byOwner-driven loop
+	-- above missed (index desync) to the conqueror instead of stranding it owning a now-deleted tag.
+	ctx.WorldState.deleteCountry(loserTag, winnerTag)
 end
 
 -- Absorb a subject: clear the subject link, then full-annex it (AI subjects only).
 local function annexSubject(overlordTag, subjectTag)
-	if overlordOf(subjectTag) ~= overlordTag then return false, "not_your_subject" end
+	if overlordOf(subjectTag) ~= overlordTag then
+		return false, "not_your_subject"
+	end
 	-- A human-controlled nation can never be annexed away (that would end their wars + delete their
 	-- country with no consent). Overlord annexation is an AI-subject-only mechanic.
-	if isClaimedTag(subjectTag) then return false, "cannot_annex_player" end
+	if isClaimedTag(subjectTag) then
+		return false, "cannot_annex_player"
+	end
 	clearSubject(overlordTag, subjectTag)
 	annexCountry(overlordTag, subjectTag)
 	ctx.EventBus.publish(ctx.Channels.SubjectAnnexed, {
@@ -1546,11 +1818,19 @@ end
 -- aggressor shields a nation from the call. Co-belligerent wars carry callReason ~= "direct" so the
 -- WarDeclared handler does NOT recurse them into further calls.
 local function joinWarAgainst(joinerTag, aggressorTag, conflictId, reason)
-	if not joinerTag or not aggressorTag or joinerTag == aggressorTag then return false end
-	if not ctx.WorldState.getCountry(joinerTag) or not ctx.WorldState.getCountry(aggressorTag) then return false end
-	if findActiveWar(joinerTag, aggressorTag) then return false end
+	if not joinerTag or not aggressorTag or joinerTag == aggressorTag then
+		return false
+	end
+	if not ctx.WorldState.getCountry(joinerTag) or not ctx.WorldState.getCountry(aggressorTag) then
+		return false
+	end
+	if findActiveWar(joinerTag, aggressorTag) then
+		return false
+	end
 	local joinerCountry = ctx.WorldState.getCountry(joinerTag)
-	if readNap(joinerCountry, aggressorTag) then return false end
+	if readNap(joinerCountry, aggressorTag) then
+		return false
+	end
 	local id = generateWarId(aggressorTag, joinerTag)
 	local war = {
 		id = id,
@@ -1563,7 +1843,10 @@ local function joinWarAgainst(joinerTag, aggressorTag, conflictId, reason)
 		defenderExhaustion = 0,
 		conflictId = conflictId,
 		callReason = reason or "ally",
-		declaredMonthIndex = (function() local gd = ctx.TickScheduler.getGameDate and ctx.TickScheduler.getGameDate(); return gd and (gd.year * 12 + (gd.month - 1)) or nil end)(),
+		declaredMonthIndex = (function()
+			local gd = ctx.TickScheduler.getGameDate and ctx.TickScheduler.getGameDate()
+			return gd and (gd.year * 12 + (gd.month - 1)) or nil
+		end)(),
 	}
 	ctx.WorldState.setWar(id, war)
 	ctx.EventBus.publish(ctx.Channels.WarDeclared, {
@@ -1582,13 +1865,19 @@ end
 
 -- Public entry for the ProposePact remote: routes by pact type.
 local function proposePact(fromTag, toTag, pactType)
-	if not fromTag or not toTag or fromTag == toTag then return false, nil, "bad_target" end
+	if not fromTag or not toTag or fromTag == toTag then
+		return false, nil, "bad_target"
+	end
 	if not ctx.WorldState.getCountry(fromTag) or not ctx.WorldState.getCountry(toTag) then
 		return false, nil, "unknown_country"
 	end
-	if areAtWar(fromTag, toTag) then return false, nil, "at_war" end
+	if areAtWar(fromTag, toTag) then
+		return false, nil, "at_war"
+	end
 	-- Subjects have no independent foreign policy; nobody pacts with a subject either.
-	if isSubject(fromTag) or isSubject(toTag) then return false, nil, "subject_involved" end
+	if isSubject(fromTag) or isSubject(toTag) then
+		return false, nil, "subject_involved"
+	end
 	if pactType == "guarantee" then
 		local ok, reason = guaranteeIndependence(fromTag, toTag)
 		return ok, nil, reason
@@ -1602,9 +1891,15 @@ end
 
 local function acceptPact(pactId, byTag)
 	local pact = ctx.WorldState.getPact(pactId)
-	if not pact then return false, "no_pact" end
-	if pact.status ~= "pending" then return false, "not_pending" end
-	if pact.toTag ~= byTag then return false, "not_recipient" end
+	if not pact then
+		return false, "no_pact"
+	end
+	if pact.status ~= "pending" then
+		return false, "not_pending"
+	end
+	if pact.toTag ~= byTag then
+		return false, "not_recipient"
+	end
 	if (pact.type == "nap" or pact.type == "alliance") and areAtWar(pact.fromTag, pact.toTag) then
 		pact.status = "cancelled"
 		ctx.WorldState.setPact(pactId, pact)
@@ -1634,9 +1929,15 @@ end
 
 local function rejectPact(pactId, byTag)
 	local pact = ctx.WorldState.getPact(pactId)
-	if not pact then return false, "no_pact" end
-	if pact.status ~= "pending" then return false, "not_pending" end
-	if pact.toTag ~= byTag then return false, "not_recipient" end
+	if not pact then
+		return false, "no_pact"
+	end
+	if pact.status ~= "pending" then
+		return false, "not_pending"
+	end
+	if pact.toTag ~= byTag then
+		return false, "not_recipient"
+	end
 	pact.status = "rejected"
 	ctx.WorldState.setPact(pactId, pact)
 	if pact.type == "call_to_arms" then
@@ -1672,9 +1973,15 @@ end
 
 local function cancelPact(pactId, byTag)
 	local pact = ctx.WorldState.getPact(pactId)
-	if not pact then return false, "no_pact" end
-	if pact.status ~= "pending" then return false, "not_pending" end
-	if pact.fromTag ~= byTag then return false, "not_proposer" end
+	if not pact then
+		return false, "no_pact"
+	end
+	if pact.status ~= "pending" then
+		return false, "not_pending"
+	end
+	if pact.fromTag ~= byTag then
+		return false, "not_proposer"
+	end
 	pact.status = "cancelled"
 	ctx.WorldState.setPact(pactId, pact)
 	ctx.EventBus.publish(ctx.Channels.PactCancelled, {
@@ -1688,7 +1995,9 @@ local function cancelPact(pactId, byTag)
 end
 
 local function breakNap(fromTag, otherTag)
-	if not hasNap(fromTag, otherTag) then return false, "no_nap" end
+	if not hasNap(fromTag, otherTag) then
+		return false, "no_nap"
+	end
 	clearNap(fromTag, otherTag)
 	local penalty = ctx.WorldConstants.NapBreakOpinionPenalty or 40
 	addOpinion(fromTag, otherTag, -penalty)
@@ -1752,11 +2061,19 @@ end
 -- Call-to-arms dispatch: an AI ally/guarantor honors the call immediately; a player gets a pending
 -- call_to_arms pact (which pops the DiplomaticOffer modal via the existing pacts hook).
 local function proposeCallToArms(callerTag, helperTag, conflictId, aggressorTag, obligation)
-	if not helperTag or helperTag == aggressorTag or helperTag == callerTag then return end
-	if findActiveWar(helperTag, aggressorTag) then return end
+	if not helperTag or helperTag == aggressorTag or helperTag == callerTag then
+		return
+	end
+	if findActiveWar(helperTag, aggressorTag) then
+		return
+	end
 	local helperCountry = ctx.WorldState.getCountry(helperTag)
-	if not helperCountry then return end
-	if readNap(helperCountry, aggressorTag) then return end
+	if not helperCountry then
+		return
+	end
+	if readNap(helperCountry, aggressorTag) then
+		return
+	end
 	if not isClaimedTag(helperTag) then
 		joinWarAgainst(helperTag, aggressorTag, conflictId, obligation)
 		return
@@ -1788,18 +2105,30 @@ end
 -- When a DIRECT war is declared, call the defender's allies + guarantors against the aggressor.
 -- Co-belligerent wars carry callReason ~= "direct", so the guard prevents a cascade.
 local function onWarDeclared(payload)
-	if not payload then return end
-	if payload.callReason and payload.callReason ~= "direct" then return end
+	if not payload then
+		return
+	end
+	if payload.callReason and payload.callReason ~= "direct" then
+		return
+	end
 	local attackerTag = payload.attackerTag
 	local defenderTag = payload.defenderTag
-	if not attackerTag or not defenderTag then return end
+	if not attackerTag or not defenderTag then
+		return
+	end
 	local conflictId = payload.conflictId or payload.warId
 	local defender = ctx.WorldState.getCountry(defenderTag)
-	if not defender then return end
+	if not defender then
+		return
+	end
 	local called = {}
 	local function callHelper(helperTag, obligation)
-		if not helperTag or helperTag == defenderTag or helperTag == attackerTag then return end
-		if called[helperTag] then return end
+		if not helperTag or helperTag == defenderTag or helperTag == attackerTag then
+			return
+		end
+		if called[helperTag] then
+			return
+		end
 		called[helperTag] = true
 		proposeCallToArms(defenderTag, helperTag, conflictId, attackerTag, obligation)
 	end
@@ -1841,7 +2170,9 @@ end
 -- truth) -- a direct membership read. Feeds the peace-conference cost math + CB checks (Phase 3).
 -- Returns false while EnableCores is off, so claim discounts/CBs stay inert until the phase is enabled.
 local function hasClaimOn(tag, provinceId)
-	if not ctx.WorldConstants.EnableCores then return false end
+	if not ctx.WorldConstants.EnableCores then
+		return false
+	end
 	local p = ctx.WorldState.getProvince(provinceId)
 	return p ~= nil and p.claims ~= nil and table.find(p.claims, tag) ~= nil
 end
@@ -1883,7 +2214,9 @@ function DiplomacySystem.register(context)
 		getIncomingPacts = getIncomingPacts,
 	}
 	context.DiplomacySystem = api
-	for k, v in pairs(api) do DiplomacySystem[k] = v end
+	for k, v in pairs(api) do
+		DiplomacySystem[k] = v
+	end
 
 	-- Phase 5b: accrue war score from canonical battle + occupation channels.
 	if context.EventBus and context.EventBus.subscribe then
@@ -1904,7 +2237,8 @@ function DiplomacySystem.register(context)
 			tickProposals()
 			tickPacts()
 			stampHumanWars()
-			local gd = (sysCtx and sysCtx.gameDate) or (context.TickScheduler.getGameDate and context.TickScheduler.getGameDate())
+			local gd = (sysCtx and sysCtx.gameDate)
+				or (context.TickScheduler.getGameDate and context.TickScheduler.getGameDate())
 			if gd then
 				local mi = gd.year * 12 + (gd.month - 1)
 				if lastDiplomacyMonth == nil then

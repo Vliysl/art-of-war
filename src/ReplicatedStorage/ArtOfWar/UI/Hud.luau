@@ -359,6 +359,7 @@ function Hud.closeScreen()
 end
 
 local activeContext = nil
+local activeContextName = nil
 local nationSelect = nil
 
 function Hud.closeContext()
@@ -367,6 +368,7 @@ function Hud.closeContext()
 	end
 	local handle = activeContext
 	activeContext = nil
+	activeContextName = nil
 	if handle.destroy then
 		handle.destroy()
 	elseif handle.root then
@@ -394,7 +396,14 @@ local function openContext(moduleName, data)
 			Hud.closeContext()
 		end,
 	}))
+	activeContextName = moduleName
 	return activeContext
+end
+
+-- Name of the module backing the current context panel (nil if none). Lets callers (e.g. HudWiring's
+-- province-ownership auto-refresh) confirm the province panel is still the active context before acting.
+function Hud.getContextName()
+	return activeContextName
 end
 
 Hud.closeProvince = Hud.closeContext
@@ -579,7 +588,11 @@ function buildEventChip()
 	-- gentle border pulse so the alert catches the eye
 	pcall(function()
 		game:GetService("TweenService")
-			:Create(stroke, TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Transparency = 0.55 })
+			:Create(
+				stroke,
+				TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+				{ Transparency = 0.55 }
+			)
 			:Play()
 	end)
 
