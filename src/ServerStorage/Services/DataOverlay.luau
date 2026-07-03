@@ -74,6 +74,25 @@ local FLUSH_COOLDOWN = 30
 local MIGRATE_COOLDOWN = 30
 local SCAN_PAGE_LIMIT = 10
 
+-- Concurrency-safe saves. When true, flush() UpdateAsync-MERGES each session's per-record changes into
+-- the CURRENT DataStore aggregate instead of SetAsync-overwriting the whole aggregate with this server's
+-- (session-start) in-memory copy. Fixes the two-editor lost update: with the blind overwrite, an editor
+-- who loaded before a co-editor saved would revert the co-editor's work on their own next save (e.g.
+-- "adding N. American tribes, then a Europe edit reverts the tribes"). Each Roblox server instance has
+-- its own cache, and editors rarely share an instance, so this raced constantly. Flip to false to restore
+-- the legacy blind overwrite. Same-record simultaneous edits remain last-writer-wins (needs locking to fix).
+local MERGE_SAVES = true
+
+-- Per-record change journals (cache.pending[kind][key] = record | TOMBSTONE_MARKER) powering MERGE_SAVES:
+-- exactly which records THIS session changed since its last successful flush.
+local function freshPending()
+	local p = {}
+	for _, kind in ipairs(ALL_KINDS) do
+		p[kind] = {}
+	end
+	return p
+end
+
 local cache = {
 	loaded = false,
 	data = {
@@ -103,6 +122,7 @@ local cache = {
 	migrating = false,
 	collapsed = false, -- true when schema == COLLAPSED_VERSION (part-id keyed world)
 	schemaVersion = nil, -- live schema flag as read by load() ("v2" / "v3" / "v4" / nil)
+	pending = freshPending(), -- per-record change journal for the MERGE_SAVES flush path
 }
 
 -- Resolve the live DataStore key for a kind, honoring the live schema. cache.schemaVersion /
@@ -233,6 +253,37 @@ local function writeAggregate(kind, map)
 	return withRetry(function()
 		ds:SetAsync(k, payload)
 	end, "SetAsync " .. k)
+end
+
+-- Concurrency-safe aggregate write for MERGE_SAVES. UpdateAsync reads the CURRENT stored aggregate and
+-- overlays ONLY this session's journaled records, so a save can never revert records a co-editor persisted
+-- meanwhile -- only the exact keys in `pending` are touched. The transform is pure (table merge + JSON, no
+-- yields) as UpdateAsync requires, and re-runs automatically if the value changed between read and write.
+-- Returns ok, err, mergedTable (the post-merge value, for refreshing the in-memory cache).
+local function writeAggregateMerged(kind, pending)
+	local ds = store()
+	local k = keyFor(kind)
+	local merged
+	local ok, err = withRetry(function()
+		return ds:UpdateAsync(k, function(raw)
+			local current = decodeValue(raw)
+			if type(current) ~= "table" then
+				current = {}
+			end
+			-- Stored aggregates are string-keyed (JSON); journal keys may be numeric (province ids). A
+			-- record value already carries TOMBSTONE_MARKER for a delete, so a single assignment covers both.
+			for key, value in pairs(pending) do
+				current[tostring(key)] = value
+			end
+			merged = current
+			local encodeOk, payload = pcall(HttpService.JSONEncode, HttpService, current)
+			if not encodeOk then
+				error("encode_failed: " .. tostring(payload))
+			end
+			return payload
+		end)
+	end, "UpdateAsync " .. k)
+	return ok, err, merged
 end
 
 local function readSchemaVersion()
@@ -611,6 +662,13 @@ local function set(kind, key, value)
 		cache.data[kind][key] = value
 	end
 	cache.dirty[kind] = true
+	-- Journal the exact record this session touched (upsert or tombstone) so flush() can UpdateAsync-merge
+	-- only these into the live aggregate rather than blind-overwriting the whole thing (the co-editor
+	-- clobber fix). Mirrors cache.data's value: the record, or TOMBSTONE_MARKER for a delete.
+	local journal = cache.pending[kind]
+	if journal then
+		journal[key] = cache.data[kind][key]
+	end
 	return true
 end
 
@@ -669,9 +727,14 @@ function DataOverlay.flush()
 	local result = { attempted = 0, writes = 0, failures = 0, skipped = 0, blocked = 0, errors = {} }
 	local toClear = {}
 	for kind in pairs(cache.dirty) do
+		local pending = cache.pending[kind]
+		local useMerge = MERGE_SAVES and pending ~= nil and next(pending) ~= nil
 		local loadFailed = cache.loadStatus[kind] == "read_failed"
 		local cacheEmpty = next(cache.data[kind]) == nil
-		if loadFailed and cacheEmpty then
+		-- The blind-overwrite path would wipe real data if our local cache is empty because a read failed.
+		-- The merge path is immune -- UpdateAsync reads the live aggregate and overlays only the journaled
+		-- records, so it can never overwrite with nothing -- so only block the non-merge path.
+		if loadFailed and cacheEmpty and not useMerge then
 			result.blocked += 1
 			result.failures += 1
 			table.insert(result.errors, {
@@ -689,11 +752,29 @@ function DataOverlay.flush()
 				})
 			else
 				result.attempted += 1
-				local ok, err = writeAggregate(kind, cache.data[kind])
+				local ok, err, merged
+				if useMerge then
+					ok, err, merged = writeAggregateMerged(kind, pending)
+				else
+					ok, err = writeAggregate(kind, cache.data[kind])
+				end
 				if ok then
 					result.writes += 1
 					cache.coolingUntil[kind] = nil
 					toClear[kind] = true
+					if useMerge then
+						-- Adopt the merged result so our in-memory view reflects co-editors' concurrent changes
+						-- too, and drop the now-persisted journal. Re-key to the cache's canonical key type
+						-- (numeric for provinces/eu4map) so downstream reads stay consistent.
+						if type(merged) == "table" then
+							local adopted = {}
+							for key, value in pairs(merged) do
+								adopted[coerceKey(kind, key)] = value
+							end
+							cache.data[kind] = adopted
+						end
+						cache.pending[kind] = {}
+					end
 				else
 					result.failures += 1
 					table.insert(result.errors, { kind = kind, error = tostring(err) })
@@ -978,6 +1059,9 @@ function DataOverlay.loadNamedConfig(name)
 	for _, kind in ipairs(ALL_KINDS) do
 		cache.data[kind] = loaded[kind]
 		cache.dirty[kind] = true
+		-- Loading a config is a wholesale REPLACE, not an incremental edit: drop any journaled per-record
+		-- edits so flush() takes the full-overwrite path (empty pending) instead of merging stale changes.
+		cache.pending[kind] = {}
 	end
 	local flushResult = DataOverlay.flush()
 	return {
@@ -1459,6 +1543,7 @@ function DataOverlay.snapshot(forceRefresh)
 			[KIND_GOVERNMENTS] = {},
 		}
 		cache.dirty = {}
+		cache.pending = freshPending() -- a hard reload discards this session's unsaved edits
 	end
 	ensureLoaded()
 	local function liveCopy(tbl)
