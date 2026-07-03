@@ -242,8 +242,17 @@ function MapRenderer.applyPolitical(countryColors, getProvinceRecord)
 		local owner, controller
 		if recordDriven then
 			local rec = getProvinceRecord(p:GetAttribute("province_id"))
-			owner = rec and rec.ownerTag
-			controller = rec and rec.controllerTag
+			if rec then
+				owner = rec.ownerTag
+				controller = rec.controllerTag
+			else
+				-- Record not in this client's ClientStateCache (e.g. high-id / AI-generated provinces that
+				-- don't replicate into the cache) -> fall back to the stamped part attributes, the SAME
+				-- cache-miss fallback the province panel uses (HudWiring.recordFromPart). Without this the
+				-- tile renders neutral even though its owner (record + attribute + panel) is correct.
+				owner = p:GetAttribute("owner")
+				controller = p:GetAttribute("controller")
+			end
 		else
 			owner = p:GetAttribute("owner")
 			controller = p:GetAttribute("controller")
