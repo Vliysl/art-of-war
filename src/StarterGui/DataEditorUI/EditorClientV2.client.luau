@@ -61,9 +61,6 @@ local function openColorPicker(parentGui, initialRGB, onChange)
 	panel.ZIndex = 201
 	panel.Parent = scrim
 	do
-		local c = Instance.new("UICorner")
-		c.CornerRadius = UDim.new(0, 6)
-		c.Parent = panel
 		local st = Instance.new("UIStroke")
 		st.Color = Colors.BorderStrong
 		st.Thickness = 1
@@ -141,9 +138,6 @@ local function openColorPicker(parentGui, initialRGB, onChange)
 	svCur.ZIndex = 203
 	svCur.Parent = sv
 	do
-		local c = Instance.new("UICorner")
-		c.CornerRadius = UDim.new(1, 0)
-		c.Parent = svCur
 		local st = Instance.new("UIStroke")
 		st.Color = Color3.new(0, 0, 0)
 		st.Thickness = 2
@@ -192,9 +186,6 @@ local function openColorPicker(parentGui, initialRGB, onChange)
 	swatch.ZIndex = 202
 	swatch.Parent = panel
 	do
-		local c = Instance.new("UICorner")
-		c.CornerRadius = UDim.new(0, 4)
-		c.Parent = swatch
 		local st = Instance.new("UIStroke")
 		st.Color = Colors.BorderStrong
 		st.Thickness = 1
@@ -215,9 +206,10 @@ local function openColorPicker(parentGui, initialRGB, onChange)
 	hexBox.ZIndex = 202
 	hexBox.Parent = panel
 	do
-		local c = Instance.new("UICorner")
-		c.CornerRadius = UDim.new(0, 4)
-		c.Parent = hexBox
+		local st = Instance.new("UIStroke")
+		st.Color = Colors.BorderStrong
+		st.Thickness = 1
+		st.Parent = hexBox
 	end
 
 	local rgbLabel = Instance.new("TextLabel")
@@ -236,7 +228,7 @@ local function openColorPicker(parentGui, initialRGB, onChange)
 	done.Size = UDim2.fromOffset(58, 26)
 	done.Position = UDim2.fromOffset(SQW + 14, TOP + 82)
 	done.BackgroundColor3 = Colors.Accent
-	done.TextColor3 = Colors.TextPrimary
+	done.TextColor3 = Color3.fromRGB(20, 20, 24) -- dark font for contrast on the yellow Accent
 	done.Text = "Done"
 	done.Font = Enum.Font.GothamMedium
 	done.TextSize = 13
