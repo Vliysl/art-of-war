@@ -46,6 +46,87 @@ local stateSync
 local cachedSnapshot = nil
 local cachedSnapshotAt = nil
 
+-- Replication projection for country records. The full record is ~2.6 KB; ~75% of that is politics data (leaders,
+-- factions) that a verified audit found NO live client consumer reads except PoliticsScreen/MilitaryScreen, and only
+-- for the player's OWN country. Here (Tier 1/2) we keep every field on the wire but (1) DROP fields no live client
+-- reads at all and (2) SLIM the leaders/factions sub-records (redundant keys, server-only float precision).
+-- CRITICAL: the snapshot/delta fields are live references to WorldState's store tables -- we must NEVER mutate a
+-- record in place, so projection always shallow-COPIES.
+local COUNTRY_DROP = {
+	-- static AI-seed data, read nowhere in the live client stack (kept server-side + in the Data source)
+	historicalFriends = true,
+	historicalRivals = true,
+	acceptedCultures = true,
+	startingTechs = true,
+	technologyGroup = true,
+}
+
+local function slimLeader(l)
+	if type(l) ~= "table" then
+		return l
+	end
+	-- keep only what PoliticsScreen renders/hashes; drop `slot` (== map key), `appointedAt`, `portraitId` (unread).
+	return {
+		id = l.id,
+		firstName = l.firstName,
+		lastName = l.lastName,
+		title = l.title,
+		traits = l.traits,
+	}
+end
+
+local function slimFaction(f)
+	if type(f) ~= "table" then
+		return f
+	end
+	-- drop `id` (== map key) and `lastDelta` (0 at rest, unread); round clout to 4 dp (client renders integer %,
+	-- server keeps its full-precision authoritative copy).
+	local clout = f.clout
+	if type(clout) == "number" then
+		clout = math.floor(clout * 1e4 + 0.5) / 1e4
+	end
+	return {
+		loyalty = f.loyalty,
+		tier = f.tier,
+		clout = clout,
+	}
+end
+
+local function projectCountry(rec)
+	if type(rec) ~= "table" then
+		return rec
+	end
+	local out = {}
+	for k, v in rec do
+		if not COUNTRY_DROP[k] then
+			out[k] = v
+		end
+	end
+	if type(rec.leaders) == "table" then
+		local L = {}
+		for slot, l in rec.leaders do
+			L[slot] = slimLeader(l)
+		end
+		out.leaders = L
+	end
+	if type(rec.factions) == "table" then
+		local F = {}
+		for id, f in rec.factions do
+			F[id] = slimFaction(f)
+		end
+		out.factions = F
+	end
+	return out
+end
+
+local function projectCountries(all)
+	local out = {}
+	for tag, rec in all do
+		out[tag] = projectCountry(rec)
+	end
+	return out
+end
+
 local function buildDeltaFrom(drained)
 	if not drained then
 		return nil
@@ -63,6 +144,9 @@ local function buildDeltaFrom(drained)
 				-- Canonical numeric province keys so the client never double-keys the same province.
 				local k = isProv and (tonumber(key) or key) or key
 				local rec = ctx.WorldState[getter](k)
+				if name == "countries" then
+					rec = projectCountry(rec)
+				end
 				bucket[k] = rec
 				if replDebug and isProv then
 					print(
@@ -108,7 +192,9 @@ local function buildSnapshotUncached()
 	-- They stream separately via pushProvincesTo (chunked). `provincesChunked` tells the client's fullSnapshot
 	-- handler to SKIP pruning provinces, so an omitted-provinces snapshot can't wipe chunks that already arrived.
 	snapshot.provincesChunked = true
-	snapshot.countries = ctx.WorldState.allCountries()
+	-- Countries are projected (dead fields dropped, leaders/factions slimmed) to keep the collection well under the
+	-- remote transit limit. A shared projected copy is fine -- it is read-only on every client.
+	snapshot.countries = projectCountries(ctx.WorldState.allCountries())
 	snapshot.markets = ctx.WorldState.allMarkets()
 	snapshot.tradeRoutes = ctx.WorldState.allTradeRoutes()
 	snapshot.armies = ctx.WorldState.allArmies()
