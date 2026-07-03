@@ -84,6 +84,93 @@ local function syncCountryToWorld(tag)
 	end
 end
 
+-- Ownership signature used to detect which provinces a LOAD actually changed (drives the live recolor).
+local function provinceOwnerKey(rec)
+	if type(rec) ~= "table" then
+		return "NONE|NONE"
+	end
+	return tostring(rec.ownerTag or rec.owner or "NONE") .. "|" .. tostring(rec.controllerTag or rec.controller or "NONE")
+end
+
+-- Live-refresh WorldState + the map after a full-world LOAD (named config / draft). A load only writes
+-- the DataStore + rebuilds the editor model, so without this it wouldn't show until the next server
+-- boot. Mirrors the post-save sync but scoped to provinces whose owner/controller actually changed
+-- (via `beforeProv`, captured before the load) so we don't storm every one of the ~5.7k tiles.
+local function refreshLiveWorldAfterLoad(beforeProv)
+	if not WorldState then
+		return { provinces = 0, countries = 0 }
+	end
+	local st = Editor.getState()
+	local newProv = (st and st.provinces) or {}
+	local newCty = (st and st.countries) or {}
+
+	-- Countries first, so each province's stampOne sees the current owner colour/culture/religion.
+	local countriesSynced = 0
+	for tag in pairs(newCty) do
+		pcall(syncCountryToWorld, tag)
+		countriesSynced += 1
+		if countriesSynced % 200 == 0 then
+			task.wait()
+		end
+	end
+
+	-- Provinces whose owner/controller changed → re-sync (publishes ProvinceOwnershipChanged, which
+	-- ProvinceStamper turns into a part re-stamp → the client recolours that tile).
+	local changed = 0
+	local provincesChanged = false
+	for id, rec in pairs(newProv) do
+		if beforeProv[id] ~= provinceOwnerKey(rec) then
+			pcall(syncProvinceToWorld, id)
+			provincesChanged = true
+			changed += 1
+			if changed % 200 == 0 then
+				task.wait()
+			end
+		end
+	end
+
+	-- Provinces the load removed → blank their ownership so the map doesn't keep a stale colour.
+	for id, before in pairs(beforeProv) do
+		if newProv[id] == nil and before ~= "NONE|NONE" then
+			local existing = WorldState.getProvince and WorldState.getProvince(id)
+			if existing then
+				existing.ownerTag = "NONE"
+				existing.controllerTag = "NONE"
+				WorldState.setProvince(id, existing)
+				if EventBus and Channels and Channels.ProvinceOwnershipChanged then
+					EventBus.publish(Channels.ProvinceOwnershipChanged, { provinceId = tonumber(id) or id })
+				end
+				provincesChanged = true
+				changed += 1
+			end
+		end
+	end
+
+	-- Apply tile overrides + rebuild adjacency once, exactly like the save path does.
+	local stamperMod = game.ServerScriptService.ArtOfWar.Systems:FindFirstChild("ProvinceStamper")
+	if stamperMod then
+		local ok, stamper = pcall(require, stamperMod)
+		if ok and stamper then
+			if stamper.refreshEU4Mappings then
+				pcall(stamper.refreshEU4Mappings)
+			end
+			if stamper.applyTileOwnership then
+				pcall(stamper.applyTileOwnership)
+			end
+		end
+	end
+	if provincesChanged then
+		local adjMod = game.ServerScriptService.ArtOfWar.Systems:FindFirstChild("AdjacencyGraph")
+		if adjMod then
+			local ok, adj = pcall(require, adjMod)
+			if ok and adj and adj.build then
+				pcall(adj.build)
+			end
+		end
+	end
+	return { provinces = changed, countries = countriesSynced }
+end
+
 local function stampTileAttributes(part, ownerTag, partName, map)
 	if not part then
 		return
@@ -1110,7 +1197,35 @@ api.OnServerInvoke = function(player, command, payload)
 		if not EditorAdmins.canManage(player) then
 			return { ok = false, error = "only the owner can load/delete map configs" }
 		end
-		return safeCall(Editor.loadConfig, payload.name)
+		-- Snapshot current ownership BEFORE the load swaps the editor state, so the live-refresh below
+		-- only touches the tiles that actually change (a load otherwise only applies on the next boot).
+		local beforeProv = {}
+		do
+			local st = Editor.getState()
+			for id, rec in pairs((st and st.provinces) or {}) do
+				beforeProv[id] = provinceOwnerKey(rec)
+			end
+		end
+		local result = safeCall(Editor.loadConfig, payload.name)
+		if result.ok ~= false then
+			local refreshed = refreshLiveWorldAfterLoad(beforeProv)
+			if type(result.result) == "table" then
+				result.result.liveRefresh = refreshed
+			end
+			-- Co-editors on this server: their editor view + draft baseline are now stale vs the loaded
+			-- world. Signal them (clients that listen can reload/re-baseline).
+			for _, plr in ipairs(Players:GetPlayers()) do
+				if plr ~= player and isAuthorized(plr) then
+					LiveSync:FireClient(plr, {
+						sharedMoved = true,
+						originUserId = player.UserId,
+						originName = player.DisplayName or player.Name,
+						configLoaded = payload.name,
+					})
+				end
+			end
+		end
+		return result
 	elseif command == "deleteConfig" then
 		if type(payload) ~= "table" then
 			return { ok = false, error = "payload required" }
