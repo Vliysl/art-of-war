@@ -293,7 +293,26 @@ task.defer(function()
 				return ClientStateCache.getProvince(id) or ClientStateCache.getProvince(tonumber(id))
 			end
 		end
-		MapRenderer.setMode("political", { countryColors = countryColors, getProvinceRecord = getProvinceRecord })
+		local function reapplyPolitical()
+			-- Only re-sweep while the political map mode is active, so this never overrides a user-selected mode.
+			if MapRenderer.getMode and MapRenderer.getMode() ~= "political" then
+				return
+			end
+			MapRenderer.setMode("political", { countryColors = countryColors, getProvinceRecord = getProvinceRecord })
+		end
+		reapplyPolitical()
+		-- Backstop for the high-id / AI-generated tail (HRE + high-id PLC tiles etc.): the sweep above runs
+		-- after `provincesStamped` (a SERVER signal), which can precede full client RECORD replication. A
+		-- province whose record lands after the sweep -- and whose per-record recolor notify fired before the
+		-- subscriber below was wired -- would otherwise stay stuck at its swept (neutral) colour even though
+		-- its record (and the panel) are correct. Re-run the full political sweep when the snapshot (re)lands
+		-- and a couple of times shortly after so those late records get their colour (equivalent to a
+		-- map-mode toggle, but automatic). A sweep is cheap and idempotent.
+		if ClientStateCache and ClientStateCache.onChange then
+			ClientStateCache.onChange("snapshot", reapplyPolitical)
+		end
+		task.delay(3, reapplyPolitical)
+		task.delay(8, reapplyPolitical)
 		-- Record-driven mode has no per-part attribute watchers, so drive incremental recolors off the
 		-- replicated province delta. (UIController carries a copy of this wiring but is dead in the live
 		-- boot path, so it must be wired here.)
