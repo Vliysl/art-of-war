@@ -316,7 +316,7 @@ do
 	local saveBtn = Button.create({
 		parent = footer,
 		variant = "primary",
-		text = "Save to DataStore",
+		text = "Save",
 		width = 156,
 		onClick = function()
 			setStatus("Saving…", Colors.TextSecondary)
@@ -335,6 +335,42 @@ do
 	})
 	saveBtn.Position = UDim2.fromOffset(x, 0)
 	x += 164
+
+		-- Push to Live: publishes the editor world to the MAIN GAME (danger; two-click confirm). Save only
+		-- commits to the editor world; this is the explicit publish step. Anchored right, clear of the cluster.
+		local pushArmed = false
+		local pushBtn
+		pushBtn = Button.create({
+			parent = footer,
+			variant = "danger",
+			text = "Push to Live",
+			width = 132,
+			onClick = function()
+				if state.dirty then
+					pushArmed = false
+					pushBtn.Text = "Push to Live"
+					setStatus("You have unsaved edits - click Save first, then Push to Live.", Colors.Negative)
+					return
+				end
+				if not pushArmed then
+					pushArmed = true
+					pushBtn.Text = "Publish to LIVE game?"
+					setStatus("This publishes the editor map to the MAIN GAME (applies on its next restart). Click again to confirm.", Colors.Negative)
+					return
+				end
+				pushArmed = false
+				pushBtn.Text = "Push to Live"
+				setStatus("Pushing to live...", Colors.TextSecondary)
+				local res, err = editorCall("pushToLive")
+				if res and (type(res) ~= "table" or res.ok ~= false) then
+					setStatus((type(res) == "table" and res.message) or "Pushed to live", Colors.Positive)
+				else
+					setStatus("Push failed: " .. tostring((type(res) == "table" and res.error) or err), Colors.Negative)
+				end
+			end,
+		})
+		pushBtn.AnchorPoint = Vector2.new(1, 0)
+		pushBtn.Position = UDim2.new(1, 0, 0, 0)
 
 	reloadBtn = Button.create({
 		parent = footer,
@@ -2242,6 +2278,34 @@ ClientSignals.connect("OpenDataEditor", function()
 end)
 
 -- If access is revoked while the window is open, close it.
+-- Live co-editor sync: the server fires DataEditorLive when another editor's Save or config Load moves the
+-- shared editor world. Auto-reload when we have no unsaved edits (re-baselining so our next Save diffs
+-- against the new shared world); if we DO have unsaved edits, only prompt, so we never clobber them.
+do
+	local ok, live = pcall(function()
+		return remotesFolder:WaitForChild("DataEditorLive", 15)
+	end)
+	if ok and live then
+		live.OnClientEvent:Connect(function(payload)
+			if type(payload) ~= "table" or not payload.sharedMoved then
+				return
+			end
+			local who = payload.originName and (" by " .. tostring(payload.originName)) or ""
+			if state.dirty then
+				setStatus("Map changed" .. who .. " - click Reload to sync (you have unsaved edits).", Colors.Negative)
+				return
+			end
+			local snap = editorCall("reloadState")
+			if snap and type(snap) == "table" and snap.countries then
+				state.selected = nil
+				clearDirty()
+				applySnapshot(snap)
+				setStatus("Synced with the latest map" .. who, Colors.TextSecondary)
+			end
+		end)
+	end
+end
+
 player:GetAttributeChangedSignal("IsAdmin"):Connect(function()
 	if gui.Enabled and player:GetAttribute("IsAdmin") ~= true then
 		setEditorOpen(false)

@@ -3,6 +3,28 @@ local HttpService = game:GetService("HttpService")
 local ServerStorage = game:GetService("ServerStorage")
 
 local RelayConfig = require(ServerStorage:WaitForChild("Dev"):WaitForChild("RelayConfig"))
+local RunService = game:GetService("RunService")
+
+-- ── Editor vs Live world isolation ───────────────────────────────────────────────────────────────
+-- The Map Editor place (and Studio) must never edit the live game world directly. In an editor
+-- environment EVERY aggregate read/write is redirected to a parallel ":edit" key set (see keyFor),
+-- seeded from the live keys the first time it is empty. The main game reads the un-suffixed live keys
+-- and is never touched by editing; only an explicit DataOverlay.pushEditToLive() copies edit -> live.
+local MAP_EDITOR_PLACE_ID = 104399454095233
+do
+	local ok, wc = pcall(function()
+		return require(game:GetService("ReplicatedStorage").ArtOfWar.Shared.WorldConstants)
+	end)
+	if ok and type(wc) == "table" and tonumber(wc.MapEditorPlaceId) then
+		MAP_EDITOR_PLACE_ID = tonumber(wc.MapEditorPlaceId)
+	end
+end
+local IS_EDITOR_ENV = (game.PlaceId == MAP_EDITOR_PLACE_ID) or RunService:IsStudio()
+local EDIT_SUFFIX = ":edit"
+
+-- DataStore per-key value cap is ~4 MB. Stay well under so an oversized aggregate fails loudly with a
+-- clear error instead of erroring at the API (or appearing to save). See writeAggregateToKey.
+local MAX_AGGREGATE_BYTES = 3900000
 
 local DataOverlay = {}
 
@@ -128,7 +150,7 @@ local cache = {
 -- Resolve the live DataStore key for a kind, honoring the live schema. cache.schemaVersion /
 -- cache.collapsed are set by load() (which reads the schema flag FIRST) before any read/write runs.
 -- Precedence: v4 remaps provinces/countries to @v4; else v3 remaps them to @v3; else shared keys.
-local function keyFor(kind)
+local function liveKeyFor(kind)
 	if cache.schemaVersion == V4_VERSION and V4_KEYS[kind] then
 		return V4_KEYS[kind]
 	end
@@ -136,6 +158,17 @@ local function keyFor(kind)
 		return COLLAPSED_KEYS[kind]
 	end
 	return AGGREGATE_KEYS[kind]
+end
+
+-- The key THIS environment reads/writes. In an editor environment (Map Editor place or Studio) every
+-- aggregate is redirected to a parallel ":edit" key so editing never touches the live game world; the
+-- main game uses the un-suffixed live key. pushEditToLive() uses liveKeyFor to publish edit -> live.
+local function keyFor(kind)
+	local base = liveKeyFor(kind)
+	if IS_EDITOR_ENV then
+		return base .. EDIT_SUFFIX
+	end
+	return base
 end
 
 local lastMigrateAt = 0
@@ -215,9 +248,9 @@ local function withRetry(op, label, attempts)
 	return false, lastErr
 end
 
-local function readAggregate(kind)
+local function readAggregate(kind, overrideKey)
 	local ds = store()
-	local k = keyFor(kind)
+	local k = overrideKey or keyFor(kind)
 	local ok, raw = withRetry(function()
 		return ds:GetAsync(k)
 	end, "GetAsync " .. k)
@@ -238,21 +271,34 @@ local function readAggregate(kind)
 	return out, "loaded"
 end
 
-local function writeAggregate(kind, map)
+local function writeAggregateToKey(k, kind, map)
 	local ds = store()
 	local serializable = {}
-	for k, v in pairs(map) do
-		serializable[tostring(k)] = v
+	for key, v in pairs(map) do
+		serializable[tostring(key)] = v
 	end
 	local encodeOk, payload = pcall(HttpService.JSONEncode, HttpService, serializable)
 	if not encodeOk then
 		warn("[DataOverlay] failed to encode " .. kind .. ": " .. tostring(payload))
 		return false, "encode_failed"
 	end
-	local k = keyFor(kind)
+	if #payload > MAX_AGGREGATE_BYTES then
+		local msg = string.format(
+			"aggregate '%s' is %d bytes, over the %d-byte safety limit (DataStore ~4MB cap) — refusing to write so it can't silently fail; the store needs chunking",
+			kind,
+			#payload,
+			MAX_AGGREGATE_BYTES
+		)
+		warn("[DataOverlay] " .. msg)
+		return false, msg
+	end
 	return withRetry(function()
 		ds:SetAsync(k, payload)
 	end, "SetAsync " .. k)
+end
+
+local function writeAggregate(kind, map)
+	return writeAggregateToKey(keyFor(kind), kind, map)
 end
 
 -- Concurrency-safe aggregate write for MERGE_SAVES. UpdateAsync reads the CURRENT stored aggregate and
@@ -279,6 +325,16 @@ local function writeAggregateMerged(kind, pending)
 			local encodeOk, payload = pcall(HttpService.JSONEncode, HttpService, current)
 			if not encodeOk then
 				error("encode_failed: " .. tostring(payload))
+			end
+			if #payload > MAX_AGGREGATE_BYTES then
+				error(
+					string.format(
+						"aggregate '%s' too large: %d > %d bytes (DataStore ~4MB cap) — needs chunking",
+						kind,
+						#payload,
+						MAX_AGGREGATE_BYTES
+					)
+				)
 			end
 			return payload
 		end)
@@ -405,6 +461,16 @@ function DataOverlay.load()
 	local kinds = ALL_KINDS
 	for _, kind in ipairs(kinds) do
 		local data, status = readAggregate(kind)
+		if IS_EDITOR_ENV and status == "empty" and next(data) == nil then
+			-- First time editing: the ":edit" world is empty, so seed it from the live world (read the
+			-- un-suffixed live key) so editors start from the current published map. Held in memory only;
+			-- it persists to ":edit" on the first save. Never auto-writes at boot.
+			local liveData, liveStatus = readAggregate(kind, liveKeyFor(kind))
+			if liveStatus == "loaded" and next(liveData) ~= nil then
+				data = liveData
+				status = "seeded_from_live"
+			end
+		end
 		cache.data[kind] = data
 		cache.loadStatus[kind] = status
 		cache.lastRetryAt[kind] = os.clock()
@@ -791,6 +857,67 @@ function DataOverlay.flush()
 	return result
 end
 
+-- Publish the editor's working world (the ":edit" keys, held in cache.data) to the LIVE keys the main
+-- game reads. Editor-environment ONLY — this is the single path that writes the live world from the
+-- editor; normal editor saves/loads only ever touch ":edit". Full authoritative write per kind (the
+-- live world is never concurrently edited), with per-kind failure reporting. Callers should promote/
+-- save the current draft into ":edit" first so cache.data reflects the latest edits.
+function DataOverlay.pushEditToLive()
+	ensureLoaded()
+	if not IS_EDITOR_ENV then
+		return {
+			ok = false,
+			writes = 0,
+			failures = 1,
+			kinds = {},
+			errors = { { error = "pushToLive is only available in the Map Editor environment" } },
+		}
+	end
+	-- Gather what to publish: re-read the persisted ":edit" world FRESH (so a co-editor's committed work
+	-- on another server is captured too), falling back to the in-memory editor world if ":edit" has not
+	-- been persisted yet (seeded-but-unsaved) so we never publish an empty aggregate.
+	local payloads = {}
+	for _, kind in ipairs(ALL_KINDS) do
+		local editData, status = readAggregate(kind) -- keyFor -> ":edit" in the editor env
+		if status == "read_failed" then
+			return {
+				ok = false,
+				writes = 0,
+				failures = 1,
+				kinds = {},
+				errors = { { kind = kind, error = "editor aggregate '" .. kind .. "' could not be read; retry the push" } },
+			}
+		end
+		if next(editData) == nil then
+			editData = cache.data[kind] or {}
+		end
+		payloads[kind] = editData
+	end
+	-- Sanity: never blank the live world. Provinces/countries must be non-empty to publish.
+	if next(payloads[KIND_PROVINCES]) == nil or next(payloads[KIND_COUNTRIES]) == nil then
+		return {
+			ok = false,
+			writes = 0,
+			failures = 1,
+			kinds = {},
+			errors = { { error = "refusing to push: the editor world is empty (provinces/countries) — this would blank the live map. Save something first." } },
+		}
+	end
+	local result = { ok = true, writes = 0, failures = 0, kinds = {}, errors = {} }
+	for _, kind in ipairs(ALL_KINDS) do
+		local ok, err = writeAggregateToKey(liveKeyFor(kind), kind, payloads[kind])
+		if ok then
+			result.writes += 1
+			result.kinds[#result.kinds + 1] = kind
+		else
+			result.ok = false
+			result.failures += 1
+			result.errors[#result.errors + 1] = { kind = kind, error = tostring(err) }
+		end
+	end
+	return result
+end
+
 -- ─────────────────────────── named Save/Load map configs (RoN "Save/Load Map") ───────────────────────────
 -- A named config is a full snapshot of every kind's aggregate, stored under namespaced keys so each fits
 -- the DataStore value limit exactly like the live aggregates do, plus an index key tracking names + metadata.
@@ -917,6 +1044,15 @@ function DataOverlay.saveNamedConfig(name)
 			serializable[tostring(k)] = v
 		end
 		local encodeOk, payload = pcall(HttpService.JSONEncode, HttpService, serializable)
+		if encodeOk and #payload > MAX_AGGREGATE_BYTES then
+			encodeOk = false
+			payload = string.format(
+				"config kind '%s' is %d bytes, over the %d-byte safety limit (DataStore ~4MB cap)",
+				kind,
+				#payload,
+				MAX_AGGREGATE_BYTES
+			)
+		end
 		local ok, err
 		if encodeOk then
 			ok, err = withRetry(function()
@@ -1531,6 +1667,18 @@ end
 
 function DataOverlay.snapshot(forceRefresh)
 	if forceRefresh then
+		-- Safety: never silently drop unsaved edits. If this session has journaled (un-flushed) changes,
+		-- persist them first so a hard reload can't lose work.
+		local hasPending = false
+		for _, journal in pairs(cache.pending) do
+			if next(journal) ~= nil then
+				hasPending = true
+				break
+			end
+		end
+		if hasPending then
+			pcall(DataOverlay.flush)
+		end
 		cache.loaded = false
 		cache.data = {
 			[KIND_COUNTRIES] = {},
@@ -1543,7 +1691,7 @@ function DataOverlay.snapshot(forceRefresh)
 			[KIND_GOVERNMENTS] = {},
 		}
 		cache.dirty = {}
-		cache.pending = freshPending() -- a hard reload discards this session's unsaved edits
+		cache.pending = freshPending() -- edits were persisted above; safe to reset the journal for reload
 	end
 	ensureLoaded()
 	local function liveCopy(tbl)

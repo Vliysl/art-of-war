@@ -2173,6 +2173,16 @@ function DataEditor.loadConfig(name)
 	return result
 end
 
+-- Publish the editor's working world (the ":edit" keys) to the LIVE keys the main game reads. Only the
+-- explicit "Push to Live" action calls this; ordinary editor saves/loads never touch the live world.
+function DataEditor.pushToLive()
+	local overlay = overlayModule()
+	if not overlay or not overlay.pushEditToLive then
+		return { ok = false, error = "DataOverlay.pushEditToLive unavailable" }
+	end
+	return overlay.pushEditToLive()
+end
+
 function DataEditor.migrateLegacy()
 	local overlay = overlayModule()
 	if not overlay or not overlay.migrateLegacy then

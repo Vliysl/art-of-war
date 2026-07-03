@@ -1234,6 +1234,38 @@ api.OnServerInvoke = function(player, command, payload)
 			return { ok = false, error = "only the owner can load/delete map configs" }
 		end
 		return safeCall(Editor.deleteConfig, payload.name)
+	elseif command == "pushToLive" then
+		-- Publish the editor's working world (":edit") to the live keys the main game reads. Owner-only,
+		-- since it changes the live game. Editing/loading otherwise never touches live. Applies to the main
+		-- game on its next server restart. Save (promote) your edits into the editor world first.
+		if not EditorAdmins.canManage(player) then
+			return { ok = false, error = "only the owner can push the map to the live game" }
+		end
+		local pushResult = safeCall(Editor.pushToLive)
+		if not pushResult.ok then
+			return { ok = false, error = "push failed: " .. tostring(pushResult.error) }
+		end
+		local pr = pushResult.result or {}
+		local ok = (pr.ok ~= false) and ((pr.failures or 0) == 0)
+		local msg
+		if ok then
+			msg = string.format(
+				"Pushed to Live \u{2713} %d section%s published to the main game (applies on its next restart)",
+				pr.writes or 0,
+				(pr.writes == 1) and "" or "s"
+			)
+		else
+			local firstErr = (pr.errors and pr.errors[1] and pr.errors[1].error) or "unknown error"
+			msg = "Push to Live failed: " .. tostring(firstErr)
+		end
+		return {
+			ok = ok,
+			mode = "push",
+			result = { mode = "push", writes = { failures = pr.failures or 0 }, message = msg },
+			writes = { failures = pr.failures or 0 },
+			message = msg,
+			error = (not ok) and msg or nil,
+		}
 	elseif command == "listAccess" then
 		-- Current players + each one's tier, plus the config-driven access model (managers/historians are set
 		-- in the Creator Hub "data_editor_access" config — no republish). Any authorized user may view.
