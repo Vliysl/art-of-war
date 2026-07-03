@@ -2198,6 +2198,36 @@ local function renderSaves()
 		readonlyRow(detail, "Countries", meta.countries)
 		readonlyRow(detail, "Provinces", meta.provinces)
 
+		-- Overwrite this saved map with the current editor world (two-click confirm). Reuses saveConfig,
+		-- which writes under the existing name -> replaces the snapshot. Editor-world only; never touches live.
+		local owArmed = false
+		local owBtn
+		owBtn = Button.create({
+			parent = detail,
+			variant = "primary",
+			text = "Overwrite this save",
+			width = 180,
+			onClick = function()
+				if not owArmed then
+					owArmed = true
+					owBtn.Text = "Click again to overwrite"
+					setStatus("Overwrite '" .. name .. "' with the current editor map? Click again to confirm.", Colors.Negative)
+					return
+				end
+				owArmed = false
+				owBtn.Text = "Overwrite this save"
+				setStatus("Overwriting '" .. name .. "'...", Colors.TextSecondary)
+				local r, err = editorCall("saveConfig", { name = name })
+				if r then
+					setStatus("Overwrote save '" .. name .. "'", Colors.Positive)
+					render()
+				else
+					setStatus("Overwrite failed: " .. tostring(err), Colors.Negative)
+				end
+			end,
+		})
+		owBtn.LayoutOrder = 89
+
 		-- Load: two-click confirm (replaces the live world in storage; applies on restart/rejoin).
 		local armed = false
 		local loadBtn
