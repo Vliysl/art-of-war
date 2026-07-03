@@ -247,17 +247,25 @@ function DraftOverlay.diffBundles(draftBundle, sharedBundle, baselineBundle)
 			seen[key] = true
 			local sharedValue = sharedMap[key]
 			if not deepEquals(draftValue, sharedValue) then
-				local action
-				if sharedValue == nil then action = "add"
-				else action = "update" end
-				table.insert(diffs, {
-					kind = kind,
-					field = field,
-					key = key,
-					action = action,
-					draftValue = draftValue,
-					sharedValue = sharedValue,
-				})
+				-- 3-way merge: only promote records THIS user actually changed since they synced
+				-- (draft ~= baseline). If the draft still matches baseline, the user never touched
+				-- this record, so a difference vs shared means a CO-EDITOR changed it -- keep theirs
+				-- instead of reverting to our stale copy. Mirrors the delete branch below, which
+				-- already gates on baseline. With no baseline supplied, fall back to 2-way.
+				local userChanged = (baselineMap == nil) or (not deepEquals(draftValue, baselineMap[key]))
+				if userChanged then
+					local action
+					if sharedValue == nil then action = "add"
+					else action = "update" end
+					table.insert(diffs, {
+						kind = kind,
+						field = field,
+						key = key,
+						action = action,
+						draftValue = draftValue,
+						sharedValue = sharedValue,
+					})
+				end
 			end
 		end
 		if next(draftMap) ~= nil then

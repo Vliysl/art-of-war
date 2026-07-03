@@ -1590,10 +1590,17 @@ function DataEditor.save()
 	local TOMB = overlay.TOMBSTONE or false
 	local previousTiles = overlay.getTileOverrides and overlay.getTileOverrides() or {}
 
+	-- Journal only records that actually changed this session (differ from the session baseline), so
+	-- DataOverlay's MERGE_SAVES flush overlays just our edits instead of our whole (possibly stale)
+	-- world -- otherwise this path would revert co-editors' concurrent changes. DEAD while staging is
+	-- on (save routes through promote()), but keep it merge-safe in case STAGING_ENABLED is flipped off.
 	for tag, record in pairs(countries) do
-		overlay.setCountry(tag, record)
-		counts.countries += 1
-		edits.countries[tag] = record
+		local prev = priorBaseline.countries and priorBaseline.countries[tag]
+		if prev == nil or not recordsEqual(record, prev) then
+			overlay.setCountry(tag, record)
+			counts.countries += 1
+			edits.countries[tag] = record
+		end
 	end
 	for tag in pairs(priorBaseline.countries or {}) do
 		if not countries[tag] then
@@ -1604,9 +1611,12 @@ function DataEditor.save()
 	end
 
 	for id, record in pairs(provinces) do
-		overlay.setProvince(id, record)
-		counts.provinces += 1
-		edits.provinces[tostring(id)] = record
+		local prev = priorBaseline.provinces and priorBaseline.provinces[id]
+		if prev == nil or not recordsEqual(record, prev) then
+			overlay.setProvince(id, record)
+			counts.provinces += 1
+			edits.provinces[tostring(id)] = record
+		end
 	end
 	for id in pairs(priorBaseline.provinces or {}) do
 		if not provinces[id] then
@@ -1617,9 +1627,12 @@ function DataEditor.save()
 	end
 
 	for id, part in pairs(eu4Map) do
-		overlay.setEU4Map(id, part)
-		counts.eu4map += 1
-		edits.eu4map[tostring(id)] = part
+		local prev = priorBaseline.eu4Map and priorBaseline.eu4Map[id]
+		if prev == nil or not recordsEqual(part, prev) then
+			overlay.setEU4Map(id, part)
+			counts.eu4map += 1
+			edits.eu4map[tostring(id)] = part
+		end
 	end
 	for id in pairs(priorBaseline.eu4Map or {}) do
 		if not eu4Map[id] then
@@ -1630,9 +1643,12 @@ function DataEditor.save()
 	end
 
 	for name, ownerTag in pairs(tileOwners) do
-		overlay.setTile(name, ownerTag)
-		counts.tiles += 1
-		edits.tiles[name] = ownerTag
+		local prev = priorBaseline.tileOwners and priorBaseline.tileOwners[name]
+		if prev == nil or not recordsEqual(ownerTag, prev) then
+			overlay.setTile(name, ownerTag)
+			counts.tiles += 1
+			edits.tiles[name] = ownerTag
+		end
 	end
 	for name in pairs(previousTiles) do
 		if tileOwners[name] == nil then
@@ -1643,9 +1659,12 @@ function DataEditor.save()
 	end
 
 	for id, record in pairs(cultures) do
-		overlay.setCulture(id, record)
-		counts.cultures += 1
-		edits.cultures[id] = record
+		local prev = priorBaseline.cultures and priorBaseline.cultures[id]
+		if prev == nil or not recordsEqual(record, prev) then
+			overlay.setCulture(id, record)
+			counts.cultures += 1
+			edits.cultures[id] = record
+		end
 	end
 	for id in pairs(priorBaseline.cultures or {}) do
 		if not cultures[id] then
@@ -1656,9 +1675,12 @@ function DataEditor.save()
 	end
 
 	for id, record in pairs(religions) do
-		overlay.setReligion(id, record)
-		counts.religions += 1
-		edits.religions[id] = record
+		local prev = priorBaseline.religions and priorBaseline.religions[id]
+		if prev == nil or not recordsEqual(record, prev) then
+			overlay.setReligion(id, record)
+			counts.religions += 1
+			edits.religions[id] = record
+		end
 	end
 	for id in pairs(priorBaseline.religions or {}) do
 		if not religions[id] then
@@ -1672,9 +1694,12 @@ function DataEditor.save()
 	edits.ideologies = {}
 	if overlay.setIdeology then
 		for id, record in pairs(ideologies) do
-			overlay.setIdeology(id, record)
-			counts.ideologies += 1
-			edits.ideologies[id] = record
+			local prev = priorBaseline.ideologies and priorBaseline.ideologies[id]
+			if prev == nil or not recordsEqual(record, prev) then
+				overlay.setIdeology(id, record)
+				counts.ideologies += 1
+				edits.ideologies[id] = record
+			end
 		end
 		for id in pairs(priorBaseline.ideologies or {}) do
 			if not ideologies[id] then
@@ -1689,9 +1714,12 @@ function DataEditor.save()
 	edits.governmentTypes = {}
 	if overlay.setGovernmentType then
 		for id, record in pairs(governments) do
-			overlay.setGovernmentType(id, record)
-			counts.governments += 1
-			edits.governmentTypes[id] = record
+			local prev = priorBaseline.governments and priorBaseline.governments[id]
+			if prev == nil or not recordsEqual(record, prev) then
+				overlay.setGovernmentType(id, record)
+				counts.governments += 1
+				edits.governmentTypes[id] = record
+			end
 		end
 		for id in pairs(priorBaseline.governments or {}) do
 			if not governments[id] then
