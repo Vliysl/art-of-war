@@ -545,6 +545,7 @@ local TABS = {
 	{ key = "identity", label = "Identity" },
 	{ key = "formables", label = "Formables" },
 	{ key = "saves", label = "Saves" },
+	{ key = "logs", label = "Logs" },
 	{ key = "access", label = "Access" },
 }
 local tabRow = frame({ parent = root, transparent = true, size = UDim2.new(1, 0, 0, 34), position = UDim2.fromOffset(0, 40) })
@@ -2309,6 +2310,103 @@ end
 -- Access is set in the Creator Hub config "data_editor_access" (a JSON object { managers, historians }) and
 -- changes go live WITHOUT a place republish. This tab explains that model and lists online players + their
 -- tier. The legacy in-game session Grant/Revoke buttons only appear when the RoN owner suite is enabled.
+local logActionFilter = "All" -- persists across renders; the Logs-tab action filter
+
+local function renderLogs()
+	local res = editorCall("getLogs", { limit = 300 })
+	local logs = (type(res) == "table" and res.logs) or {}
+	local actions = (type(res) == "table" and res.actions) or {}
+
+	-- Header: action filter + refresh.
+	local header = frame({ parent = body, transparent = true, size = UDim2.new(1, 0, 0, 30) })
+	label(header, "Filter", "bodySm", Colors.TextSecondary).Size = UDim2.fromOffset(40, 30)
+	local opts = { "All" }
+	for _, a in ipairs(actions) do
+		opts[#opts + 1] = a
+	end
+	dropdown({
+		parent = header,
+		size = UDim2.fromOffset(170, 26),
+		position = UDim2.fromOffset(48, 2),
+		options = opts,
+		value = logActionFilter,
+		onChange = function(v)
+			logActionFilter = v
+			render()
+		end,
+	})
+	local refreshBtn = Button.create({
+		parent = header,
+		variant = "ghost",
+		text = "Refresh",
+		width = 90,
+		onClick = function()
+			render()
+		end,
+	})
+	refreshBtn.Position = UDim2.fromOffset(226, 2)
+
+	local filtered = {}
+	for _, e in ipairs(logs) do
+		if logActionFilter == "All" or e.a == logActionFilter then
+			filtered[#filtered + 1] = e
+		end
+	end
+
+	local headerH = 36
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.BackgroundColor3 = Colors.SurfaceBase
+	scroll.BorderSizePixel = 0
+	scroll.ScrollBarThickness = 6
+	scroll.Position = UDim2.fromOffset(0, headerH)
+	scroll.Size = UDim2.new(1, 0, 1, -headerH)
+	scroll.CanvasSize = UDim2.fromOffset(0, #filtered * 24 + 12)
+	scroll.Parent = body
+	do
+		local s = Instance.new("UIStroke")
+		s.Color = Colors.BorderSubtle
+		s.Thickness = 1
+		s.Parent = scroll
+	end
+	local layout = Instance.new("UIListLayout")
+	layout.Padding = UDim.new(0, 2)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = scroll
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 6)
+	pad.PaddingRight = UDim.new(0, 6)
+	pad.PaddingTop = UDim.new(0, 6)
+	pad.PaddingBottom = UDim.new(0, 6)
+	pad.Parent = scroll
+
+	if #filtered == 0 then
+		local none = label(
+			scroll,
+			"No log entries" .. (logActionFilter ~= "All" and (" for '" .. logActionFilter .. "'") or "") .. " yet.",
+			"bodySm",
+			Colors.TextSecondary
+		)
+		none.Size = UDim2.new(1, 0, 0, 24)
+		return
+	end
+
+	for i, e in ipairs(filtered) do
+		local row = frame({ parent = scroll, color = Colors.SurfaceElevated, size = UDim2.new(1, 0, 0, 22) })
+		row.LayoutOrder = i
+		local when = os.date("!%m-%d %H:%M", tonumber(e.t) or 0)
+		local timeLbl = label(row, when, "bodySm", Colors.TextSecondary)
+		timeLbl.Position = UDim2.fromOffset(8, 0)
+		timeLbl.Size = UDim2.fromOffset(84, 22)
+		local actLbl = label(row, tostring(e.a or "?"), "bodySm", Colors.Accent)
+		actLbl.Position = UDim2.fromOffset(96, 0)
+		actLbl.Size = UDim2.fromOffset(104, 22)
+		local msgLbl = label(row, string.format("%s  -  %s", tostring(e.u or "?"), tostring(e.msg or "")), "bodySm", Colors.TextPrimary)
+		msgLbl.Position = UDim2.fromOffset(204, 0)
+		msgLbl.Size = UDim2.new(1, -212, 1, 0)
+		msgLbl.TextXAlignment = Enum.TextXAlignment.Left
+	end
+end
+
 local function renderAccess()
 	local res = editorCall("listAccess")
 	local canManage = type(res) == "table" and res.canManage == true
@@ -2442,6 +2540,8 @@ render = function()
 		renderFormables()
 	elseif state.tab == "saves" then
 		renderSaves()
+	elseif state.tab == "logs" then
+		renderLogs()
 	elseif state.tab == "access" then
 		renderAccess()
 	end

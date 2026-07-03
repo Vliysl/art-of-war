@@ -4,6 +4,9 @@ local Players = game:GetService("Players")
 
 local Editor = require(ServerStorage:WaitForChild("Dev"):WaitForChild("DataEditor"))
 local EditorAdmins = require(ServerStorage:WaitForChild("Dev"):WaitForChild("EditorAdmins"))
+local DataStoreService = game:GetService("DataStoreService")
+local HttpService = game:GetService("HttpService")
+local RelayConfig = require(ServerStorage:WaitForChild("Dev"):WaitForChild("RelayConfig"))
 
 local STAGING_ENABLED = true
 
@@ -650,7 +653,185 @@ local function snapshotState()
 	}
 end
 
-api.OnServerInvoke = function(player, command, payload)
+-- ─────────────────────────── editor action log ───────────────────────────
+-- A filterable audit trail of editor WRITE-actions (who / when / what), shown in the Logs tab. Entries
+-- buffer in memory (coalescing rapid same-owner paints into one row) and flush to a shared DataStore key
+-- so the log is visible across editor servers and survives restarts. Reads are never logged.
+local LOG_KEY = "editor:log@v1"
+local LOG_CAP = 600
+local LOG_FLUSH_INTERVAL = 20
+local PAINT_COALESCE_WINDOW = 8 -- seconds: merge a user's consecutive same-owner paints into one row
+
+-- command -> action category. ONLY these commands are logged; anything else is a read/no-op.
+local LOG_ACTIONS = {
+	assignProvince = "Paint",
+	assignBatch = "Paint",
+	assignProvinceField = "Province",
+	assignProvinceFieldBatch = "Province",
+	addProvince = "Province",
+	updateProvince = "Province",
+	removeProvince = "Province",
+	promoteTile = "Province",
+	mapProvinceToPart = "Province",
+	addCountry = "Country",
+	updateCountry = "Country",
+	removeCountry = "Country",
+	addCulture = "Culture/Religion",
+	updateCulture = "Culture/Religion",
+	removeCulture = "Culture/Religion",
+	addReligion = "Culture/Religion",
+	updateReligion = "Culture/Religion",
+	removeReligion = "Culture/Religion",
+	addIdeology = "Ideology/Gov",
+	updateIdeology = "Ideology/Gov",
+	removeIdeology = "Ideology/Gov",
+	addGovernmentType = "Ideology/Gov",
+	updateGovernmentType = "Ideology/Gov",
+	removeGovernmentType = "Ideology/Gov",
+	save = "Save",
+	saveConfig = "Save config",
+	loadConfig = "Load config",
+	deleteConfig = "Delete config",
+	pushToLive = "Push to Live",
+	migrateLegacy = "Migrate",
+	migrateV3toV4 = "Migrate",
+	rollbackV4 = "Migrate",
+	importSeed = "Import",
+}
+-- Actions that should flush to storage immediately (rare + important; everything else waits for the timer).
+local FLUSH_NOW_ACTIONS = { save = true, saveConfig = true, loadConfig = true, deleteConfig = true, pushToLive = true }
+
+-- Distinct action categories (sorted) for the Logs-tab filter dropdown.
+local LOG_ACTION_LIST = (function()
+	local seen, list = {}, {}
+	for _, a in pairs(LOG_ACTIONS) do
+		if not seen[a] then
+			seen[a] = true
+			list[#list + 1] = a
+		end
+	end
+	table.sort(list)
+	return list
+end)()
+
+local logStore = DataStoreService:GetDataStore(RelayConfig.DATASTORE_NAME, RelayConfig.DATASTORE_SCOPE)
+local pendingLog = {} -- entries created on THIS server, not yet flushed
+
+local function logDecode(raw)
+	if type(raw) == "string" then
+		local ok, dec = pcall(HttpService.JSONDecode, HttpService, raw)
+		if ok and type(dec) == "table" then
+			return dec
+		end
+		return {}
+	end
+	return type(raw) == "table" and raw or {}
+end
+
+-- Short human summary + (for paints) a coalesce key so a user's consecutive same-owner paints merge.
+local function describeAction(command, payload)
+	payload = type(payload) == "table" and payload or {}
+	if command == "assignProvince" then
+		return string.format("painted #%s -> %s", tostring(payload.id), tostring(payload.ownerTag)), "paint:" .. tostring(payload.ownerTag)
+	elseif command == "assignBatch" then
+		local n = (type(payload.items) == "table" and #payload.items) or 0
+		return string.format("painted %d tiles -> %s", n, tostring(payload.ownerTag)), nil
+	elseif command == "addCountry" then
+		return "added country " .. tostring(payload.tag), nil
+	elseif command == "updateCountry" then
+		return "edited country " .. tostring(payload.tag), nil
+	elseif command == "removeCountry" then
+		return "removed country " .. tostring(payload.tag), nil
+	elseif command == "saveConfig" then
+		return "saved map '" .. tostring(payload.name) .. "'", nil
+	elseif command == "loadConfig" then
+		return "loaded map '" .. tostring(payload.name) .. "'", nil
+	elseif command == "deleteConfig" then
+		return "deleted map '" .. tostring(payload.name) .. "'", nil
+	elseif command == "pushToLive" then
+		return "published the editor map to the live game", nil
+	end
+	local tgt = payload.id or payload.tag or payload.key or payload.name
+	return command .. (tgt ~= nil and (" " .. tostring(tgt)) or ""), nil
+end
+
+local function appendLog(player, command, payload)
+	local action = LOG_ACTIONS[command]
+	if not action then
+		return
+	end
+	local summary, coalesceKey = describeAction(command, payload)
+	local now = os.time()
+	if coalesceKey then
+		local last = pendingLog[#pendingLog]
+		if last and last.uid == player.UserId and last.ck == coalesceKey and (now - (last.t or 0)) <= PAINT_COALESCE_WINDOW then
+			last.n = (last.n or 1) + 1
+			last.t = now
+			last.msg = string.format("painted %d tiles -> %s", last.n, string.sub(coalesceKey, 7))
+			return
+		end
+	end
+	pendingLog[#pendingLog + 1] = {
+		t = now,
+		uid = player.UserId,
+		u = player.DisplayName or player.Name,
+		a = action,
+		msg = summary,
+		n = coalesceKey and 1 or nil,
+		ck = coalesceKey,
+	}
+	while #pendingLog > LOG_CAP do
+		table.remove(pendingLog, 1)
+	end
+end
+
+local function flushLogs()
+	if #pendingLog == 0 then
+		return
+	end
+	local batch = pendingLog
+	pendingLog = {}
+	local ok = pcall(function()
+		logStore:UpdateAsync(LOG_KEY, function(raw)
+			local stored = logDecode(raw)
+			for _, e in ipairs(batch) do
+				stored[#stored + 1] = e
+			end
+			while #stored > LOG_CAP do
+				table.remove(stored, 1)
+			end
+			return HttpService:JSONEncode(stored)
+		end)
+	end)
+	if not ok then
+		-- restore the batch (front) so we retry on the next flush without losing entries
+		for i = #batch, 1, -1 do
+			table.insert(pendingLog, 1, batch[i])
+		end
+	end
+end
+
+-- Newest-first list of up to `limit` entries: the shared stored log plus this server's un-flushed batch.
+local function readLogs(limit)
+	limit = limit or 300
+	local stored = {}
+	local ok, raw = pcall(function()
+		return logStore:GetAsync(LOG_KEY)
+	end)
+	if ok then
+		stored = logDecode(raw)
+	end
+	for _, e in ipairs(pendingLog) do
+		stored[#stored + 1] = e
+	end
+	local out = {}
+	for i = #stored, math.max(1, #stored - limit + 1), -1 do
+		out[#out + 1] = stored[i]
+	end
+	return out
+end
+
+local function handleEditorCommand(player, command, payload)
 	if type(command) ~= "string" then
 		return { ok = false, error = "invalid command" }
 	end
@@ -1467,6 +1648,35 @@ api.OnServerInvoke = function(player, command, payload)
 	end
 	return { ok = false, error = "unknown command: " .. tostring(command) }
 end
+
+-- Public entry point: serve read-only getLogs, run the command, then log successful WRITE-actions so the
+-- Logs tab shows an audit trail. getLogs is handled here so it never logs itself.
+api.OnServerInvoke = function(player, command, payload)
+	if command == "getLogs" then
+		if not isAuthorized(player) then
+			return { ok = false, error = "not authorized" }
+		end
+		local limit = (type(payload) == "table" and tonumber(payload.limit)) or 300
+		return { ok = true, logs = readLogs(limit), actions = LOG_ACTION_LIST }
+	end
+	local result = handleEditorCommand(player, command, payload)
+	if LOG_ACTIONS[command] and type(result) == "table" and result.ok ~= false then
+		appendLog(player, command, payload)
+		if FLUSH_NOW_ACTIONS[command] then
+			task.spawn(flushLogs)
+		end
+	end
+	return result
+end
+
+-- Periodically persist buffered log entries to the shared DataStore key, and on server shutdown.
+task.spawn(function()
+	while true do
+		task.wait(LOG_FLUSH_INTERVAL)
+		flushLogs()
+	end
+end)
+game:BindToClose(flushLogs)
 
 Editor.load()
 local function countTable(t)
