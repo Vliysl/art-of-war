@@ -310,6 +310,7 @@ task.defer(function()
 		-- map-mode toggle, but automatic). A sweep is cheap and idempotent.
 		if ClientStateCache and ClientStateCache.onChange then
 			ClientStateCache.onChange("snapshot", reapplyPolitical)
+				ClientStateCache.onChange("provincesReady", reapplyPolitical)
 		end
 		task.delay(3, reapplyPolitical)
 		task.delay(8, reapplyPolitical)

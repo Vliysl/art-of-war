@@ -6,6 +6,10 @@ local BROADCAST_INTERVAL = 1.5
 -- every broadcast tick + bounded by a short TTL; a joiner may see state up to
 -- ~SNAPSHOT_TTL old, which the next delta corrects. Delta path is untouched.
 local SNAPSHOT_TTL = 2
+-- Max records per replication packet. The full province set (~5.7k, ~2.6 MB, sparse numeric-keyed)
+-- truncates in Roblox remote transit (only ids ~1..1249 survive; countries at ~1 MB survive). So provinces
+-- are streamed in id-keyed sub-buckets of this size (~0.37 MB each, well under the limit) instead of whole.
+local CHUNK = 800
 local COLLECTIONS = {
 	"provinces",
 	"countries",
@@ -100,7 +104,10 @@ end
 
 local function buildSnapshotUncached()
 	local snapshot = { revision = ctx.WorldState.getRevision(), fullSnapshot = true }
-	snapshot.provinces = ctx.WorldState.allProvinces()
+	-- Provinces are NOT sent here: the full set is a ~2.6 MB sparse table that truncates in remote transit.
+	-- They stream separately via pushProvincesTo (chunked). `provincesChunked` tells the client's fullSnapshot
+	-- handler to SKIP pruning provinces, so an omitted-provinces snapshot can't wipe chunks that already arrived.
+	snapshot.provincesChunked = true
 	snapshot.countries = ctx.WorldState.allCountries()
 	snapshot.markets = ctx.WorldState.allMarkets()
 	snapshot.tradeRoutes = ctx.WorldState.allTradeRoutes()
@@ -113,6 +120,39 @@ local function buildSnapshotUncached()
 	snapshot.pacts = ctx.WorldState.allPacts()
 	snapshot.armyGroups = ctx.WorldState.allArmyGroups()
 	return snapshot
+end
+
+-- Stream the full province set to one joining client in id-keyed chunks (each <= CHUNK, ~0.37 MB) via the
+-- StateSync delta channel, then a completion marker. These are ordinary delta packets, so the client's
+-- existing applyDelta reassembles them (and fires the per-record recolor notifies). This is the fix for the
+-- sparse full-snapshot truncation that dropped ~3k high-id provinces client-side.
+local function pushProvincesTo(player)
+	if not stateSync or not player then
+		return
+	end
+	local provinces = ctx.WorldState.allProvinces()
+	local ids = {}
+	for id in provinces do
+		ids[#ids + 1] = id
+	end
+	table.sort(ids, function(a, b)
+		return (tonumber(a) or 0) < (tonumber(b) or 0)
+	end)
+	local revision = ctx.WorldState.getRevision()
+	local chunk, n = {}, 0
+	for _, id in ipairs(ids) do
+		chunk[id] = provinces[id]
+		n += 1
+		if n >= CHUNK then
+			stateSync:FireClient(player, { revision = revision, provinces = chunk })
+			chunk, n = {}, 0
+			task.wait()
+		end
+	end
+	if n > 0 then
+		stateSync:FireClient(player, { revision = revision, provinces = chunk })
+	end
+	stateSync:FireClient(player, { revision = revision, provincesComplete = true })
 end
 
 -- perf: serve joiners a recently-built snapshot when one is fresh enough.
@@ -141,7 +181,33 @@ local function broadcast()
 	if not packet then
 		return
 	end
-	stateSync:FireAllClients(packet)
+	-- Chunk an oversized province delta so a single packet never carries the truncation-prone full sparse
+	-- table. The first post-hydrate tick drains ALL ~5.7k provinces as dirty; a large annex can too.
+	local provs = packet.provinces
+	local pcount = 0
+	if provs then
+		for _ in provs do
+			pcount += 1
+		end
+	end
+	if pcount > CHUNK then
+		packet.provinces = nil
+		stateSync:FireAllClients(packet)
+		local chunk, n = {}, 0
+		for k, v in provs do
+			chunk[k] = v
+			n += 1
+			if n >= CHUNK then
+				stateSync:FireAllClients({ revision = packet.revision, provinces = chunk })
+				chunk, n = {}, 0
+			end
+		end
+		if n > 0 then
+			stateSync:FireAllClients({ revision = packet.revision, provinces = chunk })
+		end
+	else
+		stateSync:FireAllClients(packet)
+	end
 	-- perf: world advanced this tick -> drop the cached snapshot so the next
 	-- joiner rebuilds against the just-broadcast revision (lazy rebuild).
 	cachedSnapshot = nil
@@ -160,6 +226,7 @@ function StateReplicator.register(context)
 	ctx.StateReplicator = {
 		broadcast = broadcast,
 		buildSnapshot = buildSnapshot,
+		pushProvincesTo = pushProvincesTo,
 		setStateSync = function(remote)
 			stateSync = remote
 		end,

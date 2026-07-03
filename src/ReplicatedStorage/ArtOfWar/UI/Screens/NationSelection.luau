@@ -146,7 +146,7 @@ function NationSelection.create(ctx)
 	local chips = {}
 	local destroyed = false
 	local refreshPending = false
-	local followConn, viewportConn, unsubCountries
+	local followConn, viewportConn, unsubCountries, unsubProvincesReady
 
 	local selectCountry, rebuildList, renderDetail, updatePlay, refreshDetailVisibility
 
@@ -1088,37 +1088,44 @@ function NationSelection.create(ctx)
 		viewportConn = cam:GetPropertyChangedSignal("ViewportSize"):Connect(refreshDetailVisibility)
 	end
 
-	if cache and cache.onChangePrefix then
-		unsubCountries = cache.onChangePrefix("countries", function()
-			if refreshPending then
+	local function scheduleRefresh()
+		if refreshPending then
+			return
+		end
+		refreshPending = true
+		task.defer(function()
+			refreshPending = false
+			if destroyed then
 				return
 			end
-			refreshPending = true
-			task.defer(function()
-				refreshPending = false
-				if destroyed then
-					return
-				end
-				buildViewModels()
-				buildPartsIndex() -- ownership may have shifted (annex); rebuild the record-driven highlight index
-				rebuildList()
-				if selectedTag then
-					local vm = viewModels[selectedTag]
-					if vm then
-						if rowByTag[selectedTag] then
-							rowByTag[selectedTag].setSelected(true)
-						end
-						renderDetail(vm)
-						updatePlay(vm)
-					else
-						selectedTag = nil
-						restoreHighlight(highlightSelected)
-						updatePlay(nil)
+			buildViewModels()
+			buildPartsIndex() -- ownership/records may have changed; rebuild the record-driven highlight index
+			rebuildList()
+			if selectedTag then
+				local vm = viewModels[selectedTag]
+				if vm then
+					if rowByTag[selectedTag] then
+						rowByTag[selectedTag].setSelected(true)
 					end
+					renderDetail(vm)
+					updatePlay(vm)
+				else
+					selectedTag = nil
+					restoreHighlight(highlightSelected)
+					updatePlay(nil)
 				end
-				refreshDetailVisibility()
-			end)
+			end
+			refreshDetailVisibility()
 		end)
+	end
+	if cache and cache.onChangePrefix then
+		unsubCountries = cache.onChangePrefix("countries", scheduleRefresh)
+	end
+	-- Provinces stream in AFTER this screen mounts (chunked replication), so the initial buildViewModels/
+	-- buildPartsIndex ran against an incomplete province cache -> high-id tiles didn't highlight and counts
+	-- were low (PLC showed 143 instead of 156). Re-index once the full province set finishes arriving.
+	if cache and cache.onChange then
+		unsubProvincesReady = cache.onChange("provincesReady", scheduleRefresh)
 	end
 
 	if ctx.parent then
@@ -1135,6 +1142,9 @@ function NationSelection.create(ctx)
 		restoreHighlight(highlightHover)
 		if unsubCountries then
 			pcall(unsubCountries)
+		end
+		if unsubProvincesReady then
+			pcall(unsubProvincesReady)
 		end
 		if viewportConn then
 			viewportConn:Disconnect()

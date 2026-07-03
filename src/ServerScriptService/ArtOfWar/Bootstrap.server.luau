@@ -2165,11 +2165,19 @@ if loadedSystems.TimeController and context.TimeController then
 	task.defer(context.TimeController.broadcast)
 end
 
-bindFunction("RequestFullState", function()
+bindFunction("RequestFullState", function(player)
 	if not context.StateReplicator then
 		return nil
 	end
-	return context.StateReplicator.buildSnapshot()
+	local snapshot = context.StateReplicator.buildSnapshot()
+	-- The snapshot omits provinces (the full ~5.7k set is a ~2.6 MB sparse table that truncates in remote
+	-- transit). Stream them to THIS client in chunks after returning the small collections.
+	if player and context.StateReplicator.pushProvincesTo then
+		task.spawn(function()
+			context.StateReplicator.pushProvincesTo(player)
+		end)
+	end
+	return snapshot
 end)
 
 -- Client self-heal reconcile (OwnershipReconcile): compact owner/controller digest so a client can repair

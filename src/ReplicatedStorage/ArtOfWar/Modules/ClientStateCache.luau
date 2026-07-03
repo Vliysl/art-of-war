@@ -153,22 +153,26 @@ end
 -- not repaint. The coarse revision guard (caller) still drops a wholly-stale snapshot.
 local function applyFullSnapshot(packet)
 	for _, name in ipairs(REPLICATED_COLLECTIONS) do
-		local incoming = packet[name] or {}
-		applyCollection(name, incoming)
-		local present = {}
-		for k in incoming do
-			present[provKey(name, k)] = true
-		end
-		local bucket = cache[name]
-		local stale = {}
-		for k in bucket do
-			if not present[k] then
-				stale[#stale + 1] = k
+		-- Provinces stream in chunks (packet.provincesChunked) and are NOT in this snapshot; skip them so the
+		-- prune can't wipe chunk-delivered records (present would be empty -> it would delete every province).
+		if not (name == "provinces" and packet.provincesChunked) then
+			local incoming = packet[name] or {}
+			applyCollection(name, incoming)
+			local present = {}
+			for k in incoming do
+				present[provKey(name, k)] = true
 			end
-		end
-		for _, k in ipairs(stale) do
-			bucket[k] = nil
-			notify(name .. "." .. tostring(k), nil)
+			local bucket = cache[name]
+			local stale = {}
+			for k in bucket do
+				if not present[k] then
+					stale[#stale + 1] = k
+				end
+			end
+			for _, k in ipairs(stale) do
+				bucket[k] = nil
+				notify(name .. "." .. tostring(k), nil)
+			end
 		end
 	end
 	cache.revision = math.max(cache.revision or 0, packet.revision or 0)
@@ -202,6 +206,11 @@ function ClientStateCache.applyDelta(packet)
 	applyCollection("pacts", packet.pacts)
 	applyCollection("armyGroups", packet.armyGroups)
 	applyRemovals(packet.removed)
+	-- Server finished streaming the chunked province set -> tell consumers (political map re-sweep,
+	-- nation-select re-index) that the province cache is now complete.
+	if packet.provincesComplete then
+		notify("provincesReady", cache)
+	end
 	if packet.revision then
 		cache.revision = packet.revision
 	end
