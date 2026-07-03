@@ -152,7 +152,19 @@ local function pushProvincesTo(player)
 	if n > 0 then
 		stateSync:FireClient(player, { revision = revision, provinces = chunk })
 	end
-	stateSync:FireClient(player, { revision = revision, provincesComplete = true })
+	-- Completion marker carries the full CURRENT province id set so the client can prune any province it still
+	-- holds that no longer exists server-side (a delete-delta it may have missed) -- applyFullSnapshot no longer
+	-- prunes provinces. Recomputed here (not the start-of-stream `ids`) so a province added mid-stream via a
+	-- concurrent delta isn't pruned. A flat array of ~5.7k numeric ids is tiny (~30 KB), never near the limit.
+	local finalIds = {}
+	for id in ctx.WorldState.allProvinces() do
+		finalIds[#finalIds + 1] = id
+	end
+	stateSync:FireClient(player, {
+		revision = ctx.WorldState.getRevision(),
+		provincesComplete = true,
+		provinceIds = finalIds,
+	})
 end
 
 -- perf: serve joiners a recently-built snapshot when one is fresh enough.

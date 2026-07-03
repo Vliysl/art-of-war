@@ -1753,6 +1753,9 @@ function ArmyPanel.create(ctx)
 	if WorldConstants.EnableArmyGroups then
 		table.insert(conns, ctx.cache.onChangePrefix("armyGroups", scheduleRefresh))
 	end
+	-- Provinces stream in chunked/late after join, so the army's current tile (terrain + fort tier for the
+	-- Defense breakdown, and the location label) may not be cached at mount. Re-render once the set completes.
+	table.insert(conns, ctx.cache.onChange("provincesReady", scheduleRefresh))
 
 	return {
 		root = handle.root,

@@ -209,6 +209,27 @@ function ClientStateCache.applyDelta(packet)
 	-- Server finished streaming the chunked province set -> tell consumers (political map re-sweep,
 	-- nation-select re-index) that the province cache is now complete.
 	if packet.provincesComplete then
+		-- The chunk stream is authoritative on province MEMBERSHIP. Since an omitted-provinces fullSnapshot no
+		-- longer prunes provinces (provincesChunked), a province deleted server-side while we were connected --
+		-- whose delete-delta we might have missed -- would otherwise persist forever. Prune any cached province
+		-- absent from the completion id-set to restore that self-heal.
+		local ids = packet.provinceIds
+		if type(ids) == "table" then
+			local present = {}
+			for _, id in ipairs(ids) do
+				present[provKey("provinces", id)] = true
+			end
+			local stale = {}
+			for k in cache.provinces do
+				if not present[k] then
+					stale[#stale + 1] = k
+				end
+			end
+			for _, k in ipairs(stale) do
+				cache.provinces[k] = nil
+				notify("provinces." .. tostring(k), nil)
+			end
+		end
 		notify("provincesReady", cache)
 	end
 	if packet.revision then

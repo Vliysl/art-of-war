@@ -389,13 +389,19 @@ function EconomyScreen.create(ctx)
 	end
 
 	local function openBuildModal(buildingId, def)
-		local list = buildableProvinces(buildingId, def)
+		local readyConn
 		local modal = Modal.create({
 			parent = ctx.modalLayer or ctx.parent,
 			title = "Build " .. (def.displayName or prettify(buildingId) or buildingId),
 			subtitle = string.format("Cost %s \u{00B7} %d days", money(def.cost or 0), def.buildDays or 0),
 			width = 420,
 			height = 460,
+			onClose = function()
+				if readyConn then
+					pcall(readyConn)
+					readyConn = nil
+				end
+			end,
 		})
 		table.insert(openModals, modal)
 		local content = modal.content
@@ -405,22 +411,35 @@ function EconomyScreen.create(ctx)
 		layout.Padding = UDim.new(0, 6)
 		layout.Parent = content
 
-		if #list == 0 then
-			ScreenKit.note(content, "No eligible provinces. Check infrastructure, coast, or prerequisites.", 1)
-			return
+		-- Provinces stream in chunked/late after join, so a modal opened during streaming can miss the player's own
+		-- high-id tiles. Rebuild the eligible-province rows in place (keeping the layout) once the set streams in.
+		local function populate()
+			for _, child in ipairs(content:GetChildren()) do
+				if not child:IsA("UIListLayout") then
+					child:Destroy()
+				end
+			end
+			local list = buildableProvinces(buildingId, def)
+			if #list == 0 then
+				ScreenKit.note(content, "No eligible provinces. Check infrastructure, coast, or prerequisites.", 1)
+				return
+			end
+			for i, prov in ipairs(list) do
+				local row = ScreenKit.buttonRow(content, i)
+				Button.create({
+					parent = row,
+					variant = "secondary",
+					text = provinceName(prov),
+					onClick = function()
+						ctx.fire("BuildBuilding", prov.id, buildingId)
+						modal.close()
+					end,
+				})
+			end
 		end
-		for i, prov in ipairs(list) do
-			local row = ScreenKit.buttonRow(content, i)
-			Button.create({
-				parent = row,
-				variant = "secondary",
-				text = provinceName(prov),
-				onClick = function()
-					ctx.fire("BuildBuilding", prov.id, buildingId)
-					modal.close()
-				end,
-			})
-		end
+
+		populate()
+		readyConn = ctx.cache.onChange("provincesReady", populate)
 	end
 
 	local function renderBuildings(body, c)

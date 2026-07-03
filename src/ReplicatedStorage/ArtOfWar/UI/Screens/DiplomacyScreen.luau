@@ -767,25 +767,34 @@ function DiplomacyScreen.create(ctx)
 			local wc = WorldConstants
 
 			local rows, costById = {}, {}
-			for id, p in pairs(cache.allProvinces()) do
-				if p.ownerTag == tag then
-					local cost = wc.PeaceTakeProvinceCost or 12
-					-- Core surcharge / claim discount only apply while the cores phase is on (matches the
-					-- server's EnableCores gate in conferenceDemandCost), so the preview stays accurate.
-					if wc.EnableCores then
-						if p.cores and table.find(p.cores, tag) then
-							cost = cost * (wc.PeaceCoreMultiplier or 1.5)
+			local readyConn
+			-- Rebuildable so the demand list can pick up the enemy's high-id provinces if they stream in AFTER the
+			-- conference is opened (provinces arrive chunked/late after join). table.clear keeps the same rows/costById
+			-- references the VirtualList closes over.
+			local function buildRows()
+				table.clear(rows)
+				table.clear(costById)
+				for id, p in pairs(cache.allProvinces()) do
+					if p.ownerTag == tag then
+						local cost = wc.PeaceTakeProvinceCost or 12
+						-- Core surcharge / claim discount only apply while the cores phase is on (matches the
+						-- server's EnableCores gate in conferenceDemandCost), so the preview stays accurate.
+						if wc.EnableCores then
+							if p.cores and table.find(p.cores, tag) then
+								cost = cost * (wc.PeaceCoreMultiplier or 1.5)
+							end
+							if p.claims and mineTag and table.find(p.claims, mineTag) then
+								cost = cost * (wc.PeaceClaimCostDiscount or 0.7)
+							end
 						end
-						if p.claims and mineTag and table.find(p.claims, mineTag) then
-							cost = cost * (wc.PeaceClaimCostDiscount or 0.7)
-						end
+						cost = math.floor(cost + 0.5)
+						costById[id] = cost
+						rows[#rows + 1] = { id = id, name = p.name or ("#" .. tostring(id)), cost = cost }
 					end
-					cost = math.floor(cost + 0.5)
-					costById[id] = cost
-					rows[#rows + 1] = { id = id, name = p.name or ("#" .. tostring(id)), cost = cost }
 				end
+				table.sort(rows, function(a, b) return a.name < b.name end)
 			end
-			table.sort(rows, function(a, b) return a.name < b.name end)
+			buildRows()
 
 			local modal = Modal.create({
 				parent = ctx.modalLayer or ctx.parent,
@@ -794,6 +803,12 @@ function DiplomacyScreen.create(ctx)
 				width = 460,
 				height = 520,
 				footer = true,
+				onClose = function()
+					if readyConn then
+						pcall(readyConn)
+						readyConn = nil
+					end
+				end,
 			})
 
 			local selected = {}
@@ -825,7 +840,7 @@ function DiplomacyScreen.create(ctx)
 				end
 			end
 
-			VirtualList.create({
+			local list = VirtualList.create({
 				parent = holder,
 				rowHeight = 26,
 				getCount = function() return #rows end,
@@ -872,6 +887,21 @@ function DiplomacyScreen.create(ctx)
 					row.C.Text = tostring(r.cost)
 				end,
 			})
+
+			-- If the enemy's provinces finish streaming while this modal is open, rebuild the demand list so no
+			-- territory is missing. One-shot (provincesReady fires once at end of streaming), guarded on modal liveness,
+			-- and torn down by the modal's onClose above.
+			readyConn = cache.onChange("provincesReady", function()
+				if readyConn then
+					pcall(readyConn)
+					readyConn = nil
+				end
+				if not (modal.content and modal.content.Parent) then
+					return
+				end
+				buildRows()
+				list.refresh()
+			end)
 
 			local function fireConf(demands)
 				ctx.fire("ProposePeace", tag, { type = "conference", demands = demands, proposerTag = mineTag })
@@ -1056,6 +1086,11 @@ function DiplomacyScreen.create(ctx)
 			parts[#parts + 1] = "fld:"
 				.. ((tc and tc.treasury ~= nil) and "1" or "0")
 				.. ((tc and tc.manpower ~= nil) and "1" or "0")
+			-- Province count: provinces stream in late/in chunks after join, so hash the count here (and subscribe
+			-- to "provincesReady"/"provinces" below). Without this an open profile would under-count high-id tiles
+			-- (the PLC 143-vs-156 class) until an unrelated field happened to move the signature, and would stay
+			-- stale across an annex.
+			parts[#parts + 1] = "prov:" .. tostring((countryStats(t)))
 			local w = activeWarWith(cache, mineTag, t)
 			if w then
 				parts[#parts + 1] = string.format(
@@ -1129,6 +1164,10 @@ function DiplomacyScreen.create(ctx)
 	table.insert(conns, cache.onChangePrefix("wars", scheduleRefresh))
 	table.insert(conns, cache.onChangePrefix("peaceProposals", scheduleRefresh))
 	table.insert(conns, cache.onChangePrefix("pacts", scheduleRefresh))
+	-- Provinces stream in after join (chunked); refresh so the profile's province count reflects the full set as
+	-- it arrives and after any ownership change. Debounced + signature-gated, so per-record churn doesn't thrash.
+	table.insert(conns, cache.onChange("provincesReady", scheduleRefresh))
+	table.insert(conns, cache.onChangePrefix("provinces", scheduleRefresh))
 
 	return {
 		root = handle.root,
