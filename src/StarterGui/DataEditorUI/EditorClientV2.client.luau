@@ -23,8 +23,9 @@ local VirtualList = require(Components:WaitForChild("VirtualList"))
 
 local api = aow:WaitForChild("Remotes"):WaitForChild("DataEditorAPI")
 
--- Visual colour picker popup: a saturation/value square + hue bar the editor drags, plus a hex box.
--- Editors can still type RGB in the form fields; the chosen colour is reported live via onChange({r,g,b}).
+-- Visual colour picker popup (editor UI style): a saturation/value square + hue bar the editor drags,
+-- plus a hex box. It STAYS OPEN until the X or Done button is clicked (clicking the dimmed backdrop does
+-- nothing). Editors can still type RGB in the form fields; the colour is reported live via onChange({r,g,b}).
 local function openColorPicker(parentGui, initialRGB, onChange)
 	local existing = parentGui:FindFirstChild("__ColorPicker")
 	if existing then
@@ -38,13 +39,13 @@ local function openColorPicker(parentGui, initialRGB, onChange)
 	local b0 = math.clamp(round(tonumber(initialRGB and initialRGB[3]) or 150), 0, 255)
 	local h, s, v = Color3.fromRGB(r0, g0, b0):ToHSV()
 
-	local scrim = Instance.new("TextButton")
+	-- Dimmed backdrop that blocks the editor behind. A Frame (not a button) -> clicking it does NOTHING;
+	-- the picker only closes via the X or Done button below.
+	local scrim = Instance.new("Frame")
 	scrim.Name = "__ColorPicker"
-	scrim.Text = ""
-	scrim.AutoButtonColor = false
-	scrim.Modal = true
+	scrim.Active = true
 	scrim.BackgroundColor3 = Color3.new(0, 0, 0)
-	scrim.BackgroundTransparency = 0.45
+	scrim.BackgroundTransparency = 0.5
 	scrim.BorderSizePixel = 0
 	scrim.Size = UDim2.fromScale(1, 1)
 	scrim.ZIndex = 200
@@ -52,32 +53,59 @@ local function openColorPicker(parentGui, initialRGB, onChange)
 
 	local panel = Instance.new("Frame")
 	panel.Active = true
-	panel.Size = UDim2.fromOffset(252, 250)
+	panel.Size = UDim2.fromOffset(262, 262)
 	panel.AnchorPoint = Vector2.new(0.5, 0.5)
 	panel.Position = UDim2.fromScale(0.5, 0.5)
-	panel.BackgroundColor3 = Color3.fromRGB(32, 34, 40)
+	panel.BackgroundColor3 = Colors.SurfaceElevated
 	panel.BorderSizePixel = 0
 	panel.ZIndex = 201
 	panel.Parent = scrim
 	do
 		local c = Instance.new("UICorner")
-		c.CornerRadius = UDim.new(0, 8)
+		c.CornerRadius = UDim.new(0, 6)
 		c.Parent = panel
 		local st = Instance.new("UIStroke")
-		st.Color = Color3.fromRGB(74, 78, 90)
+		st.Color = Colors.BorderStrong
 		st.Thickness = 1
 		st.Parent = panel
 		local p = Instance.new("UIPadding")
-		p.PaddingTop = UDim.new(0, 12)
-		p.PaddingBottom = UDim.new(0, 12)
+		p.PaddingTop = UDim.new(0, 10)
+		p.PaddingBottom = UDim.new(0, 10)
 		p.PaddingLeft = UDim.new(0, 12)
 		p.PaddingRight = UDim.new(0, 12)
 		p.Parent = panel
 	end
 
+	-- Title bar + close (X).
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(1, -26, 0, 20)
+	title.BackgroundTransparency = 1
+	title.Font = Enum.Font.GothamMedium
+	title.TextSize = 14
+	title.TextColor3 = Colors.TextPrimary
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.Text = "Colour picker"
+	title.ZIndex = 202
+	title.Parent = panel
+
+	local closeX = Instance.new("TextButton")
+	closeX.Size = UDim2.fromOffset(22, 22)
+	closeX.AnchorPoint = Vector2.new(1, 0)
+	closeX.Position = UDim2.new(1, 0, 0, -1)
+	closeX.BackgroundColor3 = Colors.SurfaceSunken or Colors.SurfaceBase
+	closeX.TextColor3 = Colors.TextSecondary
+	closeX.Font = Enum.Font.GothamBold
+	closeX.TextSize = 13
+	closeX.Text = "X"
+	closeX.BorderSizePixel = 0
+	closeX.ZIndex = 203
+	closeX.Parent = panel
+
+	local TOP = 28
 	local SQW, SQH = 168, 150
 	local sv = Instance.new("Frame")
 	sv.Size = UDim2.fromOffset(SQW, SQH)
+	sv.Position = UDim2.fromOffset(0, TOP)
 	sv.BorderSizePixel = 0
 	sv.Active = true
 	sv.ZIndex = 202
@@ -124,7 +152,7 @@ local function openColorPicker(parentGui, initialRGB, onChange)
 
 	local hue = Instance.new("Frame")
 	hue.Size = UDim2.fromOffset(SQW, 16)
-	hue.Position = UDim2.fromOffset(0, SQH + 8)
+	hue.Position = UDim2.fromOffset(0, TOP + SQH + 8)
 	hue.BorderSizePixel = 0
 	hue.Active = true
 	hue.ZIndex = 202
@@ -158,8 +186,8 @@ local function openColorPicker(parentGui, initialRGB, onChange)
 	end
 
 	local swatch = Instance.new("Frame")
-	swatch.Size = UDim2.fromOffset(52, 40)
-	swatch.Position = UDim2.fromOffset(SQW + 12, 0)
+	swatch.Size = UDim2.fromOffset(58, 40)
+	swatch.Position = UDim2.fromOffset(SQW + 14, TOP)
 	swatch.BorderSizePixel = 0
 	swatch.ZIndex = 202
 	swatch.Parent = panel
@@ -168,16 +196,16 @@ local function openColorPicker(parentGui, initialRGB, onChange)
 		c.CornerRadius = UDim.new(0, 4)
 		c.Parent = swatch
 		local st = Instance.new("UIStroke")
-		st.Color = Color3.fromRGB(74, 78, 90)
+		st.Color = Colors.BorderStrong
 		st.Thickness = 1
 		st.Parent = swatch
 	end
 
 	local hexBox = Instance.new("TextBox")
-	hexBox.Size = UDim2.fromOffset(52, 24)
-	hexBox.Position = UDim2.fromOffset(SQW + 12, 48)
-	hexBox.BackgroundColor3 = Color3.fromRGB(20, 22, 26)
-	hexBox.TextColor3 = Color3.new(1, 1, 1)
+	hexBox.Size = UDim2.fromOffset(58, 24)
+	hexBox.Position = UDim2.fromOffset(SQW + 14, TOP + 48)
+	hexBox.BackgroundColor3 = Colors.SurfaceSunken or Colors.SurfaceBase
+	hexBox.TextColor3 = Colors.TextPrimary
 	hexBox.BorderSizePixel = 0
 	hexBox.Font = Enum.Font.Code
 	hexBox.TextSize = 13
@@ -194,9 +222,9 @@ local function openColorPicker(parentGui, initialRGB, onChange)
 
 	local rgbLabel = Instance.new("TextLabel")
 	rgbLabel.Size = UDim2.fromOffset(SQW + 60, 20)
-	rgbLabel.Position = UDim2.fromOffset(0, SQH + 30)
+	rgbLabel.Position = UDim2.fromOffset(0, TOP + SQH + 30)
 	rgbLabel.BackgroundTransparency = 1
-	rgbLabel.TextColor3 = Color3.fromRGB(205, 209, 216)
+	rgbLabel.TextColor3 = Colors.TextSecondary
 	rgbLabel.Font = Enum.Font.Gotham
 	rgbLabel.TextSize = 13
 	rgbLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -205,21 +233,16 @@ local function openColorPicker(parentGui, initialRGB, onChange)
 	rgbLabel.Parent = panel
 
 	local done = Instance.new("TextButton")
-	done.Size = UDim2.fromOffset(52, 26)
-	done.Position = UDim2.fromOffset(SQW + 12, 78)
-	done.BackgroundColor3 = Color3.fromRGB(58, 112, 204)
-	done.TextColor3 = Color3.new(1, 1, 1)
+	done.Size = UDim2.fromOffset(58, 26)
+	done.Position = UDim2.fromOffset(SQW + 14, TOP + 82)
+	done.BackgroundColor3 = Colors.Accent
+	done.TextColor3 = Colors.TextPrimary
 	done.Text = "Done"
 	done.Font = Enum.Font.GothamMedium
 	done.TextSize = 13
 	done.BorderSizePixel = 0
 	done.ZIndex = 202
 	done.Parent = panel
-	do
-		local c = Instance.new("UICorner")
-		c.CornerRadius = UDim.new(0, 4)
-		c.Parent = done
-	end
 
 	local suppressHex = false
 	local function apply(report)
@@ -293,7 +316,7 @@ local function openColorPicker(parentGui, initialRGB, onChange)
 	local function close()
 		scrim:Destroy()
 	end
-	scrim.Activated:Connect(close)
+	closeX.Activated:Connect(close)
 	done.Activated:Connect(close)
 	apply(false)
 end
