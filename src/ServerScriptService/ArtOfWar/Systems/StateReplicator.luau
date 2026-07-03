@@ -41,6 +41,7 @@ local GETTERS = {
 
 local ctx
 local stateSync
+local ownPoliticsSync
 
 -- perf: cached snapshot + the os.clock() time it was built (nil = stale)
 local cachedSnapshot = nil
@@ -59,6 +60,11 @@ local COUNTRY_DROP = {
 	acceptedCultures = true,
 	startingTechs = true,
 	technologyGroup = true,
+	-- Tier 3: politics data that a verified audit found ONLY PoliticsScreen reads, and only for the player's OWN
+	-- country. ~75% of the country payload. Stripped from the shared broadcast and delivered per-player via the
+	-- OwnPolitics channel instead (buildOwnPolitics + pushOwnPoliticsTo below).
+	leaders = true,
+	factions = true,
 }
 
 local function slimLeader(l)
@@ -102,6 +108,27 @@ local function projectCountry(rec)
 			out[k] = v
 		end
 	end
+	return out
+end
+
+local function projectCountries(all)
+	local out = {}
+	for tag, rec in all do
+		out[tag] = projectCountry(rec)
+	end
+	return out
+end
+
+-- Tier 3: the per-player politics packet for the player's OWN country (leaders + factions, slimmed). Delivered
+-- via the OwnPolitics channel and stored SEPARATELY on the client (ClientStateCache.setOwnPolitics) so a later
+-- shared broadcast delta -- which replaces the whole country record and no longer carries politics -- cannot
+-- clobber it. PoliticsScreen overlays this onto the broadcast record.
+local function buildOwnPolitics(tag)
+	local rec = ctx.WorldState.getCountry(tag)
+	if type(rec) ~= "table" then
+		return nil
+	end
+	local out = { tag = tag }
 	if type(rec.leaders) == "table" then
 		local L = {}
 		for slot, l in rec.leaders do
@@ -115,14 +142,6 @@ local function projectCountry(rec)
 			F[id] = slimFaction(f)
 		end
 		out.factions = F
-	end
-	return out
-end
-
-local function projectCountries(all)
-	local out = {}
-	for tag, rec in all do
-		out[tag] = projectCountry(rec)
 	end
 	return out
 end
@@ -253,6 +272,22 @@ local function pushProvincesTo(player)
 	})
 end
 
+-- Push a player their own country's politics (leaders/factions). No-op if they have not claimed yet -- the claim
+-- itself dirties the country, so broadcast() delivers it on the next tick.
+local function pushOwnPoliticsTo(player)
+	if not ownPoliticsSync or not player then
+		return
+	end
+	local tag = ctx.PlayerAuthority and ctx.PlayerAuthority.tagFor(player)
+	if not tag then
+		return
+	end
+	local pol = buildOwnPolitics(tag)
+	if pol then
+		ownPoliticsSync:FireClient(player, pol)
+	end
+end
+
 -- perf: serve joiners a recently-built snapshot when one is fresh enough.
 -- The collection fields are live references to WorldState's store tables and the
 -- snapshot is read-only on the client, so sharing one object across concurrent
@@ -306,6 +341,23 @@ local function broadcast()
 	else
 		stateSync:FireAllClients(packet)
 	end
+	-- Tier 3: leaders/factions are stripped from the shared broadcast above. Push the owning player their own
+	-- country's politics whenever that country changed this tick (claim dirties it, and later politics/economy
+	-- ticks re-dirty it), so PoliticsScreen stays current. playerFor() is nil for unclaimed tags -> skipped.
+	if ownPoliticsSync and ctx.PlayerAuthority then
+		local dirtyCountries = drained.countries
+		if type(dirtyCountries) == "table" then
+			for _, tag in ipairs(dirtyCountries) do
+				local owner = ctx.PlayerAuthority.playerFor(tag)
+				if owner then
+					local pol = buildOwnPolitics(tag)
+					if pol then
+						ownPoliticsSync:FireClient(owner, pol)
+					end
+				end
+			end
+		end
+	end
 	-- perf: world advanced this tick -> drop the cached snapshot so the next
 	-- joiner rebuilds against the just-broadcast revision (lazy rebuild).
 	cachedSnapshot = nil
@@ -325,8 +377,12 @@ function StateReplicator.register(context)
 		broadcast = broadcast,
 		buildSnapshot = buildSnapshot,
 		pushProvincesTo = pushProvincesTo,
+		pushOwnPoliticsTo = pushOwnPoliticsTo,
 		setStateSync = function(remote)
 			stateSync = remote
+		end,
+		setOwnPoliticsSync = function(remote)
+			ownPoliticsSync = remote
 		end,
 	}
 	ctx.TickScheduler.register({

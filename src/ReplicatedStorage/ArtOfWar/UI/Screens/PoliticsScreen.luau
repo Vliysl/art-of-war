@@ -82,10 +82,27 @@ function PoliticsScreen.create(ctx)
 	local currentTab = "overview"
 
 	local function country()
-		if ctx.tag and ctx.cache then
-			return ctx.cache.getCountry(ctx.tag)
+		if not (ctx.tag and ctx.cache) then
+			return nil
 		end
-		return nil
+		local base = ctx.cache.getCountry(ctx.tag)
+		if not base then
+			return nil
+		end
+		-- Tier 3: leaders/factions are stripped from the broadcast country record and delivered on the per-player
+		-- OwnPolitics channel. Overlay them here (shallow copy so the cached record is never mutated). Falls back to
+		-- base.leaders/factions if the own-politics packet hasn't arrived yet (self-heals on the "ownPolitics" notify).
+		local pol = ctx.cache.getOwnPolitics and ctx.cache.getOwnPolitics()
+		if pol and pol.tag == ctx.tag then
+			local merged = {}
+			for k, v in base do
+				merged[k] = v
+			end
+			merged.leaders = pol.leaders or base.leaders
+			merged.factions = pol.factions or base.factions
+			return merged
+		end
+		return base
 	end
 
 	local function govName(c)
@@ -1175,6 +1192,11 @@ function PoliticsScreen.create(ctx)
 
 	if ctx.cache then
 		table.insert(conns, ctx.cache.onChangePrefix("countries", scheduleRefresh))
+		-- Tier 3: own-country leaders/factions arrive on the OwnPolitics channel, separate from the countries
+		-- broadcast; refresh when they land so the Court/Estates tabs populate (and update on any politics change).
+		if ctx.cache.onChange then
+			table.insert(conns, ctx.cache.onChange("ownPolitics", scheduleRefresh))
+		end
 	end
 
 	render("overview")

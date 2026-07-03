@@ -2138,8 +2138,10 @@ if loadedSystems.MapModeSystem and context.MapModeSystem then
 end
 
 local stateSync = ensureEvent("StateSync")
+local ownPoliticsSync = ensureEvent("OwnPolitics")
 if loadedSystems.StateReplicator and context.StateReplicator then
 	context.StateReplicator.setStateSync(stateSync)
+	context.StateReplicator.setOwnPoliticsSync(ownPoliticsSync)
 end
 
 local notificationChannel = ensureEvent("NotificationChannel")
@@ -2176,6 +2178,11 @@ bindFunction("RequestFullState", function(player)
 		task.spawn(function()
 			context.StateReplicator.pushProvincesTo(player)
 		end)
+	end
+	-- Deliver this player their own country's politics (leaders/factions), stripped from the shared snapshot.
+	-- No-op until they have claimed; the claim then dirties the country and broadcast() keeps it current.
+	if player and context.StateReplicator.pushOwnPoliticsTo then
+		context.StateReplicator.pushOwnPoliticsTo(player)
 	end
 	return snapshot
 end)

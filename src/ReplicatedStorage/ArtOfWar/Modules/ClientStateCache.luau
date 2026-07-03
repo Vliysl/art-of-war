@@ -326,6 +326,16 @@ end
 function ClientStateCache.getCountry(tag)
 	return cache.countries[tag]
 end
+-- Tier 3: the player's OWN country's politics (leaders/factions) arrive on a separate per-player channel and are
+-- stored HERE, NOT merged into cache.countries[tag] -- a later shared country delta replaces that whole record and
+-- would wipe merged-in politics. PoliticsScreen overlays getOwnPolitics() onto its own country record.
+function ClientStateCache.setOwnPolitics(packet)
+	cache.ownPolitics = packet
+	notify("ownPolitics", packet)
+end
+function ClientStateCache.getOwnPolitics()
+	return cache.ownPolitics
+end
 function ClientStateCache.getMarket(id)
 	return cache.markets[id]
 end
@@ -436,6 +446,7 @@ function ClientStateCache.clear()
 	cache.tradeOrders = {}
 	cache.pacts = {}
 	cache.armyGroups = {}
+	cache.ownPolitics = nil
 	initialized = false
 end
 

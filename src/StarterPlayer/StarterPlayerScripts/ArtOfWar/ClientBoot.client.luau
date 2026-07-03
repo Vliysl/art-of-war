@@ -106,6 +106,17 @@ local StateSync = Remotes and Remotes:WaitForChild("StateSync", 120)
 local RequestFullState = Remotes and Remotes:WaitForChild("RequestFullState", 120)
 local RequestOwnershipDigest = Remotes and Remotes:WaitForChild("RequestOwnershipDigest", 120)
 
+-- Tier 3: the player's own country's politics (leaders/factions) arrive here, stripped from the shared StateSync
+-- broadcast to keep the countries payload under the transit limit. Stored separately (PoliticsScreen overlays it).
+local OwnPolitics = Remotes and Remotes:WaitForChild("OwnPolitics", 120)
+if OwnPolitics and ClientStateCache then
+	OwnPolitics.OnClientEvent:Connect(function(packet)
+		if type(packet) == "table" then
+			ClientStateCache.setOwnPolitics(packet)
+		end
+	end)
+end
+
 if StateSync and ClientStateCache then
 	StateSync.OnClientEvent:Connect(function(packet)
 		ClientStateCache.applyDelta(packet)
