@@ -2055,7 +2055,69 @@ render = function()
 	end
 end
 
+-- Provinces are streamed in via paging rather than delivered inline in the snapshot. The full set
+-- (~5.7k records, ~2.7 MB) does not survive one DataEditorAPI RemoteFunction return: a sparse id-keyed
+-- table that large loses its high ids in transit, so every province past the low contiguous run was
+-- silently absent client-side -- missing from the list, unselectable, unassignable (e.g. FRA-owned
+-- #8420-8422). `provincesPage` hands back dense PARALLEL {ids, records} pages we reassemble into the
+-- NUMERIC-keyed dict the rest of the editor expects. Pages are spaced above the server's 0.2s
+-- CALL_COOLDOWN, and a superseding snapshot (reload / undo / redo / tab reload) abandons a stale fill.
+local function loadProvincesPaged(snap)
+	snap.provinces = snap.provinces or {}
+	local offset, total = 0, nil
+	while snap == state.snapshot do
+		task.wait(0.25)
+		if snap ~= state.snapshot then
+			return
+		end
+		local page, err = editorCall("provincesPage", { offset = offset, limit = 800 })
+		if type(page) ~= "table" then
+			setStatus("Province load failed: " .. tostring(err), Colors.Negative)
+			return
+		end
+		total = page.total or total
+		local ids, recs = page.ids or {}, page.records or {}
+		for i = 1, #ids do
+			snap.provinces[tonumber(ids[i]) or ids[i]] = recs[i]
+		end
+		local loaded = 0
+		for _ in pairs(snap.provinces) do
+			loaded += 1
+		end
+		setStatus(string.format("Loading provinces… %d / %d", loaded, total or loaded), Colors.TextSecondary)
+		if page.nextOffset == nil then
+			break
+		end
+		offset = page.nextOffset
+	end
+	if snap ~= state.snapshot then
+		return -- a newer snapshot superseded this fill
+	end
+	buildSearchCache(snap)
+	local cn, pn = 0, 0
+	for _ in pairs(snap.countries or {}) do
+		cn += 1
+	end
+	for _ in pairs(snap.provinces or {}) do
+		pn += 1
+	end
+	setStatus(string.format("%d countries  •  %d provinces%s", cn, pn, state.dirty and "  •  unsaved" or ""))
+	render()
+end
+
 applySnapshot = function(snap)
+	-- Province ids are canonically NUMERIC (a province id IS its map part number = the `province_id` attr).
+	-- Provinces normally arrive out-of-band via paging (loadProvincesPaged) since the full set is too large
+	-- for one payload; but if a snapshot ever carries them inline, the RemoteFunction boundary delivers that
+	-- dict STRING-keyed, so re-key to numbers (map-driven paint / bulk-assign look up by the numeric
+	-- province_id attribute and must agree with list-driven flows). No-op when provinces are absent.
+	if type(snap) == "table" and type(snap.provinces) == "table" and next(snap.provinces) ~= nil then
+		local normalized = {}
+		for id, rec in pairs(snap.provinces) do
+			normalized[tonumber(id) or id] = rec
+		end
+		snap.provinces = normalized
+	end
 	state.snapshot = snap
 	buildSearchCache(snap)
 	if applyDepths then applyDepths(snap) end
@@ -2065,6 +2127,10 @@ applySnapshot = function(snap)
 	local extra = state.dirty and "  •  unsaved" or ""
 	setStatus(string.format("%d countries  •  %d provinces%s", cn, pn, extra))
 	render()
+	-- Provinces are delivered out-of-band (too large for one payload); when absent, stream them in.
+	if type(snap.provinces) ~= "table" or next(snap.provinces) == nil then
+		task.spawn(loadProvincesPaged, snap)
+	end
 end
 
 local function ensureLoaded()

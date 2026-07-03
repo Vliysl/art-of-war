@@ -534,7 +534,11 @@ local function snapshotState()
 	return {
 		collapsed = (Editor.isCollapsed and Editor.isCollapsed()) or false,
 		countries = state.countries,
-		provinces = state.provinces,
+		-- Provinces are NOT sent inline: the full set (~5.7k records, ~2.7 MB) does not survive a single
+		-- RemoteFunction return -- a sparse id-keyed table that large silently loses its high ids in transit,
+		-- so every province past the low contiguous id run vanished client-side. The client streams them in
+		-- dense pages via the `provincesPage` command instead (see EditorClientV2.loadProvincesPaged).
+		provinces = {},
 		eu4Map = state.eu4Map,
 		tileOwners = state.tileOwners,
 		cultures = state.cultures,
@@ -596,6 +600,32 @@ api.OnServerInvoke = function(player, command, payload)
 	elseif command == "reloadState" then
 		Editor.load()
 		return safeCall(snapshotState)
+	elseif command == "provincesPage" then
+		-- Streams provinces to the client in dense pages (snapshotState omits them; see the note there).
+		-- Each page is dense PARALLEL arrays {ids, records} -- no sparse id-keyed table, so nothing is lost
+		-- in transit. Read-only + bounded, so it rides the ordinary CALL_COOLDOWN (client spaces its pages).
+		return safeCall(function()
+			local state = Editor.getState()
+			local prov = state.provinces or {}
+			local ids = {}
+			for id in pairs(prov) do
+				ids[#ids + 1] = id
+			end
+			table.sort(ids, function(a, b)
+				return (tonumber(a) or 0) < (tonumber(b) or 0)
+			end)
+			local total = #ids
+			local offset = math.max(0, math.floor(tonumber(payload and payload.offset) or 0))
+			local limit = math.clamp(math.floor(tonumber(payload and payload.limit) or 800), 1, 1200)
+			local last = math.min(offset + limit, total)
+			local pageIds, pageRecs = {}, {}
+			for i = offset + 1, last do
+				local id = ids[i]
+				pageIds[#pageIds + 1] = id
+				pageRecs[#pageRecs + 1] = prov[id]
+			end
+			return { ids = pageIds, records = pageRecs, total = total, nextOffset = (last < total) and last or nil }
+		end)
 	elseif command == "addCountry" then
 		local opts = payload.opts or {}
 		local promotedId
