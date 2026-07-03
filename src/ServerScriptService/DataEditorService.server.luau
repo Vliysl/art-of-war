@@ -1194,9 +1194,9 @@ api.OnServerInvoke = function(player, command, payload)
 		if type(payload) ~= "table" then
 			return { ok = false, error = "payload required" }
 		end
-		if not EditorAdmins.canManage(player) then
-			return { ok = false, error = "only the owner can load/delete map configs" }
-		end
+		-- Loading a saved map is open to any authorized map editor (historian tier). With the editor/live
+		-- split a load only replaces the EDITOR world (":edit"), never the live game, so it is
+		-- non-destructive to players. (deleteConfig + Push to Live stay dev/manager-only.)
 		-- Snapshot current ownership BEFORE the load swaps the editor state, so the live-refresh below
 		-- only touches the tiles that actually change (a load otherwise only applies on the next boot).
 		local beforeProv = {}
