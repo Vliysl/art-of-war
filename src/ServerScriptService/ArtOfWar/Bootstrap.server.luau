@@ -2179,6 +2179,12 @@ bindFunction("RequestFullState", function(player)
 			context.StateReplicator.pushProvincesTo(player)
 		end)
 	end
+	-- Armies are omitted from the snapshot too (chunked, string-keyed, ~1.5 KB/record) -- stream them to this client.
+	if player and context.StateReplicator.pushArmiesTo then
+		task.spawn(function()
+			context.StateReplicator.pushArmiesTo(player)
+		end)
+	end
 	-- Deliver this player their own country's politics (leaders/factions), stripped from the shared snapshot.
 	-- No-op until they have claimed; the claim then dirties the country and broadcast() keeps it current.
 	if player and context.StateReplicator.pushOwnPoliticsTo then

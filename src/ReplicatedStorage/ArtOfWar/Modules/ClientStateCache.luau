@@ -153,9 +153,15 @@ end
 -- not repaint. The coarse revision guard (caller) still drops a wholly-stale snapshot.
 local function applyFullSnapshot(packet)
 	for _, name in ipairs(REPLICATED_COLLECTIONS) do
-		-- Provinces stream in chunks (packet.provincesChunked) and are NOT in this snapshot; skip them so the
-		-- prune can't wipe chunk-delivered records (present would be empty -> it would delete every province).
-		if not (name == "provinces" and packet.provincesChunked) then
+		-- Provinces and armies stream in chunks (provincesChunked / armiesChunked) and are NOT in this snapshot;
+		-- skip pruning them so the prune can't wipe chunk-delivered records (present would be empty -> it would
+		-- delete every one).
+		if
+			not (
+				(name == "provinces" and packet.provincesChunked)
+				or (name == "armies" and packet.armiesChunked)
+			)
+		then
 			local incoming = packet[name] or {}
 			applyCollection(name, incoming)
 			local present = {}
@@ -231,6 +237,28 @@ function ClientStateCache.applyDelta(packet)
 			end
 		end
 		notify("provincesReady", cache)
+	end
+	-- Armies stream in chunks too (armiesChunked); mirror the province membership prune so a stale army whose
+	-- removal delta we missed can't persist. String-keyed -> no provKey. No "ready" signal is needed: army
+	-- consumers are event-driven and already reconcile per streamed record as chunks arrive.
+	if packet.armiesComplete then
+		local aids = packet.armyIds
+		if type(aids) == "table" then
+			local present = {}
+			for _, id in ipairs(aids) do
+				present[id] = true
+			end
+			local stale = {}
+			for k in cache.armies do
+				if not present[k] then
+					stale[#stale + 1] = k
+				end
+			end
+			for _, k in ipairs(stale) do
+				cache.armies[k] = nil
+				notify("armies." .. tostring(k), nil)
+			end
+		end
 	end
 	if packet.revision then
 		cache.revision = packet.revision
