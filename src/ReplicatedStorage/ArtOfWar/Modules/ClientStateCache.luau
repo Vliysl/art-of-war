@@ -126,6 +126,43 @@ local REPLICATED_COLLECTIONS = {
 	"armyGroups",
 }
 
+-- Collections streamed in chunks (omitted from the fullSnapshot, delivered via per-join chunk streams): the
+-- snapshot flag that marks each so applyFullSnapshot skips pruning them (an omitted collection would else prune to
+-- empty and wipe the streamed records).
+local CHUNKED_COLLECTIONS = {
+	provinces = "provincesChunked",
+	armies = "armiesChunked",
+	fleets = "fleetsChunked",
+	armyGroups = "armyGroupsChunked",
+}
+
+-- Prune a chunk-streamed collection to the authoritative id set carried by its completion marker, so a record whose
+-- removal delta we missed can't persist forever (the snapshot no longer prunes these). provKey normalises province
+-- ids (numeric); other collections pass through as string keys.
+local function pruneToIdSet(collection, ids)
+	if type(ids) ~= "table" then
+		return
+	end
+	local present = {}
+	for _, id in ipairs(ids) do
+		present[provKey(collection, id)] = true
+	end
+	local bucket = cache[collection]
+	if not bucket then
+		return
+	end
+	local stale = {}
+	for k in bucket do
+		if not present[k] then
+			stale[#stale + 1] = k
+		end
+	end
+	for _, k in ipairs(stale) do
+		bucket[k] = nil
+		notify(collection .. "." .. tostring(k), nil)
+	end
+end
+
 local function applyRemovals(removed)
 	if type(removed) ~= "table" then
 		return
@@ -153,15 +190,10 @@ end
 -- not repaint. The coarse revision guard (caller) still drops a wholly-stale snapshot.
 local function applyFullSnapshot(packet)
 	for _, name in ipairs(REPLICATED_COLLECTIONS) do
-		-- Provinces and armies stream in chunks (provincesChunked / armiesChunked) and are NOT in this snapshot;
-		-- skip pruning them so the prune can't wipe chunk-delivered records (present would be empty -> it would
-		-- delete every one).
-		if
-			not (
-				(name == "provinces" and packet.provincesChunked)
-				or (name == "armies" and packet.armiesChunked)
-			)
-		then
+		-- Chunk-streamed collections (provinces/armies/fleets/armyGroups) are NOT in this snapshot; skip pruning
+		-- them so the prune can't wipe chunk-delivered records (present would be empty -> it would delete every one).
+		local chunkedFlag = CHUNKED_COLLECTIONS[name]
+		if not (chunkedFlag and packet[chunkedFlag]) then
 			local incoming = packet[name] or {}
 			applyCollection(name, incoming)
 			local present = {}
@@ -212,53 +244,22 @@ function ClientStateCache.applyDelta(packet)
 	applyCollection("pacts", packet.pacts)
 	applyCollection("armyGroups", packet.armyGroups)
 	applyRemovals(packet.removed)
-	-- Server finished streaming the chunked province set -> tell consumers (political map re-sweep,
-	-- nation-select re-index) that the province cache is now complete.
+	-- Completion markers for the chunk-streamed collections: prune each to its authoritative id set (self-heal for a
+	-- removal delta we may have missed, since the snapshot no longer prunes these). Provinces additionally fire
+	-- "provincesReady" so their one-shot consumers (political map re-sweep, nation-select) re-index; armies/fleets/
+	-- armyGroups consumers are event-driven and reconcile per streamed record, so they need no signal.
 	if packet.provincesComplete then
-		-- The chunk stream is authoritative on province MEMBERSHIP. Since an omitted-provinces fullSnapshot no
-		-- longer prunes provinces (provincesChunked), a province deleted server-side while we were connected --
-		-- whose delete-delta we might have missed -- would otherwise persist forever. Prune any cached province
-		-- absent from the completion id-set to restore that self-heal.
-		local ids = packet.provinceIds
-		if type(ids) == "table" then
-			local present = {}
-			for _, id in ipairs(ids) do
-				present[provKey("provinces", id)] = true
-			end
-			local stale = {}
-			for k in cache.provinces do
-				if not present[k] then
-					stale[#stale + 1] = k
-				end
-			end
-			for _, k in ipairs(stale) do
-				cache.provinces[k] = nil
-				notify("provinces." .. tostring(k), nil)
-			end
-		end
+		pruneToIdSet("provinces", packet.provinceIds)
 		notify("provincesReady", cache)
 	end
-	-- Armies stream in chunks too (armiesChunked); mirror the province membership prune so a stale army whose
-	-- removal delta we missed can't persist. String-keyed -> no provKey. No "ready" signal is needed: army
-	-- consumers are event-driven and already reconcile per streamed record as chunks arrive.
 	if packet.armiesComplete then
-		local aids = packet.armyIds
-		if type(aids) == "table" then
-			local present = {}
-			for _, id in ipairs(aids) do
-				present[id] = true
-			end
-			local stale = {}
-			for k in cache.armies do
-				if not present[k] then
-					stale[#stale + 1] = k
-				end
-			end
-			for _, k in ipairs(stale) do
-				cache.armies[k] = nil
-				notify("armies." .. tostring(k), nil)
-			end
-		end
+		pruneToIdSet("armies", packet.armyIds)
+	end
+	if packet.fleetsComplete then
+		pruneToIdSet("fleets", packet.fleetIds)
+	end
+	if packet.armyGroupsComplete then
+		pruneToIdSet("armyGroups", packet.armyGroupIds)
 	end
 	if packet.revision then
 		cache.revision = packet.revision

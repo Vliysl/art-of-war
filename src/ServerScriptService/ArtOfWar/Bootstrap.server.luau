@@ -2185,6 +2185,17 @@ bindFunction("RequestFullState", function(player)
 			context.StateReplicator.pushArmiesTo(player)
 		end)
 	end
+	-- Fleets + armyGroups are also chunked (same truncation class); stream them too.
+	if player and context.StateReplicator.pushFleetsTo then
+		task.spawn(function()
+			context.StateReplicator.pushFleetsTo(player)
+		end)
+	end
+	if player and context.StateReplicator.pushArmyGroupsTo then
+		task.spawn(function()
+			context.StateReplicator.pushArmyGroupsTo(player)
+		end)
+	end
 	-- Deliver this player their own country's politics (leaders/factions), stripped from the shared snapshot.
 	-- No-op until they have claimed; the claim then dirties the country and broadcast() keeps it current.
 	if player and context.StateReplicator.pushOwnPoliticsTo then

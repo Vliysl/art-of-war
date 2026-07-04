@@ -14,6 +14,14 @@ local CHUNK = 800
 -- so armies use a SMALLER per-chunk count to keep each sub-packet ~0.15-0.4 MB (well under the transit limit) even
 -- for heavy endgame armies. Measured: 250 armies ≈ 0.145 MB at ~600 B/record.
 local ARMY_CHUNK = 250
+-- Large id-keyed collections that broadcast() splits when a single delta would risk truncation, with the per-chunk
+-- count (provinces are uniform ~500 B -> 800; the heavier/variable ones use ARMY_CHUNK).
+local CHUNKED_DELTA = {
+	{ field = "provinces", size = CHUNK },
+	{ field = "armies", size = ARMY_CHUNK },
+	{ field = "fleets", size = ARMY_CHUNK },
+	{ field = "armyGroups", size = ARMY_CHUNK },
+}
 local COLLECTIONS = {
 	"provinces",
 	"countries",
@@ -252,12 +260,14 @@ local function buildSnapshotUncached()
 	-- armies from this armies-omitting snapshot (mirrors provincesChunked).
 	snapshot.armiesChunked = true
 	snapshot.battles = ctx.WorldState.allBattles()
-	snapshot.fleets = ctx.WorldState.allFleets()
+	-- Fleets + armyGroups stream per-join via pushFleetsTo / pushArmyGroupsTo (chunked, string-keyed) -- same
+	-- transit-truncation class as armies. Their `*Chunked` markers tell the client to skip pruning them here.
+	snapshot.fleetsChunked = true
 	snapshot.wars = ctx.WorldState.allWars()
 	snapshot.peaceProposals = ctx.WorldState.allPeaceProposals()
 	snapshot.tradeOrders = ctx.WorldState.allTradeOrders()
 	snapshot.pacts = ctx.WorldState.allPacts()
-	snapshot.armyGroups = ctx.WorldState.allArmyGroups()
+	snapshot.armyGroupsChunked = true
 	return snapshot
 end
 
@@ -341,6 +351,47 @@ local function pushArmiesTo(player)
 	})
 end
 
+-- Generic per-join chunked streamer for a string-keyed collection (used for fleets + armyGroups). Provinces and
+-- armies keep their own streamers above -- provinces sort numeric ids, armies apply projectArmy -- but these two
+-- need neither, so they share this. Mirrors the same chunk + completion-marker shape.
+local function pushCollectionChunked(player, allFn, field, completeKey, idsKey, chunkSize)
+	if not stateSync or not player then
+		return
+	end
+	local records = allFn()
+	local revision = ctx.WorldState.getRevision()
+	local chunk, n = {}, 0
+	for id, rec in records do
+		chunk[id] = rec
+		n += 1
+		if n >= chunkSize then
+			stateSync:FireClient(player, { revision = revision, [field] = chunk })
+			chunk, n = {}, 0
+			task.wait()
+		end
+	end
+	if n > 0 then
+		stateSync:FireClient(player, { revision = revision, [field] = chunk })
+	end
+	local finalIds = {}
+	for id in allFn() do
+		finalIds[#finalIds + 1] = id
+	end
+	stateSync:FireClient(player, {
+		revision = ctx.WorldState.getRevision(),
+		[completeKey] = true,
+		[idsKey] = finalIds,
+	})
+end
+
+local function pushFleetsTo(player)
+	pushCollectionChunked(player, ctx.WorldState.allFleets, "fleets", "fleetsComplete", "fleetIds", ARMY_CHUNK)
+end
+
+local function pushArmyGroupsTo(player)
+	pushCollectionChunked(player, ctx.WorldState.allArmyGroups, "armyGroups", "armyGroupsComplete", "armyGroupIds", ARMY_CHUNK)
+end
+
 -- Push a player their own country's politics (leaders/factions). No-op if they have not claimed yet -- the claim
 -- itself dirties the country, so broadcast() delivers it on the next tick.
 local function pushOwnPoliticsTo(player)
@@ -401,36 +452,27 @@ local function broadcast()
 	if not packet then
 		return
 	end
-	-- Chunk oversized province/army deltas so no single packet carries a truncation-prone table. Null whichever
-	-- collection overflows from the base packet, fire the base exactly ONCE (it still carries the small collections
-	-- + removed), then stream each overflowing collection as <=CHUNK sub-packets. Provinces drain ALL ~5.7k dirty on
-	-- the first post-hydrate tick; armies can mass-dirty via the regen tick / annex disband at war scale.
-	local provs, arms = packet.provinces, packet.armies
-	local pcount, acount = 0, 0
-	if provs then
-		for _ in provs do
-			pcount += 1
+	-- Chunk oversized deltas for the large id-keyed collections so no single packet carries a truncation-prone
+	-- table. Null every overflowing collection from the base packet, fire the base exactly ONCE (it still carries
+	-- the small collections + removed), then stream each as <=size sub-packets. Provinces drain ALL ~5.7k dirty on
+	-- the first post-hydrate tick; armies/fleets can mass-dirty via the regen tick / annex disband at war scale.
+	local pending = {}
+	for _, spec in ipairs(CHUNKED_DELTA) do
+		local t = packet[spec.field]
+		if t then
+			local c = 0
+			for _ in t do
+				c += 1
+			end
+			if c > spec.size then
+				pending[#pending + 1] = { field = spec.field, records = t, size = spec.size }
+				packet[spec.field] = nil
+			end
 		end
-	end
-	if arms then
-		for _ in arms do
-			acount += 1
-		end
-	end
-	local splitProv = pcount > CHUNK
-	local splitArm = acount > ARMY_CHUNK
-	if splitProv then
-		packet.provinces = nil
-	end
-	if splitArm then
-		packet.armies = nil
 	end
 	stateSync:FireAllClients(packet)
-	if splitProv then
-		fireChunkedDelta("provinces", provs, packet.revision, CHUNK)
-	end
-	if splitArm then
-		fireChunkedDelta("armies", arms, packet.revision, ARMY_CHUNK)
+	for _, p in ipairs(pending) do
+		fireChunkedDelta(p.field, p.records, packet.revision, p.size)
 	end
 	-- Tier 3: leaders/factions are stripped from the shared broadcast above. Push the owning player their own
 	-- country's politics whenever that country changed this tick (claim dirties it, and later politics/economy
@@ -469,6 +511,8 @@ function StateReplicator.register(context)
 		buildSnapshot = buildSnapshot,
 		pushProvincesTo = pushProvincesTo,
 		pushArmiesTo = pushArmiesTo,
+		pushFleetsTo = pushFleetsTo,
+		pushArmyGroupsTo = pushArmyGroupsTo,
 		pushOwnPoliticsTo = pushOwnPoliticsTo,
 		setStateSync = function(remote)
 			stateSync = remote
