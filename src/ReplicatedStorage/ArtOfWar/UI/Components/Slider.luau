@@ -12,7 +12,7 @@ local Colors = DesignSystem.Colors
 
 local Slider = {}
 
-local HANDLE = 18
+local HANDLE = DesignSystem.Responsive.isTouch() and 28 or 18 -- D2: larger grab handle on touch
 local TRACK_H = 5
 
 function Slider.create(config)

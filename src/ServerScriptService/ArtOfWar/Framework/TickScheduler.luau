@@ -27,13 +27,19 @@ local speedListeners = {}
 local DaysInMonth = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
 
 local function isLeapYear(year)
-	if year % 4 ~= 0 then return false end
-	if year % 100 ~= 0 then return true end
+	if year % 4 ~= 0 then
+		return false
+	end
+	if year % 100 ~= 0 then
+		return true
+	end
 	return year % 400 == 0
 end
 
 local function daysInMonth(year, month)
-	if month == 2 and isLeapYear(year) then return 29 end
+	if month == 2 and isLeapYear(year) then
+		return 29
+	end
 	return DaysInMonth[month]
 end
 
@@ -45,10 +51,13 @@ local function currentDaysPerTick()
 end
 
 local function advanceDate(days)
+	local startMonth, startYear = gameMonth, gameYear
 	gameDay += days
 	while true do
 		local monthLen = daysInMonth(gameYear, gameMonth)
-		if gameDay <= monthLen then break end
+		if gameDay <= monthLen then
+			break
+		end
 		gameDay -= monthLen
 		gameMonth += 1
 		if gameMonth > 12 then
@@ -56,13 +65,13 @@ local function advanceDate(days)
 			gameYear += 1
 		end
 	end
+	-- economy rework: signal to callers whether a new month (or year) began this advance
+	return gameMonth ~= startMonth or gameYear ~= startYear
 end
 
 local function scenarioProgress()
 	local spanYears = WorldConstants.ScenarioEndYear - WorldConstants.ScenarioStartYear
-	local elapsedYears = (gameYear - WorldConstants.ScenarioStartYear)
-		+ ((gameMonth - 1) / 12)
-		+ ((gameDay - 1) / 365)
+	local elapsedYears = (gameYear - WorldConstants.ScenarioStartYear) + ((gameMonth - 1) / 12) + ((gameDay - 1) / 365)
 	return math.clamp(elapsedYears / spanYears, 0, 1)
 end
 
@@ -72,7 +81,9 @@ local function rebuildSorted()
 		table.insert(sortedSystems, descriptor)
 	end
 	table.sort(sortedSystems, function(a, b)
-		if a.priority == b.priority then return a.id < b.id end
+		if a.priority == b.priority then
+			return a.id < b.id
+		end
 		return a.priority < b.priority
 	end)
 	sortedDirty = false
@@ -116,12 +127,18 @@ end
 
 function TickScheduler.setSpeed(multiplier)
 	multiplier = tonumber(multiplier) or 1
-	if multiplier < 0 then multiplier = 0 end
-	if multiplier > 32 then multiplier = 32 end
+	if multiplier < 0 then
+		multiplier = 0
+	end
+	if multiplier > 32 then
+		multiplier = 32
+	end
 	speedMultiplier = multiplier
 	for _, cb in ipairs(speedListeners) do
 		local ok, err = pcall(cb, speedMultiplier, paused)
-		if not ok then warn("[TickScheduler] speed listener errored: " .. tostring(err)) end
+		if not ok then
+			warn("[TickScheduler] speed listener errored: " .. tostring(err))
+		end
 	end
 end
 
@@ -129,7 +146,9 @@ function TickScheduler.setPaused(flag)
 	paused = flag and true or false
 	for _, cb in ipairs(speedListeners) do
 		local ok, err = pcall(cb, speedMultiplier, paused)
-		if not ok then warn("[TickScheduler] pause listener errored: " .. tostring(err)) end
+		if not ok then
+			warn("[TickScheduler] pause listener errored: " .. tostring(err))
+		end
 	end
 end
 
@@ -142,7 +161,9 @@ function TickScheduler.isPaused()
 end
 
 function TickScheduler.onTimeControlChanged(callback)
-	if type(callback) ~= "function" then return function() end end
+	if type(callback) ~= "function" then
+		return function() end
+	end
 	table.insert(speedListeners, callback)
 	return function()
 		for i, cb in ipairs(speedListeners) do
@@ -156,7 +177,9 @@ end
 
 local function step(deltaSeconds)
 	local effectiveDelta = paused and 0 or deltaSeconds * speedMultiplier
-	if effectiveDelta <= 0 then return end
+	if effectiveDelta <= 0 then
+		return
+	end
 
 	simTime += effectiveDelta
 
@@ -168,11 +191,19 @@ local function step(deltaSeconds)
 		daysToAdvance += daysPerTick
 	end
 	if daysToAdvance > 0 then
-		advanceDate(daysToAdvance)
+		local monthChanged = advanceDate(daysToAdvance)
 		EventBus.publish(Events.DateAdvanced, {
 			date = TickScheduler.getGameDate(),
 			daysAdvanced = daysToAdvance,
 		})
+		-- economy rework: monthly income/resource commit hangs off this (see EconomySystem.applyMonthlyPayout).
+		-- daysInMonth is the fixed accounting month (DaysPerMonth) so payout matches the /mo projection.
+		if monthChanged then
+			EventBus.publish(Events.MonthBoundaryReached, {
+				date = TickScheduler.getGameDate(),
+				daysInMonth = WorldConstants.DaysPerMonth or 30,
+			})
+		end
 	end
 
 	local ctx = {
@@ -184,7 +215,9 @@ local function step(deltaSeconds)
 
 	EventBus.publish(Events.TickStarted, ctx)
 
-	if sortedDirty then rebuildSorted() end
+	if sortedDirty then
+		rebuildSorted()
+	end
 	for _, descriptor in sortedSystems do
 		descriptor.accumulator += effectiveDelta
 		if descriptor.accumulator >= descriptor.updateIntervalSeconds then
@@ -207,11 +240,15 @@ local function step(deltaSeconds)
 end
 
 function TickScheduler.start()
-	if running then return end
+	if running then
+		return
+	end
 	running = true
 	simStartClock = os.clock()
 	lastTickClock = simStartClock
-	if sortedDirty then rebuildSorted() end
+	if sortedDirty then
+		rebuildSorted()
+	end
 	for _, descriptor in sortedSystems do
 		if descriptor.start then
 			local ok, err = pcall(descriptor.start)
@@ -224,13 +261,17 @@ function TickScheduler.start()
 		local now = os.clock()
 		local delta = now - lastTickClock
 		lastTickClock = now
-		if delta > 0.25 then delta = 0.25 end
+		if delta > 0.25 then
+			delta = 0.25
+		end
 		step(delta)
 	end)
 end
 
 function TickScheduler.stop()
-	if not running then return end
+	if not running then
+		return
+	end
 	running = false
 	if heartbeatConnection then
 		heartbeatConnection:Disconnect()

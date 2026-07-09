@@ -5,15 +5,86 @@
 -- If any required input is depleted, throughput is scaled to whatever is
 -- available (partial-yield cycle).
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local DistrictTypes =
+	require(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Data"):WaitForChild("DistrictTypes"))
+
 local ManufactorySystem = {}
 
 local ctx
-local cachedCountryProduction = {}    -- [tag] = { [goodId] = amount }
+local cachedCountryProduction = {} -- [tag] = { [goodId] = amount }
 local cachedCountryConsumption = {}
+local sortedByFamily = nil -- { Industrial = {sorted recipe entries}, Manufacturing = {...} }
+
+-- Build the per-family recipe ranking once (highest output value first). Under the district economy an
+-- Industrial/Manufacturing district auto-picks the best recipe of its family that the province's infra can
+-- host; input scarcity is handled by the per-cycle ratio throttle in applyDays.
+local function ensureSorted()
+	if sortedByFamily then
+		return
+	end
+	sortedByFamily = { Industrial = {}, Manufacturing = {} }
+	local mfgs = (ctx.Bundle and ctx.Bundle.manufactories) or {}
+	local goods = (ctx.Bundle and ctx.Bundle.tradeGoods) or {}
+	for _, mdef in mfgs do
+		if mdef.unlockedByDefault ~= false and mdef.output then
+			local fam = DistrictTypes.manufactoryFamilyFor(mdef.output)
+			local price = (goods[mdef.output] and goods[mdef.output].basePrice) or 0
+			local list = sortedByFamily[fam]
+			if list then
+				table.insert(
+					list,
+					{ mdef = mdef, value = (mdef.outputAmount or 0) * price, minInfra = mdef.minInfraTier or 0 }
+				)
+			end
+		end
+	end
+	for _, list in sortedByFamily do
+		table.sort(list, function(a, b)
+			return a.value > b.value
+		end)
+	end
+end
+
+local function pickBestRecipe(family, infraTier)
+	ensureSorted()
+	local list = sortedByFamily[family]
+	if not list then
+		return nil
+	end
+	for _, entry in list do
+		if entry.minInfra <= (infraTier or 0) then
+			return entry.mdef
+		end
+	end
+	return nil
+end
+
+-- District-driven manufactories: one auto-picked recipe per Industrial/Manufacturing district, throughput
+-- scaled by the district LEVEL. Returns a list of { mdef, cycles }.
+local function districtManufactoriesFor(province)
+	local out = {}
+	if not province.districts then
+		return out
+	end
+	local baseCycles = (ctx.WorldConstants and ctx.WorldConstants.ManufactoryDailyCycles) or 0.1
+	for _, d in pairs(province.districts) do
+		if type(d) == "table" and DistrictTypes.isManufactory(d.type) then
+			local def = DistrictTypes.types[d.type]
+			local recipe = pickBestRecipe(def and def.family, province.infraTier or 0)
+			if recipe then
+				table.insert(out, { mdef = recipe, cycles = baseCycles * math.max(1, d.level or 1) })
+			end
+		end
+	end
+	return out
+end
 
 local function manufactoryBuildingsFor(province)
 	-- Iterate constructed buildings; return the manufactory ids in sequence.
-	if not province or not province.buildings then return nil end
+	if not province or not province.buildings then
+		return nil
+	end
 	local out = {}
 	local bundle = ctx.Bundle
 	for _, bid in province.buildings do
@@ -46,24 +117,39 @@ local function recomputeFor(tag)
 	local provinceIds = (ctx.ProvinceRegistry and ctx.ProvinceRegistry.byOwner(tag)) or {}
 	local production, consumption = {}, {}
 
+	-- GateExtractionOnDistricts: manufactories run off Industrial/Manufacturing DISTRICTS (auto-picked
+	-- recipe, throughput = district level). Otherwise the legacy path reads province.buildings manufactory_*.
+	local gate = ctx.WorldConstants and ctx.WorldConstants.GateExtractionOnDistricts
 	for _, pid in provinceIds do
 		local province = ctx.WorldState.getProvince(pid)
 		if province and province.controllerTag == tag then
-			local mfgIds = manufactoryBuildingsFor(province)
-			if mfgIds then
-				for _, mid in mfgIds do
-					local mdef = mfgs[mid]
-					if mdef then
-						local cycles = throughputScale(province.infraTier or 0, mdef.minInfraTier or 0)
-						-- Inputs are per-cycle; multiplied by daily cycles for per-day demand.
-						for goodId, amount in (mdef.inputs or {}) do
-							consumption[goodId] = (consumption[goodId] or 0) + (amount * cycles)
-						end
-						local outAmt = (mdef.outputAmount or 0) * cycles
-						if mdef.output and outAmt > 0 then
-							production[mdef.output] = (production[mdef.output] or 0) + outAmt
+			local runs
+			if gate then
+				runs = districtManufactoriesFor(province)
+			else
+				runs = {}
+				local mfgIds = manufactoryBuildingsFor(province)
+				if mfgIds then
+					for _, mid in mfgIds do
+						local mdef = mfgs[mid]
+						if mdef then
+							table.insert(runs, {
+								mdef = mdef,
+								cycles = throughputScale(province.infraTier or 0, mdef.minInfraTier or 0),
+							})
 						end
 					end
+				end
+			end
+			for _, run in runs do
+				local mdef, cycles = run.mdef, run.cycles
+				-- Inputs are per-cycle; multiplied by daily cycles for per-day demand.
+				for goodId, amount in (mdef.inputs or {}) do
+					consumption[goodId] = (consumption[goodId] or 0) + (amount * cycles)
+				end
+				local outAmt = (mdef.outputAmount or 0) * cycles
+				if mdef.output and outAmt > 0 then
+					production[mdef.output] = (production[mdef.output] or 0) + outAmt
 				end
 			end
 		end
@@ -75,20 +161,31 @@ local function recomputeFor(tag)
 end
 
 local function applyDays(daysAdvanced)
-	if not daysAdvanced or daysAdvanced <= 0 then return end
+	if not daysAdvanced or daysAdvanced <= 0 then
+		return
+	end
 	-- S3: only relevant (claimed / at-war) countries are simulated.
-	local relevant = ctx.PlayerAuthority and ctx.PlayerAuthority.relevantSet and ctx.PlayerAuthority.relevantSet() or nil
+	local relevant = ctx.PlayerAuthority and ctx.PlayerAuthority.relevantSet and ctx.PlayerAuthority.relevantSet()
+		or nil
 	for tag in ctx.WorldState.allCountries() do
-		if relevant and not relevant[tag] then continue end
+		if relevant and not relevant[tag] then
+			continue
+		end
 		-- S1: use cached per-cycle production/consumption (recomputed lazily on province/
 		-- building mutation) instead of re-scanning every country's provinces every tick.
-		if cachedCountryProduction[tag] == nil then recomputeFor(tag) end
+		if cachedCountryProduction[tag] == nil then
+			recomputeFor(tag)
+		end
 		local production = cachedCountryProduction[tag] or {}
 		local consumption = cachedCountryConsumption[tag] or {}
 		local country = ctx.WorldState.getCountry(tag)
-		if not country then continue end
+		if not country then
+			continue
+		end
 		-- S1 guard: no manufactories -> no stockpile changes, no write/replication.
-		if next(production) == nil and next(consumption) == nil then continue end
+		if next(production) == nil and next(consumption) == nil then
+			continue
+		end
 		country.stockpiles = country.stockpiles or {}
 		country.dailyConsumption = country.dailyConsumption or {}
 
@@ -143,12 +240,16 @@ local function applyDays(daysAdvanced)
 end
 
 local function dailyProductionOf(tag)
-	if cachedCountryProduction[tag] == nil then recomputeFor(tag) end
+	if cachedCountryProduction[tag] == nil then
+		recomputeFor(tag)
+	end
 	return cachedCountryProduction[tag] or {}
 end
 
 local function dailyConsumptionOf(tag)
-	if cachedCountryConsumption[tag] == nil then recomputeFor(tag) end
+	if cachedCountryConsumption[tag] == nil then
+		recomputeFor(tag)
+	end
 	return cachedCountryConsumption[tag] or {}
 end
 
@@ -157,10 +258,18 @@ local function onProvinceMutated()
 	table.clear(cachedCountryConsumption)
 end
 
-ManufactorySystem.applyDays = function(...) return applyDays(...) end
-ManufactorySystem.dailyProductionOf = function(...) return dailyProductionOf(...) end
-ManufactorySystem.dailyConsumptionOf = function(...) return dailyConsumptionOf(...) end
-ManufactorySystem.recomputeFor = function(...) return recomputeFor(...) end
+ManufactorySystem.applyDays = function(...)
+	return applyDays(...)
+end
+ManufactorySystem.dailyProductionOf = function(...)
+	return dailyProductionOf(...)
+end
+ManufactorySystem.dailyConsumptionOf = function(...)
+	return dailyConsumptionOf(...)
+end
+ManufactorySystem.recomputeFor = function(...)
+	return recomputeFor(...)
+end
 
 function ManufactorySystem.register(context)
 	ctx = context
@@ -171,6 +280,8 @@ function ManufactorySystem.register(context)
 		recomputeFor = recomputeFor,
 	}
 	context.EventBus.subscribe(context.Channels.BuildingCompleted, onProvinceMutated)
+	context.EventBus.subscribe(context.Channels.ProvinceDistrictChanged, onProvinceMutated)
+	context.EventBus.subscribe(context.Channels.DistrictUpgraded, onProvinceMutated)
 	context.EventBus.subscribe(context.Channels.ProvinceOwnershipChanged, onProvinceMutated)
 
 	-- Run AFTER EconomySystem so its province output lands first; then we layer on top.

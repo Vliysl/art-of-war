@@ -38,6 +38,16 @@ local ideologies = {}
 local governments = {}
 local loaded = false
 
+-- Single shared editor world (one server + live sync + snapshot save). When true, ALL editors on this
+-- (single) server mutate ONE shared in-memory world instead of the per-user isolated worlds that
+-- setActiveUser swaps in/out, and Save takes a full snapshot instead of the diff/merge promote path.
+-- Default OFF (flag-gated, unpublished) -- flip to true to exercise the new model; a Studio Team Test is a
+-- single shared server. See .claude/plans/snapshot-save-single-server-live-sync.md.
+local SINGLE_SERVER_EDITOR = false
+function DataEditor.isSingleServerMode()
+	return SINGLE_SERVER_EDITOR
+end
+
 local HISTORY_MAX = 8
 local history = {}
 local redoStack = {}
@@ -72,6 +82,51 @@ local function restoreSnapshot(snap)
 	governments = deepClone(snap.governments or {})
 end
 
+-- History entries are one of two kinds:
+--   kind="full"   -> { snapshot = <whole-world deep clone> }  (broad mutations: add/remove, migrations, batches)
+--   kind="record" -> { changes = { {collection, key, value}, ... } }  (hot single-record edits: paints/updates)
+-- The record fast-path avoids deep-cloning all ~5713 provinces on every interactive paint click; it stores only
+-- the touched record's before-image and reverse-applies it. Both kinds share one LIFO undo/redo below.
+local function collectionByName(name)
+	if name == "countries" then
+		return countries
+	elseif name == "provinces" then
+		return provinces
+	elseif name == "eu4Map" then
+		return eu4Map
+	elseif name == "tileOwners" then
+		return tileOwners
+	elseif name == "cultures" then
+		return cultures
+	elseif name == "religions" then
+		return religions
+	elseif name == "ideologies" then
+		return ideologies
+	elseif name == "governments" then
+		return governments
+	end
+	return nil
+end
+
+-- Swap each recorded record to its stored value IN PLACE, returning the inverse entry (the values that were
+-- there) so undo/redo are the same operation moving an entry between the two stacks. Resolves the collection by
+-- name every call so it stays correct even after a full-snapshot restore reassigned the module-local table.
+local function applyRecordEntry(entry)
+	local inverse = {}
+	for _, ch in ipairs(entry.changes) do
+		local tbl = collectionByName(ch.collection)
+		local current = nil
+		if tbl then
+			if tbl[ch.key] ~= nil then
+				current = deepClone(tbl[ch.key])
+			end
+			tbl[ch.key] = (ch.value ~= nil) and deepClone(ch.value) or nil
+		end
+		inverse[#inverse + 1] = { collection = ch.collection, key = ch.key, value = current }
+	end
+	return { kind = "record", label = entry.label, at = os.time(), changes = inverse }
+end
+
 local function pushHistory(label)
 	if not loaded then
 		return
@@ -80,9 +135,37 @@ local function pushHistory(label)
 		return
 	end
 	table.insert(history, {
+		kind = "full",
 		label = label or "edit",
 		at = os.time(),
 		snapshot = captureSnapshot(),
+	})
+	while #history > HISTORY_MAX do
+		table.remove(history, 1)
+	end
+	table.clear(redoStack)
+end
+
+-- Record-level history for a mutation that touches exactly ONE record in ONE collection. Call it BEFORE the
+-- mutation (like pushHistory) so it captures the pre-mutation value. Suppressed inside a batch: the batch's one
+-- full snapshot already covers everything between beginBatch/endBatch.
+local function pushRecordHistory(collection, key, label)
+	if not loaded then
+		return
+	end
+	if batchActive then
+		return
+	end
+	local tbl = collectionByName(collection)
+	local current = nil
+	if tbl and tbl[key] ~= nil then
+		current = deepClone(tbl[key])
+	end
+	table.insert(history, {
+		kind = "record",
+		label = label or "edit",
+		at = os.time(),
+		changes = { { collection = collection, key = key, value = current } },
 	})
 	while #history > HISTORY_MAX do
 		table.remove(history, 1)
@@ -107,6 +190,7 @@ function DataEditor.endBatch()
 	batchActive = false
 	if pendingBatchSnapshot and loaded then
 		table.insert(history, {
+			kind = "full",
 			label = pendingBatchLabel,
 			at = os.time(),
 			snapshot = pendingBatchSnapshot,
@@ -348,21 +432,27 @@ function DataEditor.load()
 	}
 end
 
+-- Invert one history/redo entry in place and return its inverse (for the opposite stack). Record entries swap
+-- just the touched record(s); full entries capture the current world THEN restore the snapshot.
+local function invertEntry(entry)
+	if entry.kind == "record" then
+		return applyRecordEntry(entry)
+	end
+	local inverse = { kind = "full", label = entry.label, at = os.time(), snapshot = captureSnapshot() }
+	restoreSnapshot(entry.snapshot)
+	return inverse
+end
+
 function DataEditor.undo()
 	ensureLoaded()
 	local entry = table.remove(history)
 	if not entry then
 		return false, "nothing to undo"
 	end
-	table.insert(redoStack, {
-		label = entry.label,
-		at = os.time(),
-		snapshot = captureSnapshot(),
-	})
+	table.insert(redoStack, invertEntry(entry))
 	while #redoStack > HISTORY_MAX do
 		table.remove(redoStack, 1)
 	end
-	restoreSnapshot(entry.snapshot)
 	return true, entry.label
 end
 
@@ -372,15 +462,10 @@ function DataEditor.redo()
 	if not entry then
 		return false, "nothing to redo"
 	end
-	table.insert(history, {
-		label = entry.label,
-		at = os.time(),
-		snapshot = captureSnapshot(),
-	})
+	table.insert(history, invertEntry(entry))
 	while #history > HISTORY_MAX do
 		table.remove(history, 1)
 	end
-	restoreSnapshot(entry.snapshot)
 	return true, entry.label
 end
 
@@ -543,7 +628,7 @@ end
 function DataEditor.updateCountry(tag, opts)
 	ensureLoaded()
 	requireKey(countries, tag, "Country")
-	pushHistory("updateCountry " .. tag)
+	pushRecordHistory("countries", tag, "updateCountry " .. tag)
 	for k, v in pairs(opts) do
 		if k == "flagAssetId" then
 			countries[tag][k] = normalizeFlag(v)
@@ -588,6 +673,10 @@ function DataEditor.removeCountry(tag)
 	requireKey(countries, tag, "Country")
 	pushHistory("removeCountry " .. tag)
 	countries[tag] = nil
+	-- Strip the deleted tag from ownership AND all three membership arrays. cores/defaultCores/claims are the
+	-- v4 list fields the unified paint tool writes; leaving the tag in defaultCores/claims would persist a
+	-- dangling reference to a country that no longer exists (through Save -> DataStore).
+	local TAG_ARRAY_FIELDS = { "cores", "defaultCores", "claims" }
 	for _, p in pairs(provinces) do
 		if p.ownerTag == tag then
 			p.ownerTag = "NONE"
@@ -595,14 +684,17 @@ function DataEditor.removeCountry(tag)
 		if p.controllerTag == tag then
 			p.controllerTag = "NONE"
 		end
-		if type(p.cores) == "table" then
-			local kept = {}
-			for _, core in ipairs(p.cores) do
-				if core ~= tag then
-					table.insert(kept, core)
+		for _, field in ipairs(TAG_ARRAY_FIELDS) do
+			local arr = p[field]
+			if type(arr) == "table" then
+				local kept = {}
+				for _, t in ipairs(arr) do
+					if t ~= tag then
+						table.insert(kept, t)
+					end
 				end
+				p[field] = kept
 			end
-			p.cores = kept
 		end
 	end
 	for name, owner in pairs(tileOwners) do
@@ -691,7 +783,7 @@ function DataEditor.updateProvince(id, opts)
 	ensureLoaded()
 	id = tonumber(id)
 	requireKey(provinces, id, "Province")
-	pushHistory(string.format("updateProvince %d", id))
+	pushRecordHistory("provinces", id, string.format("updateProvince %d", id))
 	for k, v in pairs(opts) do
 		provinces[id][k] = v
 	end
@@ -706,6 +798,53 @@ function DataEditor.updateProvince(id, opts)
 		end
 	end
 	return provinces[id]
+end
+
+local PAINT_TAG_FIELDS = { core = "cores", defaultCore = "defaultCores", claim = "claims" }
+
+-- Add/remove a single country tag on a province's cores / defaultCores / claims ARRAY. Idempotent: adding an
+-- existing tag or removing an absent one is a no-op (no history entry). Parallels assignProvince but for the
+-- multi-valued fields -- the editor's unified paint tool drives it (mode = "add" | "remove").
+function DataEditor.paintProvinceTag(id, target, tag, mode)
+	ensureLoaded()
+	id = tonumber(id)
+	requireKey(provinces, id, "Province")
+	local field = PAINT_TAG_FIELDS[target]
+	if not field then
+		error("unknown paint target: " .. tostring(target))
+	end
+	if tag == nil or tag == "" then
+		error("tag required")
+	end
+	-- cores/defaultCores/claims are country-MEMBERSHIP lists; NONE is the owner/controller "unowned" sentinel,
+	-- not a country, and must never enter them. Require a real country tag (the UI only offers real tags -- this
+	-- rejects a crafted paintTag/paintTagBatch payload carrying NONE).
+	requireKey(countries, tag, "Country")
+	local province = provinces[id]
+	local list = province[field]
+	if type(list) ~= "table" then
+		list = {}
+		province[field] = list
+	end
+	local idx
+	for i, t in ipairs(list) do
+		if t == tag then
+			idx = i
+			break
+		end
+	end
+	if mode == "remove" then
+		if idx then
+			pushRecordHistory("provinces", id, string.format("paint -%s %d %s", target, id, tag))
+			table.remove(list, idx)
+		end
+	else
+		if not idx then
+			pushRecordHistory("provinces", id, string.format("paint +%s %d %s", target, id, tag))
+			table.insert(list, tag)
+		end
+	end
+	return province
 end
 
 function DataEditor.removeProvince(id)
@@ -915,6 +1054,11 @@ function DataEditor.promoteTile(opts)
 	}
 end
 
+-- Reassign a province's owner+controller. DELIBERATELY does NOT touch province.cores — the unified paint tool
+-- has separate Owner / Core / Default Core / Claim targets, so cores are painted independently (a reassigned
+-- province can be owned-but-not-cored, e.g. a conquest). This differs from addProvince/promoteTile, which seed
+-- a core because they CREATE a fresh province for the owner. If a scenario workflow ever wants owner-paint to
+-- auto-seed a core, do it here (and decide whether to strip the previous owner's core).
 function DataEditor.assignProvince(id, ownerTag)
 	ensureLoaded()
 	id = tonumber(id)
@@ -922,7 +1066,7 @@ function DataEditor.assignProvince(id, ownerTag)
 	if ownerTag ~= "NONE" then
 		requireKey(countries, ownerTag, "Country")
 	end
-	pushHistory(string.format("assignProvince %d -> %s", id, tostring(ownerTag)))
+	pushRecordHistory("provinces", id, string.format("assignProvince %d -> %s", id, tostring(ownerTag)))
 	local province = provinces[id]
 	province.ownerTag = ownerTag
 	province.controllerTag = ownerTag
@@ -959,13 +1103,21 @@ function DataEditor.assignProvinceField(id, field, value)
 		if value ~= nil and value ~= "" and not cultures[value] then
 			error(string.format("Culture %q does not exist", tostring(value)))
 		end
-		pushHistory(string.format("setCulture %s -> %s", tostring(id), tostring(value or "<nil>")))
+		pushRecordHistory(
+			"provinces",
+			id,
+			string.format("setCulture %s -> %s", tostring(id), tostring(value or "<nil>"))
+		)
 		province.culture = (value ~= nil and value ~= "") and value or nil
 	elseif field == "religion" then
 		if value ~= nil and value ~= "" and not religions[value] then
 			error(string.format("Religion %q does not exist", tostring(value)))
 		end
-		pushHistory(string.format("setReligion %s -> %s", tostring(id), tostring(value or "<nil>")))
+		pushRecordHistory(
+			"provinces",
+			id,
+			string.format("setReligion %s -> %s", tostring(id), tostring(value or "<nil>"))
+		)
 		province.religion = (value ~= nil and value ~= "") and value or nil
 	else
 		error(string.format("Unsupported field %q (use 'culture' or 'religion')", tostring(field)))
@@ -1808,6 +1960,38 @@ function DataEditor.save()
 	}
 end
 
+-- Single-server snapshot save: persist the ENTIRE shared world to the :edit aggregates as a full overwrite
+-- (no diff, no per-record merge). Only used in SINGLE_SERVER_EDITOR mode, where one server owns the world so
+-- a whole-world snapshot is always the complete authoritative state. Promotes painted tiles to real seeds
+-- first (like the other save paths) so they persist as province records, not owner-only tile overrides.
+function DataEditor.snapshotSave()
+	ensureLoaded()
+	local overlay = overlayModule()
+	if not overlay or not overlay.writeFullSnapshot then
+		return { ok = false, error = "DataOverlay.writeFullSnapshot unavailable (update DataOverlay first)" }
+	end
+	promotePaintedTiles()
+	local world = {
+		country = countries,
+		province = provinces,
+		eu4map = eu4Map,
+		tile = tileOwners,
+		culture = cultures,
+		religion = religions,
+		ideology = ideologies,
+		government_type = governments,
+	}
+	local result = overlay.writeFullSnapshot(world)
+	if result.ok then
+		-- Re-baseline to the just-saved world and clear undo history so no inverse entry points across the
+		-- save boundary (matches DataEditor.save's post-write reset).
+		baseline = captureSnapshot()
+		table.clear(history)
+		table.clear(redoStack)
+	end
+	return result
+end
+
 local function stageOutputs(entries, clearAll)
 	local folder = game:GetService("ServerStorage"):FindFirstChild("DataEditorOutput")
 	if not folder then
@@ -2298,6 +2482,14 @@ function DataEditor.setActiveUser(userId)
 	if userId == nil then
 		return
 	end
+	if SINGLE_SERVER_EDITOR then
+		-- One shared world for every editor on this single server: no per-user swap. Just record who's
+		-- active (edit attribution / presence) and ensure the shared world is loaded once. Never
+		-- capture/restore per-user state or reload here.
+		activeUser = userId
+		ensureLoaded()
+		return
+	end
 	if activeUser == userId then
 		return
 	end
@@ -2321,6 +2513,10 @@ function DataEditor.getActiveUser()
 end
 
 function DataEditor.clearActiveUser()
+	if SINGLE_SERVER_EDITOR then
+		activeUser = nil
+		return
+	end
 	if activeUser ~= nil then
 		userStates[activeUser] = DataEditor.captureFullState()
 		activeUser = nil
@@ -2328,12 +2524,21 @@ function DataEditor.clearActiveUser()
 end
 
 function DataEditor.dropUserState(userId)
-	if userId ~= nil then
-		userStates[userId] = nil
+	if userId == nil then
+		return
+	end
+	if SINGLE_SERVER_EDITOR then
+		-- Shared world stays put when an editor leaves -- only clear their active-user attribution. Never set
+		-- loaded=false here: that would drop the shared in-memory world and lose other editors' unsaved edits.
 		if activeUser == userId then
 			activeUser = nil
-			loaded = false
 		end
+		return
+	end
+	userStates[userId] = nil
+	if activeUser == userId then
+		activeUser = nil
+		loaded = false
 	end
 end
 
@@ -2819,7 +3024,12 @@ function DataEditor.migrateV3toV4(opts)
 	if opts.commit == true then
 		local cOk, cErr = overlay.commitV4()
 		if not cOk then
-			return { ok = false, error = "commit (schema flip to v4) failed: " .. tostring(cErr), write = write, verify = verify }
+			return {
+				ok = false,
+				error = "commit (schema flip to v4) failed: " .. tostring(cErr),
+				write = write,
+				verify = verify,
+			}
 		end
 		committed = true
 		DataEditor.load() -- rebuild the editor model from the freshly-committed @v4 cache
@@ -2856,7 +3066,9 @@ function DataEditor.rollbackV4()
 	return {
 		ok = ok,
 		error = (not ok) and tostring(err) or nil,
-		message = ok and "Schema flag flipped back to v3. The frozen @v3 data is authoritative again — the world reverts." or nil,
+		message = ok
+				and "Schema flag flipped back to v3. The frozen @v3 data is authoritative again — the world reverts."
+			or nil,
 	}
 end
 

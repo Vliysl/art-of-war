@@ -11,7 +11,9 @@ end
 
 local function pruneCountryQueue(tag)
 	local country = ctx.WorldState.getCountry(tag)
-	if not country then return end
+	if not country then
+		return
+	end
 	local items = {}
 	local queue = queuesByCountry[tag] or {}
 	for _, t in queue do
@@ -30,10 +32,14 @@ end
 
 local function queueLengthAt(tag, provinceId)
 	local queue = queuesByCountry[tag]
-	if not queue then return 0 end
+	if not queue then
+		return 0
+	end
 	local n = 0
 	for _, t in queue do
-		if t.provinceId == provinceId then n += 1 end
+		if t.provinceId == provinceId then
+			n += 1
+		end
 	end
 	return n
 end
@@ -63,87 +69,96 @@ end
 -- (The legacy province baseManpower factor is no longer used.)
 -- ---------------------------------------------------------------------
 local function poolFieldForUnit(_unit)
-    return "manpower"
+	return "manpower"
 end
 
 local function provinceManpowerContribution(province)
-    local C = ctx.WorldConstants
-    local pop = province.population or 0
-    local frac = C.ManpowerPopFraction or 0.15
-    local floorMP = C.ManpowerProvinceFloor or 5000
-    return math.max(math.floor(pop * frac), floorMP)
+	local C = ctx.WorldConstants
+	local pop = province.population or 0
+	local frac = C.ManpowerPopFraction or 0.15
+	local floorMP = C.ManpowerProvinceFloor or 5000
+	return math.max(math.floor(pop * frac), floorMP)
 end
 
 -- Recompute every country's manpowerCap from owned+controlled provinces (occupied or
 -- foreign-controlled provinces contribute 0). Clamps current manpower down when the cap
 -- shrinks (lost land -> lost reserve).
 local function recomputeManpowerCaps()
-    local caps = {}
-    -- perf: iterate each country's owned provinces via the O(1) registry instead of scanning all
-    -- ~5713 provinces. byOwner is the owned set; still require controllerTag == owner (occupied
-    -- provinces contribute 0). Falls back to a full scan if the registry is unavailable.
-    local registry = ctx.ProvinceRegistry
-    if registry and registry.byOwner then
-        for _, country in ctx.WorldState.allCountries() do
-            local tag = country.tag
-            local total = 0
-            for _, id in ipairs(registry.byOwner(tag)) do
-                local province = ctx.WorldState.getProvince(id)
-                if province and province.controllerTag == tag then
-                    total += provinceManpowerContribution(province)
-                end
-            end
-            caps[tag] = total
-        end
-    else
-        for _, province in ctx.WorldState.allProvinces() do
-            local owner = province.ownerTag
-            if owner and province.controllerTag == owner then
-                caps[owner] = (caps[owner] or 0) + provinceManpowerContribution(province)
-            end
-        end
-    end
-    for _, country in ctx.WorldState.allCountries() do
-        local cap = math.floor(caps[country.tag] or 0)
-        local changed = false
-        if country.manpowerCap ~= cap then country.manpowerCap = cap; changed = true end
-        if (country.manpower or 0) > cap then country.manpower = cap; changed = true end
-        if changed then ctx.WorldState.setCountry(country.tag, country) end
-    end
+	local caps = {}
+	-- perf: iterate each country's owned provinces via the O(1) registry instead of scanning all
+	-- ~5713 provinces. byOwner is the owned set; still require controllerTag == owner (occupied
+	-- provinces contribute 0). Falls back to a full scan if the registry is unavailable.
+	local registry = ctx.ProvinceRegistry
+	if registry and registry.byOwner then
+		for _, country in ctx.WorldState.allCountries() do
+			local tag = country.tag
+			local total = 0
+			for _, id in ipairs(registry.byOwner(tag)) do
+				local province = ctx.WorldState.getProvince(id)
+				if province and province.controllerTag == tag then
+					total += provinceManpowerContribution(province)
+				end
+			end
+			caps[tag] = total
+		end
+	else
+		for _, province in ctx.WorldState.allProvinces() do
+			local owner = province.ownerTag
+			if owner and province.controllerTag == owner then
+				caps[owner] = (caps[owner] or 0) + provinceManpowerContribution(province)
+			end
+		end
+	end
+	for _, country in ctx.WorldState.allCountries() do
+		local cap = math.floor(caps[country.tag] or 0)
+		local changed = false
+		if country.manpowerCap ~= cap then
+			country.manpowerCap = cap
+			changed = true
+		end
+		if (country.manpower or 0) > cap then
+			country.manpower = cap
+			changed = true
+		end
+		if changed then
+			ctx.WorldState.setCountry(country.tag, country)
+		end
+	end
 end
 
 -- Convert a system tick's sim-second delta into in-game days (mirrors TickScheduler's
 -- dayAccumulator: 1 unit of effectiveDelta/SecondsPerSimTick == daysPerTick days).
 local function inGameDaysFromDelta(deltaSeconds, year)
-    local C = ctx.WorldConstants
-    local secs = C.SecondsPerSimTick or 1.5
-    if secs <= 0 or not deltaSeconds or deltaSeconds <= 0 then return 0 end
-    local daysPerTick = (year <= (C.EarlyEraCutoffYear or 0))
-        and (C.DaysPerEarlyTick or 1) or (C.DaysPerLateTick or 1)
-    return (deltaSeconds / secs) * daysPerTick
+	local C = ctx.WorldConstants
+	local secs = C.SecondsPerSimTick or 1.5
+	if secs <= 0 or not deltaSeconds or deltaSeconds <= 0 then
+		return 0
+	end
+	local daysPerTick = (year <= (C.EarlyEraCutoffYear or 0)) and (C.DaysPerEarlyTick or 1) or (C.DaysPerLateTick or 1)
+	return (deltaSeconds / secs) * daysPerTick
 end
 
 -- Continuous (RoN-style) regen of the unified pool toward the cap, paced by in-game days so it
 -- respects pause/speed. Also clamps current down if the cap shrank.
 local function regenManpower(systemCtx)
-    local C = ctx.WorldConstants
-    local perDay = C.ManpowerRegenPerDay or 0.003
-    local year = (systemCtx and systemCtx.gameDate and systemCtx.gameDate.year) or 0
-    local frac = perDay * inGameDaysFromDelta(systemCtx and systemCtx.deltaSeconds, year)
-    for _, country in ctx.WorldState.allCountries() do
-        local cap = country.manpowerCap or 0
-        local cur = country.manpower or 0
-        local newCur = cur
-        if cur > cap then
-            newCur = cap
-        elseif cur < cap and frac > 0 then
-            newCur = math.min(cap, cur + cap * frac)
-        end
-        if newCur ~= cur then
-            country.manpower = newCur
-            ctx.WorldState.setCountry(country.tag, country)
-        end
-    end
+	local C = ctx.WorldConstants
+	local perDay = C.ManpowerRegenPerDay or 0.003
+	local year = (systemCtx and systemCtx.gameDate and systemCtx.gameDate.year) or 0
+	local frac = perDay * inGameDaysFromDelta(systemCtx and systemCtx.deltaSeconds, year)
+	for _, country in ctx.WorldState.allCountries() do
+		local cap = country.manpowerCap or 0
+		local cur = country.manpower or 0
+		local newCur = cur
+		if cur > cap then
+			newCur = cap
+		elseif cur < cap and frac > 0 then
+			newCur = math.min(cap, cur + cap * frac)
+		end
+		if newCur ~= cur then
+			country.manpower = newCur
+			ctx.WorldState.setCountry(country.tag, country)
+		end
+	end
 end
 
 -- Recompute caps on first run + each in-game month (land changes are rare); regen continuously every
@@ -151,27 +166,33 @@ end
 local lastManpowerMonthIndex = nil
 local manpowerInited = false
 local function manpowerTick(systemCtx)
-    local gd = systemCtx and systemCtx.gameDate
-    local idx = gd and (gd.year * 12 + (gd.month - 1)) or nil
-    if not manpowerInited or (idx and idx ~= lastManpowerMonthIndex) then
-        recomputeManpowerCaps()
-        lastManpowerMonthIndex = idx
-    end
-    if not manpowerInited then
-        manpowerInited = true
-        for _, country in ctx.WorldState.allCountries() do
-            country.manpower = country.manpowerCap or 0
-            ctx.WorldState.setCountry(country.tag, country)
-        end
-        return
-    end
-    regenManpower(systemCtx)
+	local gd = systemCtx and systemCtx.gameDate
+	local idx = gd and (gd.year * 12 + (gd.month - 1)) or nil
+	if not manpowerInited or (idx and idx ~= lastManpowerMonthIndex) then
+		recomputeManpowerCaps()
+		lastManpowerMonthIndex = idx
+	end
+	if not manpowerInited then
+		manpowerInited = true
+		for _, country in ctx.WorldState.allCountries() do
+			country.manpower = country.manpowerCap or 0
+			ctx.WorldState.setCountry(country.tag, country)
+		end
+		return
+	end
+	regenManpower(systemCtx)
 end
 
 local function provinceSupportsRecruit(province, tag)
-	if not province then return false end
-	if province.ownerTag ~= tag then return false end
-	if province.controllerTag ~= tag then return false end
+	if not province then
+		return false
+	end
+	if province.ownerTag ~= tag then
+		return false
+	end
+	if province.controllerTag ~= tag then
+		return false
+	end
 	-- City + infrastructure-tier requirements lifted: any owned & controlled province may recruit.
 	-- Production-line capacity (devTier-based) is still the natural pacing constraint.
 	return true
@@ -180,7 +201,9 @@ end
 local function canAfford(country, unit, count)
 	local totalCost = unit.recruitCost * count
 	local totalManpower = unit.recruitManpower * count
-	if (country.treasury or 0) < totalCost then return false, "insufficient_treasury" end
+	if (country.treasury or 0) < totalCost then
+		return false, "insufficient_treasury"
+	end
 	local pool = poolFieldForUnit(unit)
 	if (country[pool] or 0) < totalManpower then
 		return false, (pool == "levyManpower") and "insufficient_levies" or "insufficient_manpower"
@@ -215,39 +238,82 @@ end
 
 local function cancelQueueForCountry(tag, reason)
 	local queue = queuesByCountry[tag]
-	if not queue then return end
+	if not queue then
+		return
+	end
 	for _, ticket in queue do
 		ctx.EventBus.publish(ctx.Channels.RegimentRecruitCancelled, {
-			tag = tag, ticketId = ticket.id, reason = reason or "cancelled",
+			tag = tag,
+			ticketId = ticket.id,
+			reason = reason or "cancelled",
 		})
 	end
 	queuesByCountry[tag] = nil
 end
 
+-- Economy rework (D4): professional units need a Military district; only levy (militia/irregular) do not.
+local function provinceHasMilitaryDistrict(province)
+	local districts = province and province.districts
+	if not districts then
+		return false
+	end
+	for _, entry in pairs(districts) do
+		if type(entry) == "table" and entry.type == "Military" and (entry.level or 0) >= 1 then
+			return true
+		end
+	end
+	return false
+end
+
 local function enqueue(tag, provinceId, unitTypeId, count)
-	if type(count) ~= "number" or count < 1 then return false, "bad_count" end
+	if type(count) ~= "number" or count < 1 then
+		return false, "bad_count"
+	end
 	count = math.floor(count)
 	local unit = unitOf(unitTypeId)
-	if not unit then return false, "unknown_unit" end
-	if unit.unlockedByDefault == false then return false, "unit_locked" end
+	if not unit then
+		return false, "unknown_unit"
+	end
+	if unit.unlockedByDefault == false then
+		return false, "unit_locked"
+	end
 
 	local province = ctx.WorldState.getProvince(provinceId)
-	if not province then return false, "unknown_province" end
-	if not provinceSupportsRecruit(province, tag) then return false, "province_ineligible" end
+	if not province then
+		return false, "unknown_province"
+	end
+	if not provinceSupportsRecruit(province, tag) then
+		return false, "province_ineligible"
+	end
+
+	-- GateRecruitOnMilitary: without a Military district a province may raise ONLY levy (militia/irregular).
+	if ctx.WorldConstants and ctx.WorldConstants.GateRecruitOnMilitary then
+		local needsMilitary = unit.requiresDistrict == "Military" or unit.class ~= "levy"
+		if needsMilitary and not provinceHasMilitaryDistrict(province) then
+			return false, "district_required:Military"
+		end
+	end
 
 	local country = ctx.WorldState.getCountry(tag)
-	if not country then return false, "unknown_country" end
+	if not country then
+		return false, "unknown_country"
+	end
 
 	local cap = math.max(1, province.devTier or 1)
-	if totalLinesAt(tag, provinceId) >= cap then return false, "production_lines_full" end
+	if totalLinesAt(tag, provinceId) >= cap then
+		return false, "production_lines_full"
+	end
 
 	local ok, reason = canAfford(country, unit, count)
-	if not ok then return false, reason end
+	if not ok then
+		return false, reason
+	end
 
 	deduct(country, unit, count)
 	ctx.WorldState.setCountry(tag, country)
 
-	local completesAt = ctx.TickScheduler.getSimTime() + unit.recruitTicks * (ctx.WorldConstants.RecruitTickInterval or 3)
+	local completesAt = ctx.TickScheduler.getSimTime()
+		+ unit.recruitTicks * (ctx.WorldConstants.RecruitTickInterval or 3)
 	local ticket = {
 		id = generateTicketId(tag),
 		tag = tag,
@@ -262,8 +328,11 @@ local function enqueue(tag, provinceId, unitTypeId, count)
 	queuesByCountry[tag] = queue
 	pruneCountryQueue(tag)
 	ctx.EventBus.publish(ctx.Channels.RegimentRecruitQueued, {
-		tag = tag, ticketId = ticket.id,
-		unitTypeId = unitTypeId, count = count, provinceId = provinceId,
+		tag = tag,
+		ticketId = ticket.id,
+		unitTypeId = unitTypeId,
+		count = count,
+		provinceId = provinceId,
 		completesAt = completesAt,
 	})
 	return true, ticket.id
@@ -271,7 +340,9 @@ end
 
 local function cancelTicket(tag, ticketId, reason)
 	local queue = queuesByCountry[tag]
-	if not queue then return false, "no_queue" end
+	if not queue then
+		return false, "no_queue"
+	end
 	for i, ticket in ipairs(queue) do
 		if ticket.id == ticketId then
 			-- Refund treasury + manpower (full refund — design choice for v1)
@@ -284,11 +355,17 @@ local function cancelTicket(tag, ticketId, reason)
 				ctx.WorldState.setCountry(tag, country)
 			end
 			table.remove(queue, i)
-			if #queue == 0 then queuesByCountry[tag] = nil end
+			if #queue == 0 then
+				queuesByCountry[tag] = nil
+			end
 			pruneCountryQueue(tag)
 			ctx.EventBus.publish(ctx.Channels.RegimentRecruitCancelled, {
-				tag = tag, ticketId = ticketId, reason = reason or "cancelled",
-				provinceId = ticket.provinceId, unitTypeId = ticket.unitTypeId, count = ticket.count,
+				tag = tag,
+				ticketId = ticketId,
+				reason = reason or "cancelled",
+				provinceId = ticket.provinceId,
+				unitTypeId = ticket.unitTypeId,
+				count = ticket.count,
 			})
 			return true
 		end
@@ -317,8 +394,12 @@ local function cancelTicketsAt(provinceId, keepTag, reason)
 end
 
 local function onProvinceOccupied(payload)
-	if not ctx.WorldConstants.EnableOccupationFreeze then return end
-	if not payload or payload.provinceId == nil then return end
+	if not ctx.WorldConstants.EnableOccupationFreeze then
+		return
+	end
+	if not payload or payload.provinceId == nil then
+		return
+	end
 	cancelTicketsAt(payload.provinceId, payload.newController, "occupied")
 end
 
@@ -330,7 +411,9 @@ local function occupationFreezeSweep()
 		occupationSweepDone = false
 		return
 	end
-	if occupationSweepDone then return end
+	if occupationSweepDone then
+		return
+	end
 	occupationSweepDone = true
 	local pending = {}
 	for tag, queue in pairs(queuesByCountry) do
@@ -387,7 +470,9 @@ function RecruitSystem.register(context)
 		cancelTicket = cancelTicket,
 		recomputeManpowerCaps = recomputeManpowerCaps,
 	}
-	for k, v in pairs(context.RecruitSystem) do RecruitSystem[k] = v end
+	for k, v in pairs(context.RecruitSystem) do
+		RecruitSystem[k] = v
+	end
 	context.EventBus.subscribe(context.Channels.ProvinceOccupied, onProvinceOccupied)
 	context.TickScheduler.register({
 		id = "RecruitSystem",
@@ -418,11 +503,20 @@ function RecruitSystem.register(context)
 		r.Name = "CancelRecruit"
 		r.Parent = remotes
 		r.OnServerEvent:Connect(function(player, ticketId)
-			if context.InputValidator and context.InputValidator.accept
-				and not context.InputValidator.accept(player, "CancelRecruit", ticketId) then return end
-			if not context.PlayerAuthority or not context.PlayerAuthority.tagFor then return end
+			if
+				context.InputValidator
+				and context.InputValidator.accept
+				and not context.InputValidator.accept(player, "CancelRecruit", ticketId)
+			then
+				return
+			end
+			if not context.PlayerAuthority or not context.PlayerAuthority.tagFor then
+				return
+			end
 			local tag = context.PlayerAuthority.tagFor(player)
-			if not tag then return end
+			if not tag then
+				return
+			end
 			cancelTicket(tag, ticketId)
 		end)
 	end

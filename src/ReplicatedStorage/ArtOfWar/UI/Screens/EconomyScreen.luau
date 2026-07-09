@@ -3,6 +3,20 @@ local Components = script.Parent.Parent.Components
 local Button = require(Components.Button)
 local Modal = require(Components.Modal)
 local SimClock = require(script.Parent.Parent.Parent.Modules.SimClock)
+local DistrictTypes = require(script.Parent.Parent.Parent.Data.DistrictTypes)
+local WorldConstants = require(script.Parent.Parent.Parent.Shared.WorldConstants)
+
+-- Economy rework: hide district-absorbed + manufactory buildings from the legacy catalog when the district
+-- system is on (they are managed as districts in the province grid).
+local DISTRICT_ABSORBED = {
+	marketplace = true,
+	workshop = true,
+	granary = true,
+	tax_office = true,
+	barracks = true,
+	stables = true,
+	trading_port = true,
+}
 
 local EconomyScreen = {}
 
@@ -84,6 +98,10 @@ function EconomyScreen.create(ctx)
 	local function renderBudget(body, c)
 		local income = c.totalIncome or 0
 		local expenses = c.totalExpenses or 0
+		-- Under MonthlyEconomy the income/expense providers hold DAILY rates but the treasury only commits
+		-- monthly (rate x DaysPerMonth). Show every budget flow as per-month gold so the numbers match what
+		-- actually gets banked each month (this is why "Exports" now reads per-month, not per-day).
+		local perMonth = (WorldConstants.MonthlyEconomy and (WorldConstants.DaysPerMonth or 30)) or 1
 		ScreenKit.section(body, "Treasury", 1)
 		ScreenKit.stat(body, {
 			icon = "Treasury",
@@ -95,7 +113,7 @@ function EconomyScreen.create(ctx)
 		ScreenKit.stat(body, {
 			icon = "Trade",
 			label = "Monthly Net",
-			value = money(income - expenses),
+			value = money((income - expenses) * perMonth),
 			valueColor = (income - expenses) < 0 and "negative" or "positive",
 			layoutOrder = 3,
 		})
@@ -109,7 +127,7 @@ function EconomyScreen.create(ctx)
 				hasIncome = true
 				ScreenKit.stat(body, {
 					label = prettify(provider) or tostring(provider),
-					value = money(amount),
+					value = money(amount * perMonth),
 					valueColor = "positive",
 					layoutOrder = order,
 				})
@@ -129,7 +147,7 @@ function EconomyScreen.create(ctx)
 				hasExpense = true
 				ScreenKit.stat(body, {
 					label = prettify(provider) or tostring(provider),
-					value = money(-math.abs(amount)),
+					value = money(-math.abs(amount) * perMonth),
 					valueColor = "negative",
 					layoutOrder = order,
 				})
@@ -442,14 +460,61 @@ function EconomyScreen.create(ctx)
 		readyConn = ctx.cache.onChange("provincesReady", populate)
 	end
 
+	-- Country-wide district totals + "Upgrade All" macros (economy rework), from the replicated
+	-- country.districtStats aggregate (computed server-side in DistrictSystem).
+	local function renderDistrictTotals(body, c, order)
+		local stats = c.districtStats or {}
+		local byType = stats.byType or {}
+		local levelSum = stats.levelSumByType or {}
+		local tax = stats.monthlyTaxByType or {}
+		local upgradable = stats.upgradableByType or {}
+		ScreenKit.section(body, "Districts", order)
+		local o, any = order + 1, false
+		for _, dtype in DistrictTypes.order do
+			local count = byType[dtype] or 0
+			if count > 0 then
+				any = true
+				local def = DistrictTypes.types[dtype]
+				local avg = (levelSum[dtype] or 0) / count
+				ScreenKit.stat(body, {
+					icon = (def and def.icon) or "Building",
+					label = (def and def.displayName) or dtype,
+					value = string.format("%d \u{00B7} avg L%.1f \u{00B7} +%.1f/mo", count, avg, tax[dtype] or 0),
+					layoutOrder = o,
+				})
+				o += 1
+				local n = upgradable[dtype] or 0
+				if n > 0 then
+					local row = ScreenKit.buttonRow(body, o)
+					Button.create({
+						parent = row,
+						variant = "secondary",
+						text = string.format("Upgrade All (%d)", n),
+						onClick = function()
+							ctx.fire("UpgradeDistrictAll", dtype)
+						end,
+					})
+					o += 1
+				end
+			end
+		end
+		if not any then
+			ScreenKit.note(body, "No districts yet \u{2014} build them in your provinces.", order + 1)
+		end
+	end
+
 	local function renderBuildings(body, c)
-		ScreenKit.section(body, "Construction", 1)
+		local districtsOn = WorldConstants.DistrictsPlayable
+		if districtsOn then
+			renderDistrictTotals(body, c, 1)
+		end
+		ScreenKit.section(body, "Construction", 100)
 		local types = registries and registries.BuildingTypes or {}
 		local queue = c.buildQueue or {}
 		if #queue == 0 then
-			ScreenKit.note(body, "Nothing under construction.", 2)
+			ScreenKit.note(body, "Nothing under construction.", 101)
 		else
-			local order = 2
+			local order = 101
 			for _, item in ipairs(queue) do
 				local def = types[item.buildingId]
 				local prov = item.provinceId and ctx.cache.getProvince(item.provinceId)
@@ -480,9 +545,11 @@ function EconomyScreen.create(ctx)
 
 		local groups = {}
 		for id, def in types do
-			local cat = def.category or "other"
-			groups[cat] = groups[cat] or {}
-			table.insert(groups[cat], { id = id, def = def })
+			if not (districtsOn and (DISTRICT_ABSORBED[id] or def.manufactoryId ~= nil)) then
+				local cat = def.category or "other"
+				groups[cat] = groups[cat] or {}
+				table.insert(groups[cat], { id = id, def = def })
+			end
 		end
 		local cats = {}
 		for cat in groups do
@@ -490,7 +557,7 @@ function EconomyScreen.create(ctx)
 		end
 		table.sort(cats)
 
-		local order = 30
+		local order = 200
 		for _, cat in ipairs(cats) do
 			ScreenKit.section(body, CATEGORY_LABELS[cat] or prettify(cat) or cat, order)
 			order += 1
@@ -573,13 +640,15 @@ function EconomyScreen.create(ctx)
 			-- when a shown figure changes (a coarser bucket would freeze the Balance / a breakdown line).
 			local income = c.totalIncome or 0
 			local expenses = c.totalExpenses or 0
+			-- Mirror renderBudget's per-month scaling so the signature changes when a DISPLAYED figure does.
+			local perMonth = (WorldConstants.MonthlyEconomy and (WorldConstants.DaysPerMonth or 30)) or 1
 			parts[#parts + 1] = "tr:" .. money(c.treasury)
-			parts[#parts + 1] = "net:" .. money(income - expenses)
+			parts[#parts + 1] = "net:" .. money((income - expenses) * perMonth)
 			parts[#parts + 1] = "pol:" .. tostring(c.economyPolicy)
 			local inc = {}
 			for provider, amount in c.incomeBreakdown or {} do
 				if type(amount) == "number" and amount ~= 0 then
-					inc[#inc + 1] = tostring(provider) .. "=" .. money(amount)
+					inc[#inc + 1] = tostring(provider) .. "=" .. money(amount * perMonth)
 				end
 			end
 			table.sort(inc)
@@ -587,7 +656,7 @@ function EconomyScreen.create(ctx)
 			local exp = {}
 			for provider, amount in c.expenseBreakdown or {} do
 				if type(amount) == "number" and amount ~= 0 then
-					exp[#exp + 1] = tostring(provider) .. "=" .. money(-math.abs(amount))
+					exp[#exp + 1] = tostring(provider) .. "=" .. money(-math.abs(amount) * perMonth)
 				end
 			end
 			table.sort(exp)
@@ -667,6 +736,19 @@ function EconomyScreen.create(ctx)
 			end
 			table.sort(queue)
 			parts[#parts + 1] = "build:" .. table.concat(queue, ",")
+			-- District totals: count / level-sum / upgradable per type, so build+upgrade refresh the section.
+			local ds = {}
+			local dstats = c.districtStats or {}
+			for _, dtype in DistrictTypes.order do
+				ds[#ds + 1] = string.format(
+					"%s:%d:%d:%d",
+					dtype,
+					(dstats.byType and dstats.byType[dtype]) or 0,
+					(dstats.levelSumByType and dstats.levelSumByType[dtype]) or 0,
+					(dstats.upgradableByType and dstats.upgradableByType[dtype]) or 0
+				)
+			end
+			parts[#parts + 1] = "ds:" .. table.concat(ds, ",")
 		end
 		return table.concat(parts, "|")
 	end

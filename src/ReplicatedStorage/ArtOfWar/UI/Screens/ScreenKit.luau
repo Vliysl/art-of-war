@@ -12,6 +12,63 @@ local StatRow = require(Components.StatRow)
 
 local ScreenKit = {}
 
+-- Builds the scroll body used by every screen: a CanvasGroup clip wrapping a padded, vertically-listed
+-- ScrollingFrame. Extracted so both ScreenKit.open AND screens embedded inside another window's tab pane
+-- (RealmScreen) share one implementation. The CanvasGroup is load-bearing: a plain ScrollingFrame's
+-- ClipsDescendants does NOT clip ROTATED descendants (e.g. the diamond +/x action buttons), so scrolled-out
+-- rotated UI would render past the edge; a CanvasGroup composites to a flat, clipped texture.
+function ScreenKit.body(parent, opts)
+	opts = opts or {}
+	local z = opts.zIndex or 2
+	local bodyClip = Instance.new("CanvasGroup")
+	bodyClip.Name = "BodyClip"
+	bodyClip.Position = opts.position or UDim2.fromScale(0, 0)
+	bodyClip.Size = opts.size or UDim2.fromScale(1, 1)
+	bodyClip.BackgroundTransparency = 1
+	bodyClip.BorderSizePixel = 0
+	bodyClip.ZIndex = z
+	bodyClip.Parent = parent
+
+	local body = Instance.new("ScrollingFrame")
+	body.Name = "Body"
+	body.Position = UDim2.fromOffset(0, 0)
+	body.Size = UDim2.fromScale(1, 1)
+	body.BackgroundTransparency = 1
+	body.BorderSizePixel = 0
+	body.ScrollBarThickness = 4
+	body.ScrollBarImageColor3 = Colors.BorderStrong
+	body.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	body.CanvasSize = UDim2.new()
+	body.ScrollingDirection = Enum.ScrollingDirection.Y
+	body.ClipsDescendants = true
+	body.ZIndex = z
+	body.Parent = bodyClip
+	local bPad = Instance.new("UIPadding")
+	bPad.PaddingTop = UDim.new(0, Spacing.space2)
+	bPad.PaddingBottom = UDim.new(0, Spacing.space5)
+	bPad.PaddingLeft = UDim.new(0, Spacing.space5)
+	bPad.PaddingRight = UDim.new(0, Spacing.space5)
+	bPad.Parent = body
+	local bLayout = Instance.new("UIListLayout")
+	bLayout.FillDirection = Enum.FillDirection.Vertical
+	bLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	bLayout.Padding = UDim.new(0, Spacing.space2)
+	bLayout.Parent = body
+
+	return {
+		clip = bodyClip,
+		body = body,
+		layout = bLayout,
+		clearBody = function()
+			for _, child in body:GetChildren() do
+				if child:IsA("GuiObject") then
+					child:Destroy()
+				end
+			end
+		end,
+	}
+end
+
 function ScreenKit.open(ctx, opts)
 	opts = opts or {}
 	local hasSub = opts.subtitle ~= nil
@@ -134,59 +191,29 @@ function ScreenKit.open(ctx, opts)
 		tabHandle.root.Size = UDim2.new(0, 0, 1, 0)
 	end
 
-	-- Wrap the scroll body in a CanvasGroup. A plain ScrollingFrame's ClipsDescendants does NOT clip
-	-- ROTATED descendants (a long-standing Roblox limitation), so rotated UI -- e.g. the diamond +/x
-	-- action buttons -- would render past the panel edge when the list scrolled. A CanvasGroup composites
-	-- its descendants to a flat, axis-aligned texture clipped to its bounds, so scrolled-out content
-	-- (rotated or not) is clipped here. The group is sized to the VISIBLE body (not the scroll canvas),
-	-- so the texture stays small regardless of how long the list is.
-	local bodyClip = Instance.new("CanvasGroup")
-	bodyClip.Name = "BodyClip"
-	bodyClip.Position = UDim2.fromOffset(0, headerHeight)
-	bodyClip.Size = UDim2.new(1, 0, 1, -headerHeight)
-	bodyClip.BackgroundTransparency = 1
-	bodyClip.BorderSizePixel = 0
-	bodyClip.ZIndex = 2
-	bodyClip.Parent = root
-
-	local body = Instance.new("ScrollingFrame")
-	body.Name = "Body"
-	body.Position = UDim2.fromOffset(0, 0)
-	body.Size = UDim2.fromScale(1, 1)
-	body.BackgroundTransparency = 1
-	body.BorderSizePixel = 0
-	body.ScrollBarThickness = 4
-	body.ScrollBarImageColor3 = Colors.BorderStrong
-	body.AutomaticCanvasSize = Enum.AutomaticSize.Y
-	body.CanvasSize = UDim2.new()
-	body.ScrollingDirection = Enum.ScrollingDirection.Y
-	body.ClipsDescendants = true
-	body.ZIndex = 2
-	body.Parent = bodyClip
-	local bPad = Instance.new("UIPadding")
-	bPad.PaddingTop = UDim.new(0, Spacing.space2)
-	bPad.PaddingBottom = UDim.new(0, Spacing.space5)
-	bPad.PaddingLeft = UDim.new(0, Spacing.space5)
-	bPad.PaddingRight = UDim.new(0, Spacing.space5)
-	bPad.Parent = body
-	local bLayout = Instance.new("UIListLayout")
-	bLayout.FillDirection = Enum.FillDirection.Vertical
-	bLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	bLayout.Padding = UDim.new(0, Spacing.space2)
-	bLayout.Parent = body
+	-- Scroll body (CanvasGroup clip + padded ScrollingFrame). Skipped when opts.noBody = true (a host window
+	-- like RealmScreen mounts its own per-tab bodies below the header). See ScreenKit.body.
+	local bodyHandle
+	if not opts.noBody then
+		bodyHandle = ScreenKit.body(root, {
+			position = UDim2.fromOffset(0, headerHeight),
+			size = UDim2.new(1, 0, 1, -headerHeight),
+		})
+	end
+	local body = bodyHandle and bodyHandle.body
 
 	-- Opt-in: size the panel to its content (header + body) instead of a fixed height, so a short panel
 	-- doesn't trail empty space. Capped to the viewport (minus the HUD bars) -- past the cap the body
 	-- scrolls as usual. Pass opts.size with a 0 height; the width/position/anchor are preserved.
-	if opts.autoHeight then
+	if opts.autoHeight and bodyHandle then
 		local function resize()
-			local contentH = bLayout.AbsoluteContentSize.Y + Spacing.space2 + Spacing.space5
+			local contentH = bodyHandle.layout.AbsoluteContentSize.Y + Spacing.space2 + Spacing.space5
 			local h = headerHeight + contentH
 			local cam = workspace.CurrentCamera
 			local maxH = opts.maxHeight or (cam and (cam.ViewportSize.Y - 132)) or 720
 			root.Size = UDim2.new(root.Size.X.Scale, root.Size.X.Offset, 0, math.ceil(math.min(h, maxH)))
 		end
-		bLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize)
+		bodyHandle.layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize)
 		resize()
 	end
 
@@ -199,13 +226,8 @@ function ScreenKit.open(ctx, opts)
 		header = header,
 		body = body,
 		tabs = tabHandle,
-		clearBody = function()
-			for _, child in body:GetChildren() do
-				if child:IsA("GuiObject") then
-					child:Destroy()
-				end
-			end
-		end,
+		headerHeight = headerHeight,
+		clearBody = (bodyHandle and bodyHandle.clearBody) or function() end,
 		destroy = function()
 			root:Destroy()
 		end,

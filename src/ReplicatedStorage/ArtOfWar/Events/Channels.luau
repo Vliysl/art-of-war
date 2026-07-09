@@ -107,6 +107,11 @@ Channels.BuildingQueued = "building.queued"
 Channels.BuildingCompleted = "building.completed"
 Channels.BuildingCancelled = "building.cancelled"
 
+-- District economy rework
+Channels.MonthBoundaryReached = "sim.date.month.boundary"
+Channels.ProvinceDistrictChanged = "province.district.changed"
+Channels.DistrictUpgraded = "district.upgraded"
+
 Channels.WarDeclared = "war.declared"
 Channels.PeaceConcluded = "war.peace"
 Channels.PeaceProposed = "diplomacy.peace.proposed"

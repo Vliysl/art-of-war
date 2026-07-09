@@ -10,6 +10,7 @@ local Icons = DesignSystem.Icons
 local WorldConstants = require(script.Parent.Parent.Parent.Shared.WorldConstants)
 local LeaderTraits = require(script.Parent.Parent.Parent.Data.LeaderTraits)
 local Terrains = require(script.Parent.Parent.Parent.Data.Terrains)
+local RecruitGate = require(script.Parent.Parent.Parent.Modules.RecruitGate)
 
 local ArmyPanel = {}
 
@@ -39,7 +40,12 @@ local function defenseBonus(cache, army)
 end
 
 local function toHex(c)
-	return string.format("#%02X%02X%02X", math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
+	return string.format(
+		"#%02X%02X%02X",
+		math.floor(c.R * 255 + 0.5),
+		math.floor(c.G * 255 + 0.5),
+		math.floor(c.B * 255 + 0.5)
+	)
 end
 local MUTED_HEX = toHex(Colors.TextSecondary)
 
@@ -442,7 +448,7 @@ local function actionGrid(parent, buttons, order)
 	wrap.LayoutOrder = order or 0
 	wrap.Parent = parent
 	local grid = Instance.new("UIGridLayout")
-	grid.CellSize = UDim2.new(0.5, -4, 0, 32)
+	grid.CellSize = UDim2.new(0.5, -4, 0, DesignSystem.Responsive.isTouch() and 44 or 32) -- D2: 44px tap target on touch
 	grid.CellPadding = UDim2.fromOffset(8, 8)
 	grid.SortOrder = Enum.SortOrder.LayoutOrder
 	grid.HorizontalAlignment = Enum.HorizontalAlignment.Left
@@ -528,7 +534,7 @@ local function strengthBlock(parent, cfg)
 	sub.Parent = f
 
 	local function set(curMen, maxMen, reinforcing, enabled, regiments, reserve)
-		men.Text = string.format("%s <font color=\"%s\">/ %s men</font>", commafy(curMen), MUTED_HEX, commafy(maxMen))
+		men.Text = string.format('%s <font color="%s">/ %s men</font>', commafy(curMen), MUTED_HEX, commafy(maxMen))
 		tag.Visible = reinforcing == true
 		tag.Text = enabled and "reinforcing" or "paused"
 		tag.TextColor3 = enabled and Colors.Warning or Colors.TextSecondary
@@ -588,15 +594,17 @@ function ArmyPanel.create(ctx)
 			return
 		end
 		closePicker()
+		-- Professional (non-levy) units need a Military district in this province; mirror the server gate so
+		-- locked units grey out + can't be added (RecruitGate is the shared client copy of the rule).
+		local recruitProvince = ctx.cache.getProvince and ctx.cache.getProvince(provinceId) or nil
+		local hasMilitary = RecruitGate.provinceHasMilitaryDistrict(recruitProvince)
 		local pool = {}
 		for id, def in pairs(types) do
 			if def.recruitCost ~= nil then
 				table.insert(pool, { id = id, def = def })
 			end
 		end
-		table.sort(pool, function(a, b)
-			return (a.def.displayName or a.id) < (b.def.displayName or b.id)
-		end)
+		RecruitGate.sortPool(pool) -- levy (militia/irregular) on top, then professional; each alphabetical
 
 		local modal = Modal.create({
 			parent = handle.root,
@@ -628,19 +636,28 @@ function ArmyPanel.create(ctx)
 		layout.Parent = list
 
 		for i, item in ipairs(pool) do
+			local locked = RecruitGate.unitNeedsMilitaryDistrict(item.def) and not hasMilitary
 			local row = ScreenKit.stat(list, {
 				icon = "Army",
 				label = item.def.displayName or titleCase(item.id),
-				value = string.format("%s gold", commafy(item.def.recruitCost)),
+				value = locked and "Needs Military" or string.format("%s gold", commafy(item.def.recruitCost)),
+				valueColor = locked and Colors.Warning or nil,
 				mono = true,
 				layoutOrder = i,
 			})
+			if locked then
+				local lbl = row:FindFirstChild("Label")
+				if lbl then
+					lbl.TextColor3 = Colors.TextDisabled
+				end
+			end
 			local add = Button.create({
 				parent = row,
 				variant = "secondary",
 				text = "Add",
 				width = 72,
 				size = "sm",
+				disabled = locked, -- greys the button + blocks its onClick (Button.create gates on Active)
 				onClick = function()
 					ctx.fire("RecruitUnit", provinceId, item.id, 1)
 				end,
@@ -1143,7 +1160,12 @@ function ArmyPanel.create(ctx)
 
 		local group = ctx.cache.getArmyGroup(gid)
 		local name = (group and group.name) or "Army Group"
-		chip(wrap, { icon = "Army", label = name, value = string.format("%d armies", group and #(group.memberArmyIds or {}) or #liveTargets()), order = 1 })
+		chip(wrap, {
+			icon = "Army",
+			label = name,
+			value = string.format("%d armies", group and #(group.memberArmyIds or {}) or #liveTargets()),
+			order = 1,
+		})
 
 		-- Assigned general (Combat depth C): resolve the commander id against the roster for a name.
 		if WorldConstants.EnableGenerals then
@@ -1166,7 +1188,12 @@ function ArmyPanel.create(ctx)
 				nm.Position = UDim2.fromOffset(20, 0)
 				nm.Size = UDim2.new(1, -110, 1, 0)
 				nm.RichText = true
-				nm.Text = string.format("%s <font color=\"%s\">\u{00B7} Lvl %d</font>", generalName(commander), MUTED_HEX, commander.level or 0)
+				nm.Text = string.format(
+					'%s <font color="%s">\u{00B7} Lvl %d</font>',
+					generalName(commander),
+					MUTED_HEX,
+					commander.level or 0
+				)
 				nm.TextColor3 = Colors.TextPrimary
 				nm.TextXAlignment = Enum.TextXAlignment.Left
 				nm.TextTruncate = Enum.TextTruncate.AtEnd
@@ -1222,34 +1249,50 @@ function ArmyPanel.create(ctx)
 		end
 
 		local actions = {
-			{ text = "Rename", variant = "secondary", onClick = function()
-				openNameEntry({
-					title = "Rename Group",
-					subtitle = name,
-					default = name,
-					confirmText = "Rename",
-					onConfirm = function(newName)
-						ctx.fire("RenameArmyGroup", gid, newName)
-					end,
-				})
-			end },
-			{ text = "Disband Group", variant = "danger", onClick = function()
-				ctx.fire("DisbandArmyGroup", gid)
-			end },
+			{
+				text = "Rename",
+				variant = "secondary",
+				onClick = function()
+					openNameEntry({
+						title = "Rename Group",
+						subtitle = name,
+						default = name,
+						confirmText = "Rename",
+						onConfirm = function(newName)
+							ctx.fire("RenameArmyGroup", gid, newName)
+						end,
+					})
+				end,
+			},
+			{
+				text = "Disband Group",
+				variant = "danger",
+				onClick = function()
+					ctx.fire("DisbandArmyGroup", gid)
+				end,
+			},
 		}
 		if WorldConstants.EnableGenerals then
-			actions[#actions + 1] = { text = "Assign General", variant = "secondary", onClick = function()
-				openGeneralPicker(gid)
-			end }
+			actions[#actions + 1] = {
+				text = "Assign General",
+				variant = "secondary",
+				onClick = function()
+					openGeneralPicker(gid)
+				end,
+			}
 		end
 		if WorldConstants.EnableBorderCover then
-			actions[#actions + 1] = { text = "Cover Border", variant = "secondary", onClick = function()
-				ctx.requestTarget({
-					kind = "coverBorder",
-					groupId = gid,
-					hint = "Click the nation to cover the border against.",
-				})
-			end }
+			actions[#actions + 1] = {
+				text = "Cover Border",
+				variant = "secondary",
+				onClick = function()
+					ctx.requestTarget({
+						kind = "coverBorder",
+						groupId = gid,
+						hint = "Click the nation to cover the border against.",
+					})
+				end,
+			}
 		end
 		actionGrid(wrap, actions, 10)
 	end
@@ -1298,12 +1341,18 @@ function ArmyPanel.create(ctx)
 		local actions = {
 			{ text = "Recruit   T", variant = "secondary", onClick = cmd.recruit, disabled = provinceId == nil },
 			{ text = "Halt   H", variant = "secondary", onClick = cmd.halt, disabled = not anyMoving },
-			{ text = "Split   V", variant = "ghost", onClick = cmd.split, disabled = not (single and primaryArmy and regimentsTotal(primaryArmy) >= 2) },
+			{
+				text = "Split   V",
+				variant = "ghost",
+				onClick = cmd.split,
+				disabled = not (single and primaryArmy and regimentsTotal(primaryArmy) >= 2),
+			},
 			{ text = "Merge   G", variant = "ghost", onClick = cmd.merge, disabled = mergeProvinceId() == nil },
 		}
 		actionGrid(wrap, actions, 3)
 
-		local disband = Button.create({ parent = wrap, variant = "danger", text = "Disband", fill = true, onClick = cmd.disband })
+		local disband =
+			Button.create({ parent = wrap, variant = "danger", text = "Disband", fill = true, onClick = cmd.disband })
 		disband.LayoutOrder = 4
 
 		buildGroupBar(parent, order + 5)
@@ -1328,16 +1377,24 @@ function ArmyPanel.create(ctx)
 		local offSig = "none"
 		if type(off) == "table" then
 			offSig = (off.name or "")
-				.. "|" .. tostring(off.level or 0)
-				.. "|" .. tostring(off.experience or 0)
-				.. "|" .. table.concat(off.traits or {}, ",")
+				.. "|"
+				.. tostring(off.level or 0)
+				.. "|"
+				.. tostring(off.experience or 0)
+				.. "|"
+				.. table.concat(off.traits or {}, ",")
 		end
 		return table.concat(comp, ";")
-			.. "#" .. offSig
-			.. "#mv:" .. (a.movement and tostring(a.movement.toProvinceId) or "0")
-			.. "#re:" .. tostring(a.reinforceEnabled ~= false)
-			.. "#ac:" .. tostring(a.autoCapture == true)
-			.. "#gp:" .. tostring(a.groupId or "0")
+			.. "#"
+			.. offSig
+			.. "#mv:"
+			.. (a.movement and tostring(a.movement.toProvinceId) or "0")
+			.. "#re:"
+			.. tostring(a.reinforceEnabled ~= false)
+			.. "#ac:"
+			.. tostring(a.autoCapture == true)
+			.. "#gp:"
+			.. tostring(a.groupId or "0")
 	end
 	-- Combat depth B/C/D: hash the selection's group record (name / commander / cover target) so the
 	-- Groups & Command section rebuilds when any of those change (they live in the armyGroups collection).
@@ -1565,7 +1622,12 @@ function ArmyPanel.create(ctx)
 			nm.Position = UDim2.new(0, 20, 0.5, 0)
 			nm.Size = UDim2.new(1, -100, 1, 0)
 			nm.RichText = true
-			nm.Text = string.format("%s <font color=\"%s\">\u{00B7} Lvl %d</font>", val(officer.name), MUTED_HEX, officer.level or 0)
+			nm.Text = string.format(
+				'%s <font color="%s">\u{00B7} Lvl %d</font>',
+				val(officer.name),
+				MUTED_HEX,
+				officer.level or 0
+			)
 			nm.TextColor3 = Colors.TextPrimary
 			nm.TextXAlignment = Enum.TextXAlignment.Left
 			nm.TextTruncate = Enum.TextTruncate.AtEnd
@@ -1598,13 +1660,21 @@ function ArmyPanel.create(ctx)
 			pl.Parent = pillRow
 			local names = traitNames(registries, officer)
 			if #names == 0 then
-				pill(pillRow, "No traits", { bg = Colors.SurfaceSunken, fg = Colors.TextSecondary, stroke = Colors.BorderSubtle, order = 0 })
+				pill(
+					pillRow,
+					"No traits",
+					{ bg = Colors.SurfaceSunken, fg = Colors.TextSecondary, stroke = Colors.BorderSubtle, order = 0 }
+				)
 			else
 				for i, nme in ipairs(names) do
 					pill(pillRow, nme, { bg = Colors.Accent, fg = Colors.SurfaceBase, order = i })
 				end
 			end
-			pill(pillRow, string.format("XP %s", commafy(officer.experience or 0)), { bg = Colors.SurfaceSunken, fg = Colors.TextSecondary, stroke = Colors.BorderSubtle, order = 99 })
+			pill(
+				pillRow,
+				string.format("XP %s", commafy(officer.experience or 0)),
+				{ bg = Colors.SurfaceSunken, fg = Colors.TextSecondary, stroke = Colors.BorderSubtle, order = 99 }
+			)
 		end
 
 		ScreenKit.section(body, "Composition", 20)
@@ -1613,7 +1683,11 @@ function ArmyPanel.create(ctx)
 				chip(body, {
 					icon = "Army",
 					label = unitName(registries, e.id),
-					value = string.format("\u{00D7}%d  \u{00B7}  %s men", e.count, commafy(e.count * REGIMENT_STRENGTH)),
+					value = string.format(
+						"\u{00D7}%d  \u{00B7}  %s men",
+						e.count,
+						commafy(e.count * REGIMENT_STRENGTH)
+					),
 					order = 20 + i,
 				})
 			end
@@ -1632,7 +1706,11 @@ function ArmyPanel.create(ctx)
 			local mp = math.clamp((a.morale or 0) / MORALE_MAX, 0, 1)
 			setMorale(mp, string.format("%d / %d", math.floor(a.morale or 0), MORALE_MAX), moraleColor(mp))
 			local bo = a.baseOrganization or 0
-			setOrg((a.organization or 0) / math.max(bo, 1), string.format("%d / %d", math.floor(a.organization or 0), math.floor(bo)), "amber")
+			setOrg(
+				(a.organization or 0) / math.max(bo, 1),
+				string.format("%d / %d", math.floor(a.organization or 0), math.floor(bo)),
+				"amber"
+			)
 			local eM = a.entrenchmentMax or 0
 			setEntrench((a.entrenchment or 0) / math.max(eM, 1), entrenchValueText(a), "amber")
 			if setDef then
@@ -1642,7 +1720,14 @@ function ArmyPanel.create(ctx)
 			local inf = dominantInfo(a, registries)
 			local cR, mR = inf.total, reinforceMax(a)
 			local c2 = ctx.cache.getCountry(ctx.tag)
-			setStrength(cR * REGIMENT_STRENGTH, mR * REGIMENT_STRENGTH, cR < mR, a.reinforceEnabled ~= false, cR, c2 and c2.manpower or nil)
+			setStrength(
+				cR * REGIMENT_STRENGTH,
+				mR * REGIMENT_STRENGTH,
+				cR < mR,
+				a.reinforceEnabled ~= false,
+				cR,
+				c2 and c2.manpower or nil
+			)
 		end
 	end
 

@@ -1,161 +1,96 @@
 local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
 local Colors = DesignSystem.Colors
-local Typography = DesignSystem.Typography
 local Spacing = DesignSystem.Spacing
 local Icons = DesignSystem.Icons
+local Typography = DesignSystem.Typography
 local Shells = DesignSystem.Shells
-local CountryBadge = require(script.Parent.Parent.Components.CountryBadge)
-local Tooltip = require(script.Parent.Parent.Components.Tooltip)
 local Responsive = DesignSystem.Responsive
+local CountryBadge = require(script.Parent.Parent.Components.CountryBadge)
+local HeroButton = require(script.Parent.Parent.Components.HeroButton)
+local Tooltip = require(script.Parent.Parent.Components.Tooltip)
 
 local CountryBar = {}
 
-local MENUS = { "Politics", "Economy", "Military", "Diplomacy", "Research", "Missions", "Settings" }
-local PILL_W = 104
-local NAME_W = 200
-local PILLS_RESERVE = 300
+-- Redesigned CountryBar: a small set of large value/icon buttons instead of the old name/gov text + five stat
+-- pills + seven text tabs. Layout (left -> right): [crest] [£ Economy] [Manpower] [Research] [2x2 stat grid].
+--   * crest        -> opens the Realm window (Court/Estates/Reforms/Diplomacy) via config.onCrest; hover shows name+gov
+--   * Economy (£)  -> config.onMenu("Economy"); shows live treasury + income delta; hover = treasury/income
+--   * Manpower     -> config.onMenu("Military"); shows live manpower; hover = manpower / cap
+--   * Research     -> config.onMenu("Research"); icon only; hover = active tech + %
+--   * stat cells   -> PP / Stability / Legitimacy / Prestige; hover = explanation; click opens Realm (Court)
+-- Settings is reached via the persistent top-left gear; Missions is folded into Politics. Composed frame (dark
+-- surface + dimmed-gold stroke + gold corner brackets), not the old baked raster, so it reflows.
 
+-- Hover/tap tooltips for the secondary stat cells (title + one-line explanation).
 local STAT_TIPS = {
-	Treasury = { title = "Treasury", body = "Gold in your treasury. The green value is your monthly income." },
-	Manpower = { title = "Manpower", body = "Recruits available to raise and reinforce regiments." },
 	PowerProj = { title = "Political Power", body = "Spent on laws, policies, diplomacy, and national actions." },
-	Stability = {
-		title = "Stability",
-		body = "National stability. Higher stability improves income and lowers unrest.",
-	},
-	Legitimacy = {
-		title = "Legitimacy",
-		body = "Government legitimacy. Low legitimacy raises unrest and weakens your rule.",
-	},
+	Stability = { title = "Stability", body = "National stability. Higher stability improves income and lowers unrest." },
+	Legitimacy = { title = "Legitimacy", body = "Government legitimacy. Low legitimacy raises unrest and weakens your rule." },
+	Prestige = { title = "Prestige", body = "National prestige, earned through war and diplomacy. Lifts your standing." },
 }
 
-local function text(parent, str, role, color, props)
-	local l = Instance.new("TextLabel")
-	l.BackgroundTransparency = 1
-	l.Text = str or ""
-	l.TextColor3 = color or Colors.TextPrimary
-	l.TextXAlignment = Enum.TextXAlignment.Left
-	l.TextYAlignment = Enum.TextYAlignment.Center
-	l.TextTruncate = Enum.TextTruncate.AtEnd
-	Typography.apply(l, role)
-	for k, v in props or {} do
-		l[k] = v
+local CREST_W = 72
+local ECON_W = 168
+local MANPOWER_W = 168
+local RESEARCH_W = 96
+local STAT_CELL_W = 82
+local STAT_CELL_H = 32
+-- The bar hugs its content: L/R padding + crest + 3 buttons + the 2x2 stat grid + the four gaps between the
+-- five row items. Keep this in sync if the widths above (or the stat grid) change.
+local BAR_W = Spacing.space4 * 2
+	+ CREST_W
+	+ ECON_W
+	+ MANPOWER_W
+	+ RESEARCH_W
+	+ (STAT_CELL_W * 2 + Spacing.space3)
+	+ Spacing.space3 * 4
+
+-- On phones the fill-width bar is oversized; render it at ~half that size (still pinned bottom-left).
+local MOBILE_BAR_SCALE = 0.5
+
+-- Parents four gold corner-bracket sprites (corner_* fit-mode shells) to `parent`. Single sprites, no
+-- SliceCenter -> no 9-slice decode race. Used for the bar frame and the stat cells; HeroButtons carry their own.
+local function addCorners(parent, sizePx, inset, zi)
+	local defs = {
+		{ "corner_tl", Vector2.new(0, 0), UDim2.fromOffset(inset, inset) },
+		{ "corner_tr", Vector2.new(1, 0), UDim2.new(1, -inset, 0, inset) },
+		{ "corner_bl", Vector2.new(0, 1), UDim2.new(0, inset, 1, -inset) },
+		{ "corner_br", Vector2.new(1, 1), UDim2.new(1, -inset, 1, -inset) },
+	}
+	for _, d in defs do
+		local img = Shells.create(d[1])
+		img.Name = d[1]
+		img.Size = UDim2.fromOffset(sizePx, sizePx)
+		img.AnchorPoint = d[2]
+		img.Position = d[3]
+		img.ZIndex = zi
+		img.Parent = parent
 	end
-	if not (props and props.Parent) then
-		l.Parent = parent
-	end
-	return l
-end
-
--- Builds one stat pill and returns handles to its mutable labels. The value/delta text is set later
--- (and on every change) via CountryBar.update -> setResources, so the bar never needs to be rebuilt.
-local function statPill(parent, iconKey, order, withDelta, tooltipLayer)
-	-- Sharp procedural pill (Frame + UIStroke), not the rounded `stat_pill_shell` 9-slice -- matches the
-	-- owner's sharp-corner preference for the rest of the UI.
-	local pill = Instance.new("Frame")
-	pill.Name = "StatPill"
-	pill.Size = UDim2.fromOffset(PILL_W, 36)
-	pill.LayoutOrder = order
-	pill.BackgroundColor3 = Colors.SurfaceElevated
-	pill.BorderSizePixel = 0
-	pill.Parent = parent
-	local pillStroke = Instance.new("UIStroke")
-	pillStroke.Color = Colors.BorderStrong
-	pillStroke.Thickness = 1
-	pillStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-	pillStroke.Parent = pill
-
-	local icon = Icons.create(iconKey, 14, Colors.TextSecondary)
-	icon.AnchorPoint = Vector2.new(0, 0.5)
-	icon.Position = UDim2.new(0, 12, 0.5, 0)
-	icon.Parent = pill
-
-	local valueLabel = text(pill, "", "value", Colors.TextPrimary, {
-		Parent = pill,
-		Position = UDim2.fromOffset(34, withDelta and 4 or 0),
-		Size = UDim2.new(1, -42, 0, withDelta and 16 or 36),
-		TextYAlignment = withDelta and Enum.TextYAlignment.Bottom or Enum.TextYAlignment.Center,
-	})
-	local deltaLabel
-	if withDelta then
-		deltaLabel = text(pill, "", "caption", Colors.TextSecondary, {
-			Parent = pill,
-			Position = UDim2.fromOffset(34, 19),
-			Size = UDim2.new(1, -42, 0, 13),
-		})
-	end
-
-	local tip = STAT_TIPS[iconKey]
-	if tip and tooltipLayer then
-		local hit = Instance.new("TextButton")
-		hit.Name = "Hit"
-		hit.Size = UDim2.fromScale(1, 1)
-		hit.BackgroundTransparency = 1
-		hit.AutoButtonColor = false
-		hit.Text = ""
-		hit.ZIndex = 10
-		hit.Parent = pill
-
-		-- Anchor the tooltip ABOVE the pill with a fixed gap (it does NOT follow the cursor). The
-		-- cursor stays inside the pill, always below the tooltip, so it can never occlude the cursor
-		-- and cause a hover leave/re-enter flicker loop.
-		local current
-		local function clearTip()
-			if current then
-				current:Destroy()
-				current = nil
-			end
-		end
-		local function anchor()
-			if not current then
-				return
-			end
-			local us = tooltipLayer:FindFirstChildWhichIsA("UIScale")
-			local scale = (us and us.Scale) or 1
-			local cam = workspace.CurrentCamera
-			local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
-			local tw = current.AbsoluteSize.X > 0 and current.AbsoluteSize.X or 196 * scale
-			local th = current.AbsoluteSize.Y > 0 and current.AbsoluteSize.Y or 64 * scale
-			local pp, ps = pill.AbsolutePosition, pill.AbsoluteSize
-			local x = pp.X + ps.X / 2 - tw / 2
-			local y = pp.Y - th - 8
-			if y < 8 then
-				y = pp.Y + ps.Y + 8
-			end
-			x = math.clamp(x, 8, math.max(8, vp.X - tw - 8))
-			current.Position = UDim2.fromOffset(x / scale, y / scale)
-		end
-		hit.MouseEnter:Connect(function()
-			clearTip()
-			current = Tooltip.create({ title = tip.title, body = tip.body, width = 196, compact = true })
-			current:SetAttribute("AoWInputSink", false)
-			current.Parent = tooltipLayer
-			anchor()
-			task.defer(anchor)
-		end)
-		hit.MouseLeave:Connect(clearTip)
-		hit.Destroying:Connect(clearTip)
-	end
-	return { pill = pill, value = valueLabel, delta = deltaLabel }
 end
 
 function CountryBar.create(config)
 	config = config or {}
 	local r = config.resources or {}
 	local z = config.zIndex or 5
+	local tipLayer = config.tooltipLayer
+
+	-- Latest data the tooltips read at show-time (refreshed by setResources / update).
+	local latestRes = r
+	local latestName = config.name or "Realm"
+	local latestGov = config.government
+	local latestCulture = config.culture
 
 	local root = Instance.new("Frame")
 	root.Name = "CountryStrip"
 	root.AnchorPoint = Vector2.new(0, 1)
 	root.Position = config.position or UDim2.new(0, 16, 1, -8)
-	root.Size = config.size or UDim2.fromOffset(900, 96)
+	root.Size = config.size or UDim2.fromOffset(BAR_W, 96)
 	root.BackgroundTransparency = 1
 	root.ZIndex = z
 	root:SetAttribute("AoWInputSink", true)
 
-	-- The bar's art + element offsets are baked against a fixed 900x96, so it can't reflow. On touch we
-	-- uniformly scale it (relative to the HUD's own Responsive UIScale) to FILL the phone's width -- on a
-	-- short landscape screen the HUD scale floors below 1, so this grows the bar back up. Desktop untouched.
+	-- On touch, scale the whole bar (relative to the HUD's own Responsive UIScale) toward the phone width, then
+	-- take MOBILE_BAR_SCALE of that so it sits at ~half size in the bottom-left instead of dominating the screen.
 	if Responsive.isTouch() then
 		local fit = Instance.new("UIScale")
 		fit.Name = "TouchFit"
@@ -163,7 +98,8 @@ function CountryBar.create(config)
 		local function refit()
 			local cam = workspace.CurrentCamera
 			local vpX = (cam and cam.ViewportSize.X) or 1280
-			fit.Scale = math.clamp((vpX - 24) / (900 * Responsive.computeScale()), 0.5, 1.8)
+			local barW = (config.size and config.size.X.Offset > 0 and config.size.X.Offset) or BAR_W
+			fit.Scale = MOBILE_BAR_SCALE * math.clamp((vpX - 24) / (barW * Responsive.computeScale()), 0.5, 1.8)
 		end
 		refit()
 		local cam = workspace.CurrentCamera
@@ -175,180 +111,330 @@ function CountryBar.create(config)
 		end
 	end
 
-	local bg = Shells.create("hud_country_bar_bg", { ZIndex = z })
+	-- Composed bar frame: dark surface + dimmed-gold stroke + gold corner brackets.
+	local bg = Instance.new("Frame")
 	bg.Name = "Bg"
+	bg.Size = UDim2.fromScale(1, 1)
+	bg.BackgroundColor3 = Colors.SurfaceBase
+	bg.BorderSizePixel = 0
+	bg.ZIndex = z
 	bg.Parent = root
+	local bgStroke = Instance.new("UIStroke")
+	bgStroke.Color = Color3.fromRGB(178, 150, 86) -- dimmed gold accent (softer than the bright Colors.Accent)
+	bgStroke.Thickness = 1.5
+	bgStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	bgStroke.Parent = bg
+	addCorners(bg, 26, 1, z + 1)
 
 	local content = Instance.new("Frame")
 	content.Name = "Content"
 	content.Size = UDim2.fromScale(1, 1)
 	content.BackgroundTransparency = 1
-	content.ZIndex = z + 1
+	content.ZIndex = z + 2
 	content.Parent = root
 	local pad = Instance.new("UIPadding")
 	pad.PaddingLeft = UDim.new(0, Spacing.space4)
 	pad.PaddingRight = UDim.new(0, Spacing.space4)
 	pad.PaddingTop = UDim.new(0, Spacing.space3)
-	pad.PaddingBottom = UDim.new(0, Spacing.space2)
+	pad.PaddingBottom = UDim.new(0, Spacing.space3)
 	pad.Parent = content
+	local row = Instance.new("UIListLayout")
+	row.FillDirection = Enum.FillDirection.Horizontal
+	row.HorizontalAlignment = Enum.HorizontalAlignment.Left
+	row.VerticalAlignment = Enum.VerticalAlignment.Center
+	row.SortOrder = Enum.SortOrder.LayoutOrder
+	row.Padding = UDim.new(0, Spacing.space3)
+	row.Parent = content
 
-	-- The crest recess is baked into the bar background image, so there is no recess instance to parent
-	-- into. `CrestRecess` IS that recess as a real element: a transparent square positioned over the
-	-- baked recess. The crest is then a CHILD of it, filling it edge-to-edge (fromScale 1,1) -- so the
-	-- crest's size/position is driven entirely by this one container (tune the container, not the crest).
-	local recess = Instance.new("Frame")
-	recess.Name = "CrestRecess"
-	-- Measured directly from the bg art (rbxassetid://101174527323084) against a bar-unit grid: the
-	-- recess opening (inside the gold bezel) is ~x[15,87] y[15,82] of the 900x96 bar -> offset (15,15)
-	-- size 72x67, vertically centred. The crest (child) fills this 1:1.
-	recess.AnchorPoint = Vector2.new(0, 0)
-	recess.Position = UDim2.fromOffset(15, 15)
-	recess.Size = UDim2.fromOffset(72, 67)
-	recess.BackgroundTransparency = 1
-	recess.Parent = bg
+	-- Tooltip helper: `provider()` returns { title, body } (or nil to skip), computed at show-time so the
+	-- tooltip always reflects the latest values. Anchored ABOVE the host (never follows the cursor).
+	local function attachTip(host, provider)
+		if not tipLayer then
+			return
+		end
+		local current
+		local function clearTip()
+			if current then
+				current:Destroy()
+				current = nil
+			end
+		end
+		local function anchorTip()
+			if not current then
+				return
+			end
+			local us = tipLayer:FindFirstChildWhichIsA("UIScale")
+			local scale = (us and us.Scale) or 1
+			local cam = workspace.CurrentCamera
+			local vp = (cam and cam.ViewportSize) or Vector2.new(1280, 720)
+			local tw = current.AbsoluteSize.X > 0 and current.AbsoluteSize.X or 220 * scale
+			local th = current.AbsoluteSize.Y > 0 and current.AbsoluteSize.Y or 64 * scale
+			local hp, hs = host.AbsolutePosition, host.AbsoluteSize
+			local x = hp.X + hs.X / 2 - tw / 2
+			local y = hp.Y - th - 8
+			if y < 8 then
+				y = hp.Y + hs.Y + 8
+			end
+			x = math.clamp(x, 8, math.max(8, vp.X - tw - 8))
+			current.Position = UDim2.fromOffset(x / scale, y / scale)
+		end
+		local function showTip()
+			local tip = provider()
+			if not tip then
+				return
+			end
+			clearTip()
+			current = Tooltip.create({ title = tip.title, body = tip.body, width = 220, compact = true })
+			current:SetAttribute("AoWInputSink", false)
+			current.Parent = tipLayer
+			anchorTip()
+			task.defer(anchorTip)
+		end
+		host.MouseEnter:Connect(showTip)
+		host.MouseLeave:Connect(clearTip)
+		host.Destroying:Connect(clearTip)
+		host.InputBegan:Connect(function(io)
+			if io.UserInputType == Enum.UserInputType.Touch then
+				showTip()
+				local mine = current
+				task.delay(2.5, function()
+					if current == mine then
+						clearTip()
+					end
+				end)
+			end
+		end)
+	end
 
-	local flag = CountryBadge.create({ code = config.code or "XXX", countryColor = config.color, size = "lg" })
-	flag.AnchorPoint = Vector2.new(0.5, 0.5)
-	flag.Position = UDim2.fromScale(0.5, 0.5)
-	flag.Size = UDim2.fromScale(1, 1)
-	flag.Parent = recess
+	-- Crest -> Realm (clickable), rebuilt only on a country switch. Hover/tap shows the country name + government.
+	local crestBtn = Instance.new("TextButton")
+	crestBtn.Name = "Crest"
+	crestBtn.Size = UDim2.fromOffset(CREST_W, CREST_W) -- 1x1 square, same height as the buttons
+	crestBtn.BackgroundColor3 = Colors.SurfaceElevated
+	crestBtn.BorderSizePixel = 0
+	crestBtn.AutoButtonColor = false
+	crestBtn.Text = ""
+	crestBtn.LayoutOrder = 0
+	crestBtn.ZIndex = z + 2
+	crestBtn.Parent = content
+	local crestStroke = Instance.new("UIStroke")
+	crestStroke.Color = Colors.BorderStrong
+	crestStroke.Thickness = 1
+	crestStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	crestStroke.Parent = crestBtn
 
-	local nameLabel = text(content, config.name or "Unknown", "displayMd", Colors.TextPrimary, {
-		Position = UDim2.fromOffset(94, 0),
-		Size = UDim2.fromOffset(NAME_W, 24),
+	local flag
+	local function buildCrest(code, color)
+		if flag then
+			flag:Destroy()
+		end
+		-- Fill the crest cell (square, SAME HEIGHT as the buttons) with sharp corners (square = true) -- larger
+		-- and uniform with the HeroButtons instead of a small rounded badge.
+		flag = CountryBadge.create({ code = code or "XXX", countryColor = color, size = "lg", square = true })
+		flag.AnchorPoint = Vector2.new(0.5, 0.5)
+		flag.Position = UDim2.fromScale(0.5, 0.5)
+		flag.Size = UDim2.new(1, -6, 1, -6)
+		flag.ZIndex = z + 3
+		flag.Parent = crestBtn
+	end
+	buildCrest(config.code, config.color)
+	crestBtn.MouseButton1Click:Connect(function()
+		if config.onCrest then
+			config.onCrest()
+		end
+	end)
+	attachTip(crestBtn, function()
+		local body = latestGov or ""
+		if latestCulture and latestCulture ~= "" then
+			body = (body ~= "" and (body .. "  \u{00B7}  " .. latestCulture)) or latestCulture
+		end
+		return { title = latestName or "Realm", body = (body ~= "" and body) or "Open your realm." }
+	end)
+
+	local function openMenu(name)
+		if config.onMenu then
+			config.onMenu(name)
+		end
+	end
+
+	local economy = HeroButton.create({
+		parent = content,
+		zIndex = z + 2,
+		layoutOrder = 1,
+		size = UDim2.new(0, ECON_W, 1, 0),
+		icon = "Treasury",
+		iconPosition = "left",
+		value = r.treasury or "0",
+		delta = "",
+		caption = "Economy",
+		onClick = function()
+			openMenu("Economy")
+		end,
 	})
-	local cult = config.culture and ("  \u{00B7}  " .. config.culture) or ""
-	local govLabel = text(content, (config.government or "") .. cult, "bodySm", Colors.TextSecondary, {
-		Position = UDim2.fromOffset(94, 26),
-		Size = UDim2.fromOffset(NAME_W, 16),
+	attachTip(economy.root, function()
+		return {
+			title = "Economy",
+			body = "Treasury: "
+				.. (latestRes.treasury or "0")
+				.. "\nIncome: "
+				.. (latestRes.treasuryDelta or "0")
+				.. " / month",
+		}
+	end)
+
+	local manpower = HeroButton.create({
+		parent = content,
+		zIndex = z + 2,
+		layoutOrder = 2,
+		size = UDim2.new(0, MANPOWER_W, 1, 0),
+		icon = "Army",
+		iconPosition = "left",
+		value = r.manpower or "0",
+		caption = "Manpower",
+		onClick = function()
+			openMenu("Military")
+		end,
 	})
+	attachTip(manpower.root, function()
+		local body = "Recruits: " .. (latestRes.manpower or "0")
+		if latestRes.manpowerCap and latestRes.manpowerCap ~= "" then
+			body = body .. " / " .. latestRes.manpowerCap
+		end
+		return { title = "Manpower", body = body }
+	end)
 
-	local pills = Instance.new("Frame")
-	pills.Name = "Pills"
-	pills.AnchorPoint = Vector2.new(1, 0)
-	pills.Position = UDim2.new(1, 0, 0, 2)
-	pills.Size = UDim2.new(1, -PILLS_RESERVE, 0, 36)
-	pills.BackgroundTransparency = 1
-	pills.Parent = content
-	local pl = Instance.new("UIListLayout")
-	pl.FillDirection = Enum.FillDirection.Horizontal
-	pl.HorizontalAlignment = Enum.HorizontalAlignment.Right
-	pl.SortOrder = Enum.SortOrder.LayoutOrder
-	pl.Padding = UDim.new(0, Spacing.space2)
-	pl.VerticalAlignment = Enum.VerticalAlignment.Center
-	pl.Parent = pills
+	local research = HeroButton.create({
+		parent = content,
+		zIndex = z + 2,
+		layoutOrder = 3,
+		size = UDim2.new(0, RESEARCH_W, 1, 0),
+		icon = "Research",
+		caption = "Research",
+		onClick = function()
+			openMenu("Research")
+		end,
+	})
+	attachTip(research.root, function()
+		return { title = "Research", body = latestRes.research or "No active research." }
+	end)
 
-	local tipLayer = config.tooltipLayer
-	local statPills = {
-		treasury = statPill(pills, "Treasury", 1, true, tipLayer),
-		manpower = statPill(pills, "Manpower", 2, false, tipLayer),
-		pp = statPill(pills, "PowerProj", 3, false, tipLayer),
-		stability = statPill(pills, "Stability", 4, false, tipLayer),
-		legitimacy = statPill(pills, "Legitimacy", 5, false, tipLayer),
-	}
+	-- Keyed by the SCREEN NAME each button opens, so Hud.setActive(screenName) highlights the right one.
+	local buttons = { Economy = economy, Military = manpower, Research = research }
+
+	-- Secondary stat CELLS in a 2x2 grid, in the row right AFTER the Research button. Each is a compact
+	-- button-styled cell (dark surface + stroke + gold corner brackets) with a hover/tap tooltip; clicking one
+	-- opens the Realm window (Court) where these stats are detailed. PP + Stability top; Legitimacy + Prestige below.
+	local statGrid = Instance.new("Frame")
+	statGrid.Name = "Stats"
+	statGrid.Size = UDim2.fromOffset(0, 0)
+	statGrid.AutomaticSize = Enum.AutomaticSize.XY
+	statGrid.BackgroundTransparency = 1
+	statGrid.LayoutOrder = 4
+	statGrid.ZIndex = z + 2
+	statGrid.Parent = content
+	local grid = Instance.new("UIGridLayout")
+	grid.CellSize = UDim2.fromOffset(STAT_CELL_W, STAT_CELL_H)
+	grid.CellPadding = UDim2.fromOffset(Spacing.space3, Spacing.space1)
+	grid.FillDirectionMaxCells = 2
+	grid.SortOrder = Enum.SortOrder.LayoutOrder
+	grid.HorizontalAlignment = Enum.HorizontalAlignment.Left
+	grid.VerticalAlignment = Enum.VerticalAlignment.Center
+	grid.Parent = statGrid
+
+	local function statCell(iconKey, order)
+		-- Compact button-styled cell (mirrors HeroButton: dark surface + stroke + gold corner brackets).
+		local cell = Instance.new("TextButton")
+		cell.Name = iconKey
+		cell.AutoButtonColor = false
+		cell.Text = ""
+		cell.BackgroundColor3 = Colors.SurfaceElevated
+		cell.BorderSizePixel = 0
+		cell.LayoutOrder = order
+		cell.ZIndex = z + 2
+		cell:SetAttribute("AoWInputSink", true)
+		cell.Parent = statGrid
+		local cs = Instance.new("UIStroke")
+		cs.Color = Colors.BorderStrong
+		cs.Thickness = 1
+		cs.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		cs.Parent = cell
+		addCorners(cell, 9, 1, z + 4)
+		local inner = Instance.new("Frame")
+		inner.Name = "Content"
+		inner.Size = UDim2.fromScale(1, 1)
+		inner.BackgroundTransparency = 1
+		inner.ZIndex = z + 3
+		inner.Parent = cell
+		local il = Instance.new("UIListLayout")
+		il.FillDirection = Enum.FillDirection.Horizontal
+		il.HorizontalAlignment = Enum.HorizontalAlignment.Center
+		il.VerticalAlignment = Enum.VerticalAlignment.Center
+		il.SortOrder = Enum.SortOrder.LayoutOrder
+		il.Padding = UDim.new(0, 5)
+		il.Parent = inner
+		local icon = Icons.create(iconKey, 16, Colors.TextSecondary)
+		icon.LayoutOrder = 1
+		icon.ZIndex = z + 3
+		icon.Parent = inner
+		local value = Instance.new("TextLabel")
+		value.Name = "Value"
+		value.BackgroundTransparency = 1
+		value.AutomaticSize = Enum.AutomaticSize.X
+		value.Size = UDim2.fromScale(0, 1)
+		value.Text = "0"
+		value.TextColor3 = Colors.TextPrimary
+		value.TextXAlignment = Enum.TextXAlignment.Left
+		value.TextYAlignment = Enum.TextYAlignment.Center
+		value.LayoutOrder = 2
+		value.ZIndex = z + 3
+		Typography.apply(value, "value")
+		value.Parent = inner
+		cell.MouseButton1Click:Connect(function()
+			if config.onCrest then
+				config.onCrest()
+			end
+		end)
+		attachTip(cell, function()
+			return STAT_TIPS[iconKey]
+		end)
+		return value
+	end
+	local statPP = statCell("PowerProj", 1)
+	local statStability = statCell("Stability", 2)
+	local statLegitimacy = statCell("Legitimacy", 3)
+	local statPrestige = statCell("Prestige", 4)
 
 	local function setResources(res)
 		res = res or {}
-		statPills.treasury.value.Text = res.treasury or "0"
-		statPills.treasury.delta.Text = res.treasuryDelta or ""
-		statPills.treasury.delta.TextColor3 = Colors.delta(res.treasuryDeltaNum or 0)
-		statPills.manpower.value.Text = res.manpower or "0"
-		statPills.pp.value.Text = res.pp or "0"
-		statPills.stability.value.Text = res.stability or "0"
-		statPills.legitimacy.value.Text = res.legitimacy or "0"
+		latestRes = res
+		economy.setValue(res.treasury or "0")
+		economy.setDelta(res.treasuryDelta or "", Colors.delta(res.treasuryDeltaNum or 0))
+		manpower.setValue(res.manpower or "0")
+		statPP.Text = res.pp or "0"
+		statStability.Text = res.stability or "0"
+		statLegitimacy.Text = res.legitimacy or "0"
+		statPrestige.Text = res.prestige or "0"
 	end
 	setResources(r)
 
-	local menuRow = Instance.new("Frame")
-	menuRow.Name = "MenuRow"
-	menuRow.AnchorPoint = Vector2.new(0, 1)
-	menuRow.Position = UDim2.new(0, 94, 1, 0)
-	menuRow.Size = UDim2.new(1, -94, 0, Responsive.isTouch() and 28 or 22)
-	menuRow.BackgroundTransparency = 1
-	menuRow.Parent = content
-	local ml = Instance.new("UIListLayout")
-	ml.FillDirection = Enum.FillDirection.Horizontal
-	ml.HorizontalAlignment = Enum.HorizontalAlignment.Left
-	ml.SortOrder = Enum.SortOrder.LayoutOrder
-	ml.Padding = UDim.new(0, Spacing.space5)
-	ml.VerticalAlignment = Enum.VerticalAlignment.Center
-	ml.Parent = menuRow
-
-	local buttons = {}
-	local active = nil
-	local function setActive(key)
-		active = key
-		for k, b in buttons do
-			local on = k == key
-			b.label.TextColor3 = on and Colors.Accent or Colors.TextSecondary
-			b.underline.BackgroundTransparency = on and 0 or 1
+	-- Highlight the button matching the open screen (Economy / Military / Research); any other screen
+	-- (Realm, Settings, ...) clears all highlights. Kept callable because Hud.openScreen relies on it.
+	local function setActive(name)
+		for key, ctrl in buttons do
+			ctrl.setActive(key == name)
 		end
 	end
 
-	for i, name in ipairs(MENUS) do
-		local btn = Instance.new("TextButton")
-		btn.Name = name
-		btn.AutomaticSize = Enum.AutomaticSize.X
-		btn.Size = UDim2.new(0, 0, 1, 0)
-		btn.BackgroundTransparency = 1
-		btn.AutoButtonColor = false
-		btn.Text = ""
-		btn.LayoutOrder = i
-		btn.Parent = menuRow
-
-		local lbl = text(btn, name:upper(), "caption", Colors.TextSecondary, {
-			AutomaticSize = Enum.AutomaticSize.X,
-			Size = UDim2.new(0, 0, 1, 0),
-		})
-		if Responsive.isTouch() then
-			lbl.TextSize = lbl.TextSize + 3
-		end
-		local underline = Instance.new("Frame")
-		underline.Name = "Underline"
-		underline.AnchorPoint = Vector2.new(0, 1)
-		underline.Position = UDim2.new(0, 0, 1, 0)
-		underline.Size = UDim2.new(1, 0, 0, 2)
-		underline.BackgroundColor3 = Colors.Accent
-		underline.BackgroundTransparency = 1
-		underline.BorderSizePixel = 0
-		underline.Parent = btn
-
-		buttons[name] = { label = lbl, underline = underline }
-		btn.MouseEnter:Connect(function()
-			if active ~= name then
-				lbl.TextColor3 = Colors.TextPrimary
-			end
-		end)
-		btn.MouseLeave:Connect(function()
-			if active ~= name then
-				lbl.TextColor3 = Colors.TextSecondary
-			end
-		end)
-		btn.MouseButton1Click:Connect(function()
-			setActive(name)
-			if config.onMenu then
-				config.onMenu(name)
-			end
-		end)
-	end
-	setActive("Politics")
-
-	-- In-place update: mutate the existing labels/flag instead of destroying + recreating the whole
-	-- bar on every economy/army delta. Name/government/flag only change on a (rare) country switch.
+	-- In-place update on economy/army deltas: mutate values; rebuild the crest only on a country switch.
 	local currentCode = config.code
 	local function update(cfg)
 		cfg = cfg or {}
-		nameLabel.Text = cfg.name or "Unknown"
-		local c = cfg.culture and ("  \u{00B7}  " .. cfg.culture) or ""
-		govLabel.Text = (cfg.government or "") .. c
+		latestName = cfg.name or latestName
+		latestGov = cfg.government or latestGov
+		latestCulture = cfg.culture or latestCulture
 		if cfg.code and cfg.code ~= currentCode then
 			currentCode = cfg.code
-			flag:Destroy()
-			flag = CountryBadge.create({ code = cfg.code, countryColor = cfg.color, size = "lg" })
-			flag.AnchorPoint = Vector2.new(0.5, 0.5)
-			flag.Position = UDim2.fromScale(0.5, 0.5)
-			flag.Size = UDim2.fromScale(1, 1)
-			flag.Parent = recess
+			buildCrest(cfg.code, cfg.color)
 		end
 		setResources(cfg.resources)
 	end

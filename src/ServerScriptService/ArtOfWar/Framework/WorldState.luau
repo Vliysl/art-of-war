@@ -64,7 +64,12 @@ end
 -- we sweep the AUTHORITATIVE province store and reassign any straggler to `reassignTo` (the annexer) or
 -- "NONE", publishing the canonical event so the indices, stamper and clients self-heal. O(provinces) and
 -- country deletion is rare; the loop finds 0 in the normal (index-consistent) case.
-function WorldState.deleteCountry(tag, reassignTo)
+-- reassignTo: successor for provinces this country owned/controlled (default "NONE").
+-- stripMembership: when true (EDITOR delete -- the country ceases to exist) also purge the tag from every
+-- province's cores/defaultCores/claims arrays. Combat annexation leaves it nil so historical cores/claims
+-- persist through conquest (they drive reconquest desire / unrest, EU4-style).
+local MEMBERSHIP_FIELDS = { "cores", "defaultCores", "claims" }
+function WorldState.deleteCountry(tag, reassignTo, stripMembership)
 	local successor = reassignTo or "NONE"
 	for id, province in store.provinces do
 		if province.ownerTag == tag then
@@ -90,6 +95,23 @@ function WorldState.deleteCountry(tag, reassignTo)
 					oldController = oldController,
 					reason = "orphan_guard",
 				})
+			end
+		end
+		if stripMembership then
+			local changed = false
+			for _, field in ipairs(MEMBERSHIP_FIELDS) do
+				local arr = province[field]
+				if type(arr) == "table" then
+					for i = #arr, 1, -1 do
+						if arr[i] == tag then
+							table.remove(arr, i)
+							changed = true
+						end
+					end
+				end
+			end
+			if changed then
+				mark("provinces", id)
 			end
 		end
 	end
@@ -119,6 +141,32 @@ end
 
 function WorldState.getProvince(id)
 	return store.provinces[id] or store.provinces[tonumber(id)]
+end
+
+-- District-slot mutation chokepoint (economy rework). `districts` is a SLOT-INDEXED array
+-- (index == slot; a nil element == empty slot), lazily initialised. Passing districtOrNil == nil
+-- clears the slot. Routes through the normal province mark/bump, then publishes ProvinceDistrictChanged
+-- so aggregates (country.districtStats) and the client grid react. Iterate 1..buildingSlots (never `#`)
+-- since clearing a middle slot leaves an intentional hole.
+function WorldState.setProvinceDistrict(id, slotIndex, districtOrNil)
+	id = tonumber(id) or id
+	local record = store.provinces[id]
+	if not record then
+		return false
+	end
+	record.districts = record.districts or {}
+	record.districts[slotIndex] = districtOrNil
+	mark("provinces", id)
+	bump()
+	if eventBus and channels and channels.ProvinceDistrictChanged then
+		eventBus.publish(channels.ProvinceDistrictChanged, {
+			provinceId = id,
+			slotIndex = slotIndex,
+			districtType = districtOrNil and districtOrNil.type or nil,
+			cleared = districtOrNil == nil,
+		})
+	end
+	return true
 end
 
 function WorldState.allProvinces()

@@ -96,6 +96,13 @@ function ProvinceTooltip.create(parent)
 		end
 		local w = size.X
 		local h = size.Y
+		-- D4: touch has no hover cursor -- pin to a fixed top-right spot instead of tracking the last tap.
+		if UserInputService.TouchEnabled and not UserInputService.MouseEnabled then
+			local px = math.max(MARGIN, vp.X - w - MARGIN)
+			local py = 44 + MARGIN
+			root.Position = UDim2.fromOffset(px / scale, py / scale)
+			return
+		end
 		local mp = UserInputService:GetMouseLocation()
 		local x = mp.X + OFFSET
 		local y = mp.Y + OFFSET

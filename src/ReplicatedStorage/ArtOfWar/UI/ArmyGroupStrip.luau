@@ -18,12 +18,16 @@ local LeaderTraits = require(ArtOfWar.Data.LeaderTraits)
 
 local ArmyGroupStrip = {}
 
-local CARD_W = 104
-local STRIP_H = 128
+-- Mobile: smaller cards + a narrower strip so the input-sink footprint (it blocks the map camera) is much
+-- smaller, and it sits lower/closer to the country bar instead of covering the center of a short landscape screen.
+local TOUCH_STRIP = Responsive.isTouch()
+local CARD_W = TOUCH_STRIP and 76 or 104
+local STRIP_H = TOUCH_STRIP and 108 or 128 -- fits the ~106px card content (icon+name+count) on touch
+local STRIP_W_SCALE = TOUCH_STRIP and 0.5 or 0.8
 -- The strip's bottom edge sits above the country bar (bottom-left, top edge 104px up) so they never
 -- overlap at any viewport width; cards flow centered and scroll horizontally only on overflow.
 local COUNTRYBAR_BAND = 104
-local STRIP_BOTTOM = 16 + COUNTRYBAR_BAND + 12
+local STRIP_BOTTOM = TOUCH_STRIP and (16 + COUNTRYBAR_BAND) or (16 + COUNTRYBAR_BAND + 12)
 local PLUS_ORDER = 1000000
 
 -- Module-scope singleton state (one strip per client, wired once from HudWiring).
@@ -479,10 +483,10 @@ local function createCard(groupId)
 	vlist.HorizontalAlignment = Enum.HorizontalAlignment.Center
 	vlist.VerticalAlignment = Enum.VerticalAlignment.Center
 	vlist.SortOrder = Enum.SortOrder.LayoutOrder
-	vlist.Padding = UDim.new(0, 4)
+	vlist.Padding = UDim.new(0, TOUCH_STRIP and 2 or 4)
 	vlist.Parent = content
 
-	local topIcon = Icons.create("Army", 40, ownerColor)
+	local topIcon = Icons.create("Army", TOUCH_STRIP and 28 or 40, ownerColor)
 	topIcon.LayoutOrder = 1
 	topIcon.ZIndex = 2
 	topIcon.Parent = content
@@ -656,6 +660,7 @@ end
 
 -- Highlight the selected group's card, toggle per-card add affordances, enable the "+" card, and hide
 -- the whole strip when there is nothing to show (no groups + no owned selection).
+local userHidden = false -- user hide/show toggle; overrides the auto-visibility (driven by a HUD button)
 local function refreshSelectionState()
 	if not root then
 		return
@@ -679,7 +684,18 @@ local function refreshSelectionState()
 	end
 	setPlusEnabled(hasSel)
 	local anyGroups = next(cardsById) ~= nil
-	root.Visible = (getTag() ~= nil) and (anyGroups or hasSel)
+	root.Visible = (not userHidden) and (getTag() ~= nil) and (anyGroups or hasSel)
+end
+
+-- User hide/show toggle for the whole strip (overrides auto-visibility). A HUD button drives this.
+function ArmyGroupStrip.setHidden(on)
+	userHidden = on == true
+	if root then
+		refreshSelectionState()
+	end
+end
+function ArmyGroupStrip.isHidden()
+	return userHidden
 end
 
 local function reconcile()
@@ -732,7 +748,7 @@ function ArmyGroupStrip.init(d)
 	root.Name = "ArmyGroupStrip"
 	root.AnchorPoint = Vector2.new(0.5, 1)
 	root.Position = UDim2.new(0.5, 0, 1, -STRIP_BOTTOM)
-	root.Size = UDim2.new(0.8, 0, 0, STRIP_H)
+	root.Size = UDim2.new(STRIP_W_SCALE, 0, 0, STRIP_H)
 	root.BackgroundTransparency = 1
 	root.ZIndex = 40
 	root.Visible = false
@@ -747,10 +763,14 @@ function ArmyGroupStrip.init(d)
 	scroller.ScrollingDirection = Enum.ScrollingDirection.X
 	scroller.AutomaticCanvasSize = Enum.AutomaticSize.None
 	scroller.CanvasSize = UDim2.new()
-	scroller.ScrollBarThickness = 4
+	scroller.ScrollBarThickness = TOUCH_STRIP and 10 or 4 -- grabbable on touch
 	scroller.ScrollBarImageColor3 = Colors.BorderStrong
 	scroller.ZIndex = 40
-	scroller:SetAttribute("AoWInputSink", true)
+	-- Camera fix: the scroller is transparent and spans the whole strip band, so making it an input SINK blocked
+	-- one-finger camera pans across that entire (mostly empty) band. Setting it FALSE makes it a walk-STOPPER in
+	-- isMouseOverInputSink (the sink==false check runs before the ScrollingFrame auto-block), so only the actual
+	-- cards (which set AoWInputSink=true themselves) block the camera; empty gaps pass the drag through to pan.
+	scroller:SetAttribute("AoWInputSink", false)
 	scroller.Parent = root
 
 	layout = Instance.new("UIListLayout")

@@ -1670,6 +1670,113 @@ function ArmyView.selectArmiesInScreenRect(rectMin, rectMax, additive)
 	return count
 end
 
+-- Screen-space "nearest owned army" pick for touch-friendly selection: a finger can't hit a small token with a
+-- precise raycast, so on tap we also try the nearest LOCALLY-OWNED stack whose rendered token projects within
+-- `maxPx` of the tap point -- the army beats the province underneath it. Reads Shift itself (mirrors the raycast
+-- classifier) so an additive tap adds to the selection. Returns true if a stack was selected.
+function ArmyView.selectNearestOwnedArmy(screenPos, maxPx, additiveHint)
+	local cam = workspace.CurrentCamera
+	if not cam then return false end
+	local allArmies = ClientStateCache.allArmies()
+	local bestProvince, bestDist = nil, maxPx
+	for armyId, model in pairs(armyParts) do
+		local army = allArmies[armyId]
+		if army and model and model.Parent and isLocallyOwned(army.ownerTag) then
+			local sp, onScreen = cam:WorldToViewportPoint(model:GetPivot().Position)
+			if onScreen then
+				local dx, dy = sp.X - screenPos.X, sp.Y - screenPos.Y
+				local d = math.sqrt(dx * dx + dy * dy)
+				if d <= bestDist then
+					bestDist = d
+					bestProvince = army.provinceId
+				end
+			end
+		end
+	end
+	if not bestProvince then return false end
+	local additive = additiveHint
+		or UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+		or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
+	if not additive then ArmyView.deselect() end
+	selectStackOnProvince(bestProvince, additive)
+	return true
+end
+
+-- B3: count LOCALLY-OWNED stacks whose token projects inside a viewport rect (live marquee count). Counts
+-- distinct provinces (one stack per province), matching selectArmiesInScreenRect. Cheap (few armies).
+function ArmyView.countArmiesInRect(rectMin, rectMax)
+	local cam = workspace.CurrentCamera
+	if not cam then return 0 end
+	local allArmies = ClientStateCache.allArmies()
+	local provincesHit = {}
+	for armyId, model in pairs(armyParts) do
+		local army = allArmies[armyId]
+		if army and model and model.Parent and isLocallyOwned(army.ownerTag) then
+			local sp, onScreen = cam:WorldToViewportPoint(model:GetPivot().Position)
+			if onScreen and sp.X >= rectMin.X and sp.X <= rectMax.X and sp.Y >= rectMin.Y and sp.Y <= rectMax.Y then
+				provincesHit[army.provinceId] = true
+			end
+		end
+	end
+	-- Count the actual armies selectArmiesInScreenRect would select (every owned stack on each hit province),
+	-- not just distinct provinces, so the live "N armies" count matches the real selection.
+	local n = 0
+	for _, army in pairs(allArmies) do
+		if army and provincesHit[army.provinceId] and isLocallyOwned(army.ownerTag) then
+			n += 1
+		end
+	end
+	return n
+end
+
+-- B2: one-tap "select all my armies on screen" (Conquerors G / StarCraft double-click) -- multi-select, no drag.
+-- Selects every LOCALLY-OWNED stack whose token currently projects on screen. Returns the count.
+function ArmyView.selectOwnedArmiesOnScreen()
+	local cam = workspace.CurrentCamera
+	if not cam then return 0 end
+	ArmyView.deselect()
+	local allArmies = ClientStateCache.allArmies()
+	local provincesHit = {}
+	for armyId, model in pairs(armyParts) do
+		local army = allArmies[armyId]
+		if army and model and model.Parent and isLocallyOwned(army.ownerTag) then
+			local _, onScreen = cam:WorldToViewportPoint(model:GetPivot().Position)
+			if onScreen then provincesHit[army.provinceId] = true end
+		end
+	end
+	for provinceId in pairs(provincesHit) do
+		selectStackOnProvince(provinceId, true)
+	end
+	local count = 0
+	for _ in pairs(selectedArmyIds) do count += 1 end
+	return count
+end
+
+-- C2: is a SELECTED locally-owned army token within maxPx of screenPos? Returns its provinceId (for
+-- drag-from-army-to-move), else nil. Only SELECTED armies are grabbable, so a drag elsewhere still pans.
+function ArmyView.selectedArmyNearScreen(screenPos, maxPx)
+	local cam = workspace.CurrentCamera
+	if not cam then return nil end
+	local allArmies = ClientStateCache.allArmies()
+	local best, bestDist = nil, maxPx
+	for armyId in pairs(selectedArmyIds) do
+		local model = armyParts[armyId]
+		local army = allArmies[armyId]
+		if model and model.Parent and army and isLocallyOwned(army.ownerTag) then
+			local sp, onScreen = cam:WorldToViewportPoint(model:GetPivot().Position)
+			if onScreen then
+				local dx, dy = sp.X - screenPos.X, sp.Y - screenPos.Y
+				local d = math.sqrt(dx * dx + dy * dy)
+				if d <= bestDist then
+					bestDist = d
+					best = army.provinceId
+				end
+			end
+		end
+	end
+	return best
+end
+
 function ArmyView.setBundle(bundle)
 	bundleRef = bundle
 	-- Force re-render of banner text after bundle becomes known
@@ -1696,6 +1803,17 @@ function ArmyView.init()
 		return
 	end
 	ProvinceInteraction.addRaycastFolder(armiesFolder, classifyArmyClick)
+	if ProvinceInteraction.addScreenSelector then
+		-- Touch-friendly screen-space fallback so a near-miss tap still grabs the stack (army > province).
+		ProvinceInteraction.addScreenSelector(ArmyView.selectNearestOwnedArmy)
+	end
+	if ProvinceInteraction.setDragCountProvider then
+		ProvinceInteraction.setDragCountProvider(ArmyView.countArmiesInRect)
+	end
+	if ProvinceInteraction.setDragMoveProbe then
+		-- C2: let ProvinceInteraction detect a drag starting on a selected army (for drag-to-move + camera freeze).
+		ProvinceInteraction.setDragMoveProbe(ArmyView.selectedArmyNearScreen)
+	end
 
 	if ClientStateCache.onChangePrefix then
 		stateSub = ClientStateCache.onChangePrefix("armies", function(_, path)

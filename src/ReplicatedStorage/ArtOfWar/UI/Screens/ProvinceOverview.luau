@@ -8,10 +8,59 @@ local Colors = DesignSystem.Colors
 local Typography = DesignSystem.Typography
 local Icons = DesignSystem.Icons
 local Responsive = DesignSystem.Responsive
+local Modal = require(Components.Modal)
 local SimClock = require(script.Parent.Parent.Parent.Modules.SimClock)
 local WorldConstants = require(script.Parent.Parent.Parent.Shared.WorldConstants)
 local Terrains = require(script.Parent.Parent.Parent.Data.Terrains)
+local DistrictTypes = require(script.Parent.Parent.Parent.Data.DistrictTypes)
+local EconomyPreview = require(script.Parent.Parent.Parent.Modules.EconomyPreview)
+local RecruitGate = require(script.Parent.Parent.Parent.Modules.RecruitGate)
 local RunService = game:GetService("RunService")
+
+-- Economy rework: buildings absorbed into districts are hidden from the legacy build catalog when
+-- DistrictsPlayable is on (they live in the district grid instead). manufactory_* are filtered separately.
+local DISTRICT_ABSORBED = {
+	marketplace = true,
+	workshop = true,
+	granary = true,
+	tax_office = true,
+	barracks = true,
+	stables = true,
+	trading_port = true,
+}
+
+-- District accent color by colorKey -> one warm-palette color. Drives the left spine + icon tint ONLY (never
+-- the border fill), so each district TYPE gets a restrained identity and Military(olive)/Harbor(blue) never
+-- read as an error state. farm/industry have no faction color, so Positive/Warning are the natural in-palette reads.
+local DISTRICT_ACCENT = {
+	sea = Colors.FactionMerchant, -- Harbor: blue
+	earth = Colors.FactionAristocrat, -- Mining: bronze
+	farm = Colors.Positive, -- Agricultural: green
+	industry = Colors.Warning, -- Industrial / Manufacturing: amber
+	military = Colors.FactionMilitary, -- Military: olive
+}
+local function districtAccent(def)
+	return (def and DISTRICT_ACCENT[def.colorKey]) or Colors.BorderStrong
+end
+
+-- "Harbor District" -> "Harbor" (the section header already says "Districts").
+local function districtShortName(def, fallback)
+	local dn = (def and def.displayName) or fallback or ""
+	return (dn:gsub("%s*District$", ""))
+end
+
+-- A 3px accent spine down the left inner edge -- the district's single color hit on a warm-neutral tile.
+local function addDistrictSpine(cell, accent)
+	local spine = Instance.new("Frame")
+	spine.Name = "Spine"
+	spine.AnchorPoint = Vector2.new(0, 0.5)
+	spine.Position = UDim2.fromScale(0, 0.5)
+	spine.Size = UDim2.new(0, 3, 1, -2)
+	spine.BackgroundColor3 = accent
+	spine.BorderSizePixel = 0
+	spine.ZIndex = 2
+	spine.Parent = cell
+end
 
 -- Combat depth A: the defender bonus a terrain/fort grants in battle, shown as a small caption under
 -- the value (combat already applies it; this just surfaces it). Returns "+X% def", or nil when the
@@ -231,7 +280,9 @@ end
 
 -- A single condensed list row: a square action button on the LEFT (recruit/build "+" or a red cancel
 -- "×"), then icon + name, then either a right-aligned value (cost) or a thin progress bar. The row
--- itself carries the hover tooltip; the button sits above it (ZIndex) so it stays clickable.
+-- itself carries the hover tooltip; the button sits above it (ZIndex) so it stays clickable. When
+-- cfg.disabled, the button is inert (Button.create Active=false blocks the click + greys fill/glyph) and
+-- the label/value are dimmed so an ineligible action reads as unavailable.
 local function actionRow(parent, cfg)
 	local row = Instance.new("Frame")
 	row.Name = "ActionRow"
@@ -244,6 +295,10 @@ local function actionRow(parent, cfg)
 	btn.AnchorPoint = Vector2.new(0, 0.5)
 	btn.Position = UDim2.fromScale(0, 0.5)
 	btn.ZIndex = row.ZIndex + 5
+	if cfg.disabled then
+		btn.Active = false -- greys the diamond + glyph and blocks the click (Button.create gates onClick on Active)
+	end
+	local textColor = cfg.disabled and Colors.TextDisabled or Colors.TextPrimary
 
 	local labelX = CONTENT_X
 	if cfg.icon then
@@ -262,7 +317,7 @@ local function actionRow(parent, cfg)
 	name.Size = UDim2.new(1, -labelX - (cfg.value and 92 or 10), 0, hasProgress and 18 or 24)
 	name.BackgroundTransparency = 1
 	name.Text = cfg.label or ""
-	name.TextColor3 = Colors.TextPrimary
+	name.TextColor3 = textColor
 	name.TextXAlignment = Enum.TextXAlignment.Left
 	name.TextYAlignment = Enum.TextYAlignment.Center
 	name.TextTruncate = Enum.TextTruncate.AtEnd
@@ -279,7 +334,7 @@ local function actionRow(parent, cfg)
 		value.Size = UDim2.new(0, 88, 1, 0)
 		value.BackgroundTransparency = 1
 		value.Text = cfg.value
-		value.TextColor3 = Colors.TextPrimary
+		value.TextColor3 = cfg.disabled and Colors.Warning or Colors.TextPrimary
 		value.TextXAlignment = Enum.TextXAlignment.Right
 		Typography.apply(value, "value")
 		if TOUCH then
@@ -383,26 +438,36 @@ local function createMulti(ctx)
 		)
 	else
 		ScreenKit.section(body, string.format("Recruit in all (%d owned)", #ownedIds), 10)
+		-- Union semantics: a professional unit is greyed only when NONE of the owned selected provinces has a
+		-- Military district (if any does, the batched remote still queues it there and skips the rest).
+		local anyMilitary = false
+		for _, id in ipairs(ownedIds) do
+			if RecruitGate.provinceHasMilitaryDistrict(cacheProvince(id)) then
+				anyMilitary = true
+				break
+			end
+		end
 		local pool = {}
 		for id, def in pairs((registries and registries.UnitTypes) or {}) do
 			if type(def) == "table" and def.recruitCost ~= nil and def.unlockedByDefault ~= false then
 				pool[#pool + 1] = { id = id, def = def }
 			end
 		end
-		table.sort(pool, function(a, b)
-			return (a.def.displayName or a.id) < (b.def.displayName or b.id)
-		end)
+		RecruitGate.sortPool(pool) -- levy (militia/irregular) on top, then professional; each alphabetical
 		local uo = 11
 		for _, entry in ipairs(pool) do
 			local def = entry.def
+			local locked = RecruitGate.unitNeedsMilitaryDistrict(def) and not anyMilitary
 			actionRow(body, {
 				order = uo,
 				icon = "Army",
 				label = def.displayName or titleCase(entry.id),
-				value = string.format("%d gold ea", def.recruitCost or 0),
+				value = locked and "Needs Military" or string.format("%d gold ea", def.recruitCost or 0),
+				disabled = locked,
 				tooltip = function()
 					return Tooltip.create({
 						title = def.displayName or entry.id,
+						body = locked and "No selected province has a Military district." or nil,
 						rows = unitTooltipRows(def),
 						width = 230,
 					})
@@ -603,10 +668,11 @@ function ProvinceOverview.create(ctx)
 			local def = buildingTypes()[buildingId]
 			if def then
 				-- Lighter (ghost), a small glyph, forced into a true square so it centres beside the number.
-				local plus = squareButton(group, "ghost", "+", 28, "sm", function()
+				local plusSz = Responsive.isTouch() and 44 or 28 -- D2: 44px tap target on touch
+				local plus = squareButton(group, "ghost", "+", plusSz, "sm", function()
 					ctx.fire("BuildBuilding", prov.id, buildingId)
 				end, 16)
-				plus.Size = UDim2.fromOffset(28, 28)
+				plus.Size = UDim2.fromOffset(plusSz, plusSz)
 				plus.LayoutOrder = 2
 				plus.Active = (not atMax) and canBuildHere(p, buildingId, def)
 				Tooltip.attach(plus, function()
@@ -626,6 +692,350 @@ function ProvinceOverview.create(ctx)
 		cell("INFRA", infraTier, WorldConstants.InfraTierMax or 10, "improve_infrastructure", 1)
 		cell("DEV", devTier, WorldConstants.DevTierMax or 10, "develop_province", 2)
 		cell("FORT", fortTier, WorldConstants.FortTierMax or 10, "walls", 3)
+	end
+
+	-- ===================== Districts (economy rework) =====================
+	local function districtTaxLabel(dtype, level)
+		local v = EconomyPreview.districtMonthlyTax(dtype, level, WorldConstants)
+		if not v or v <= 0 then
+			return "\u{2014}"
+		end
+		return string.format("+%.1f/mo", v)
+	end
+
+	-- Client mirror of the server's placement eligibility (slot/afford re-checked server-side).
+	local function eligibleDistrictTypes(pp)
+		local out = {}
+		for _, dtype in DistrictTypes.order do
+			local def = DistrictTypes.types[dtype]
+			local ok = true
+			if def.requiresCoastal and (not pp or pp.coastal ~= true) then
+				ok = false
+			end
+			if ok and def.role == "extraction" then
+				ok = DistrictTypes.extractionDistrictFor(pp and pp.tradeGood) == dtype
+			end
+			if ok then
+				out[#out + 1] = dtype
+			end
+		end
+		return out
+	end
+
+	local function districtQueueBySlot()
+		local c = country()
+		local bySlot = {}
+		for _, t in ((c and c.districtQueue) or {}) do
+			if t.provinceId == prov.id then
+				bySlot[t.slotIndex] = t
+			end
+		end
+		return bySlot
+	end
+
+	local function openDistrictPicker(slotIndex, pp)
+		local eligible = eligibleDistrictTypes(pp)
+		local modal = Modal.create({
+			parent = ctx.modalLayer or ctx.parent,
+			title = "Build District",
+			subtitle = string.format("%s  \u{00B7}  slot %d", prov.name or "Province", slotIndex),
+			width = 340,
+			height = 300,
+		})
+		local content = modal.content
+		local layout = Instance.new("UIListLayout")
+		layout.Padding = UDim.new(0, 6)
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
+		layout.Parent = content
+		if #eligible == 0 then
+			ScreenKit.note(content, "No districts can be built on this tile.", 1)
+			return
+		end
+		for i, dtype in eligible do
+			local def = DistrictTypes.types[dtype]
+			local row = ScreenKit.buttonRow(content, i)
+			Button.create({
+				parent = row,
+				variant = "secondary",
+				text = string.format("%s   (%s)", def.displayName, districtTaxLabel(dtype, 1)),
+				onClick = function()
+					ctx.fire("BuildDistrict", prov.id, slotIndex, dtype)
+					modal.close()
+				end,
+			})
+		end
+	end
+
+	-- Confirmation popup before razing. Resolves the slot's district (or its in-flight build) so both the
+	-- filled-cell and in-progress "x" can call confirmRaze(slot) identically.
+	local function confirmRaze(slotIndex)
+		local p = liveProvince()
+		local d = p and p.districts and p.districts[slotIndex]
+		local dtype = d and d.type
+		if not dtype then
+			local c = country()
+			for _, t in ((c and c.districtQueue) or {}) do
+				if t.provinceId == prov.id and t.slotIndex == slotIndex then
+					dtype = t.districtType
+					break
+				end
+			end
+		end
+		local def = dtype and DistrictTypes.types[dtype]
+		local name = (def and def.displayName) or "this district"
+		local modal = Modal.create({
+			parent = ctx.modalLayer or ctx.parent,
+			title = "Raze District",
+			subtitle = prov.name or "Province",
+			width = 320,
+			height = 200,
+		})
+		local content = modal.content
+		local layout = Instance.new("UIListLayout")
+		layout.Padding = UDim.new(0, 10)
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
+		layout.Parent = content
+		ScreenKit.note(content, string.format("Raze %s? This clears the slot with NO refund.", name), 1)
+		local row = ScreenKit.buttonRow(content, 2)
+		Button.create({
+			parent = row,
+			variant = "danger",
+			text = "Raze",
+			onClick = function()
+				ctx.fire("RazeDistrict", prov.id, slotIndex)
+				modal.close()
+			end,
+		})
+		Button.create({
+			parent = row,
+			variant = "ghost",
+			text = "Cancel",
+			onClick = function()
+				modal.close()
+			end,
+		})
+	end
+
+	-- Raze control: a plain red "x" glyph (NO diamond) tucked in the cell's top-right corner.
+	local RAZE_HOVER = Colors.Negative:Lerp(Color3.new(1, 1, 1), 0.25)
+	local function makeRazeX(cell, slotIndex)
+		local x = Instance.new("TextButton")
+		x.Name = "Raze"
+		x.AnchorPoint = Vector2.new(1, 0)
+		x.Position = UDim2.new(1, -4, 0, 3)
+		x.Size = UDim2.fromOffset(18, 18)
+		x.BackgroundTransparency = 1
+		x.AutoButtonColor = false
+		x.Text = "\u{00D7}"
+		x.TextColor3 = Colors.Negative
+		x.TextSize = 18
+		x.FontFace = Typography.SansBold
+		x.ZIndex = 5
+		x.Parent = cell
+		x.MouseButton1Click:Connect(function()
+			confirmRaze(slotIndex)
+		end)
+		x.MouseEnter:Connect(function()
+			x.TextColor3 = RAZE_HOVER
+		end)
+		x.MouseLeave:Connect(function()
+			x.TextColor3 = Colors.Negative
+		end)
+		return x
+	end
+
+	local function progressTrack(cell, ticket, accent)
+		local track = Instance.new("Frame")
+		track.AnchorPoint = Vector2.new(0.5, 1)
+		track.Position = UDim2.new(0.5, 2, 1, -4) -- +2 x clears the 3px left spine
+		track.Size = UDim2.new(1, -14, 0, 4)
+		track.BackgroundColor3 = Colors.SurfaceSunken
+		track.BorderSizePixel = 0
+		track.ZIndex = 3
+		track.Parent = cell
+		local fill = Instance.new("Frame")
+		fill.Size = UDim2.fromScale(progressOf(ticket.startedAt, ticket.completesAt), 1)
+		fill.BackgroundColor3 = accent or Colors.Warning
+		fill.BorderSizePixel = 0
+		fill.Parent = track
+		liveBars[#liveBars + 1] = {
+			fill = fill,
+			live = function()
+				return progressOf(ticket.startedAt, ticket.completesAt)
+			end,
+		}
+	end
+
+	local function fillDistrictCell(cell, slot, d, ticket, cap)
+		local def = DistrictTypes.types[d.type]
+		local accent = districtAccent(def)
+		addDistrictSpine(cell, accent)
+
+		-- Icon (accent-tinted) top-left -- the district's color identity, no extra chrome.
+		local icon = Icons.create(def and def.icon or "Building", 20, accent)
+		icon.AnchorPoint = Vector2.new(0, 0)
+		icon.Position = UDim2.fromOffset(11, 8)
+		icon.Parent = cell
+
+		-- Name, to the right of the icon (short form -- "Harbor", not "Harbor District").
+		local name = Instance.new("TextLabel")
+		name.BackgroundTransparency = 1
+		name.AnchorPoint = Vector2.new(0, 0)
+		name.Position = UDim2.fromOffset(37, 8)
+		name.Size = UDim2.new(1, -43, 0, 15)
+		name.Text = districtShortName(def, d.type)
+		name.TextColor3 = Colors.TextPrimary
+		name.TextXAlignment = Enum.TextXAlignment.Left
+		name.TextTruncate = Enum.TextTruncate.AtEnd
+		Typography.apply(name, "bodySm")
+		name.Parent = cell
+
+		-- Income (+X.X/mo) under the name.
+		local inc = Instance.new("TextLabel")
+		inc.BackgroundTransparency = 1
+		inc.AnchorPoint = Vector2.new(0, 0)
+		inc.Position = UDim2.fromOffset(37, 25)
+		inc.Size = UDim2.new(1, -43, 0, 12)
+		inc.Text = districtTaxLabel(d.type, d.level or 1)
+		inc.TextColor3 = Colors.Positive
+		inc.TextXAlignment = Enum.TextXAlignment.Left
+		Typography.apply(inc, "caption")
+		inc.Parent = cell
+
+		-- Raze: a plain red "x" (no diamond) in the top-right corner. Confirm modal is the safety gate.
+		makeRazeX(cell, slot)
+
+		if ticket then
+			-- Filled AND re-building (upgrade in progress): accent progress bar, skip level/upgrade.
+			progressTrack(cell, ticket, accent)
+			return
+		end
+
+		local maxed = (d.level or 0) >= cap
+
+		-- Level, bottom-left. Gold when maxed (pairs with the auto-dimmed upgrade diamond).
+		local lvl = Instance.new("TextLabel")
+		lvl.BackgroundTransparency = 1
+		lvl.AnchorPoint = Vector2.new(0, 1)
+		lvl.Position = UDim2.new(0, 11, 1, -7)
+		lvl.Size = UDim2.new(0.55, 0, 0, 13)
+		lvl.Text = string.format("L%d/%d", d.level or 1, cap)
+		lvl.TextColor3 = maxed and Colors.BorderActive or Colors.TextSecondary
+		lvl.TextXAlignment = Enum.TextXAlignment.Left
+		Typography.apply(lvl, "caption")
+		lvl.Parent = cell
+
+		-- Upgrade (primary action), bottom-right, inset so the diamond never crosses the stroke.
+		local up = squareButton(cell, "secondary", "+", 22, "sm", function()
+			ctx.fire("UpgradeDistrict", prov.id, slot)
+		end, 13)
+		up.AnchorPoint = Vector2.new(1, 1)
+		up.Position = UDim2.new(1, -6, 1, -6)
+		up.Size = UDim2.fromOffset(22, 22)
+		up.Active = not maxed
+	end
+
+	local function renderDistrictGrid(body, pp, order)
+		local slots = math.max(0, math.floor((pp and pp.infraTier) or 0))
+		local cap = math.max(0, math.floor((pp and pp.devTier) or 0))
+		local used = 0
+		if pp and pp.districts then
+			for _, d in pairs(pp.districts) do
+				if type(d) == "table" and d.type then
+					used += 1
+				end
+			end
+		end
+		ScreenKit.section(body, string.format("Districts   %d / %d slots", used, slots), order)
+		if slots <= 0 then
+			ScreenKit.note(body, "No building slots \u{2014} raise Infrastructure to unlock slots.", order + 1)
+			return
+		end
+		local grid = Instance.new("Frame")
+		grid.Name = "DistrictGrid"
+		grid.BackgroundTransparency = 1
+		grid.Size = UDim2.fromScale(1, 0)
+		grid.AutomaticSize = Enum.AutomaticSize.Y
+		grid.LayoutOrder = order + 1
+		grid.Parent = body
+		local g = Instance.new("UIGridLayout")
+		-- Two tiles per row: each is half the grid width (minus its share of the 8px gap) so a PAIR fills the
+		-- row on any panel width, CENTERED so a lone slot reads as a deliberate centered tile. Cell content is
+		-- edge-anchored, so the wider tile simply gains breathing room. 3+ slots wrap to a centered next row.
+		g.CellSize = UDim2.new(0.5, -6, 0, 92)
+		g.CellPadding = UDim2.fromOffset(8, 8)
+		g.FillDirection = Enum.FillDirection.Horizontal
+		g.FillDirectionMaxCells = 2
+		g.HorizontalAlignment = Enum.HorizontalAlignment.Center
+		g.SortOrder = Enum.SortOrder.LayoutOrder
+		g.Parent = grid
+
+		local queued = districtQueueBySlot()
+		for slot = 1, slots do
+			local d = pp.districts and pp.districts[slot]
+			local ticket = queued[slot]
+
+			local cell = Instance.new("Frame")
+			cell.Name = "Slot" .. slot
+			-- Filled/building tiles ELEVATE; an empty slot stays recessed (a "well") with its border faded back.
+			cell.BackgroundColor3 = (d or ticket) and Colors.SurfaceElevated or Colors.SurfaceSunken
+			cell.BorderSizePixel = 0
+			cell.LayoutOrder = slot
+			cell.Parent = grid
+			local stroke = Instance.new("UIStroke")
+			stroke.Color = Colors.BorderSubtle
+			stroke.Transparency = d and 0.15 or (ticket and 0.35 or 0.55)
+			stroke.Parent = cell
+			if d then
+				fillDistrictCell(cell, slot, d, ticket, cap)
+			elseif ticket then
+				local def = DistrictTypes.types[ticket.districtType]
+				local accent = districtAccent(def)
+				addDistrictSpine(cell, accent)
+
+				-- Ghosted "target" icon (accent-tinted) so you can see WHAT is being built.
+				local icon = Icons.create(def and def.icon or "Building", 24, accent)
+				icon.AnchorPoint = Vector2.new(0.5, 0.5)
+				icon.Position = UDim2.new(0.5, 2, 0.42, 0) -- +2 x clears the spine
+				icon.ImageTransparency = 0.45
+				icon.Parent = cell
+
+				local building = Instance.new("TextLabel")
+				building.BackgroundTransparency = 1
+				building.AnchorPoint = Vector2.new(0.5, 0)
+				building.Position = UDim2.new(0.5, 2, 0.62, 0)
+				building.Size = UDim2.new(1, -18, 0, 12)
+				building.Text = "Building\u{2026}"
+				building.TextColor3 = Colors.TextSecondary
+				building.TextXAlignment = Enum.TextXAlignment.Center
+				Typography.apply(building, "caption")
+				building.Parent = cell
+
+				progressTrack(cell, ticket, accent)
+
+				-- Cancel: same plain red "x" as raze, top-right.
+				makeRazeX(cell, slot)
+			else
+				-- Recessed empty "well" (fill/stroke set above). No spine -- no district, no identity yet.
+				local plus = squareButton(cell, "ghost", "+", 30, "sm", function()
+					openDistrictPicker(slot, pp)
+				end, 18)
+				plus.AnchorPoint = Vector2.new(0.5, 0.5)
+				plus.Position = UDim2.new(0.5, 0, 0.5, -6)
+				plus.Size = UDim2.fromOffset(32, 32)
+
+				local hint = Instance.new("TextLabel")
+				hint.BackgroundTransparency = 1
+				hint.AnchorPoint = Vector2.new(0.5, 1)
+				hint.Position = UDim2.new(0.5, 0, 1, -8)
+				hint.Size = UDim2.new(1, -12, 0, 12)
+				hint.Text = "Build"
+				hint.TextColor3 = Colors.TextTertiary
+				hint.TextXAlignment = Enum.TextXAlignment.Center
+				Typography.apply(hint, "caption")
+				hint.Parent = cell
+			end
+		end
 	end
 
 	local renderers = {}
@@ -892,26 +1302,32 @@ function ProvinceOverview.create(ctx)
 		end
 
 		ScreenKit.section(body, "Available Units", 20)
+		-- Professional (non-levy) units need a Military district here; without one they're greyed + unclickable,
+		-- mirroring the server's GateRecruitOnMilitary check so the UI never offers a recruit the server rejects.
+		local hasMilitary = RecruitGate.provinceHasMilitaryDistrict(liveProvince() or prov)
 		local pool = {}
 		for id, def in pairs(unitTypes()) do
 			if type(def) == "table" and def.recruitCost ~= nil and def.unlockedByDefault ~= false then
 				pool[#pool + 1] = { id = id, def = def }
 			end
 		end
-		table.sort(pool, function(a, b)
-			return (a.def.displayName or a.id) < (b.def.displayName or b.id)
-		end)
+		RecruitGate.sortPool(pool) -- levy (militia/irregular) on top, then professional; each alphabetical
 		local uo = 21
 		for _, entry in ipairs(pool) do
 			local def = entry.def
+			local locked = RecruitGate.unitNeedsMilitaryDistrict(def) and not hasMilitary
 			actionRow(body, {
 				order = uo,
 				icon = "Army",
 				label = def.displayName or titleCase(entry.id),
-				value = (def.recruitCost or 0) .. " gold",
+				value = locked and "Needs Military" or ((def.recruitCost or 0) .. " gold"),
+				disabled = locked,
 				tooltip = function()
+					-- Reason goes in `body` (a WRAPPING full-width line), not a row value (which doesn't wrap
+					-- and overflowed the tooltip edge).
 					return Tooltip.create({
 						title = def.displayName or entry.id,
+						body = locked and "Build a Military district here to recruit this unit." or nil,
 						rows = unitTooltipRows(def),
 						width = 230,
 					})
@@ -932,14 +1348,24 @@ function ProvinceOverview.create(ctx)
 		local p = liveProvince()
 		tierRow(body, p, 1)
 
-		ScreenKit.section(body, "Buildings", 10)
+		local districtsOn = WorldConstants.DistrictsPlayable
+		if districtsOn then
+			renderDistrictGrid(body, p, 5)
+		end
+
+		-- Buildings absorbed into districts (and manufactory_*) drop out of the legacy catalog + built list
+		-- when the district system is on; only special buildings (fortress/shipyard/university) remain here.
+		local function absorbed(bid, def)
+			return districtsOn and (DISTRICT_ABSORBED[bid] or (def ~= nil and def.manufactoryId ~= nil))
+		end
+
+		ScreenKit.section(body, districtsOn and "Special Buildings" or "Buildings", 10)
 		local built = (p and p.buildings) or {}
-		if #built == 0 then
-			ScreenKit.note(body, "No buildings constructed yet.", 11)
-		else
-			local bo = 11
-			for _, bid in ipairs(built) do
-				local def = buildingTypes()[bid]
+		local shownBuilt, bo = 0, 11
+		for _, bid in ipairs(built) do
+			local def = buildingTypes()[bid]
+			if not absorbed(bid, def) then
+				shownBuilt += 1
 				local row = ScreenKit.stat(body, {
 					icon = "Building",
 					label = (def and def.displayName) or titleCase(bid),
@@ -958,6 +1384,13 @@ function ProvinceOverview.create(ctx)
 				end
 				bo += 1
 			end
+		end
+		if shownBuilt == 0 then
+			ScreenKit.note(
+				body,
+				districtsOn and "No special buildings constructed." or "No buildings constructed yet.",
+				11
+			)
 		end
 
 		ScreenKit.section(body, "Construction", 20)
@@ -1013,7 +1446,12 @@ function ProvinceOverview.create(ctx)
 
 		local groups = {}
 		for id, def in pairs(buildingTypes()) do
-			if type(def) == "table" and not TIER_BUILDINGS[id] and canBuildHere(p, id, def) then
+			if
+				type(def) == "table"
+				and not TIER_BUILDINGS[id]
+				and not absorbed(id, def)
+				and canBuildHere(p, id, def)
+			then
 				local cat = def.category or "other"
 				groups[cat] = groups[cat] or {}
 				table.insert(groups[cat], { id = id, def = def })
@@ -1110,6 +1548,28 @@ function ProvinceOverview.create(ctx)
 			local p = liveProvince()
 			parts[#parts + 1] =
 				string.format("t:%d:%d:%d", (p and p.infraTier) or 0, (p and p.devTier) or 0, (p and p.fortTier) or 0)
+			-- Districts (economy rework): slot -> type@level, so placing/upgrading rebuilds the grid.
+			local dparts = {}
+			if p and p.districts then
+				for slot, d in pairs(p.districts) do
+					if type(d) == "table" and d.type then
+						dparts[#dparts + 1] = string.format("%s=%s@%d", tostring(slot), tostring(d.type), d.level or 0)
+					end
+				end
+			end
+			table.sort(dparts)
+			parts[#parts + 1] = "d:" .. table.concat(dparts, ",")
+			-- District build/upgrade queue PRESENCE (no progress -- liveBars advances the fill in place, so a
+			-- rebuild happens only when a ticket is added/removed/completed, not every frame).
+			local c0 = country()
+			local dq = {}
+			for _, t in ((c0 and c0.districtQueue) or {}) do
+				if t.provinceId == prov.id then
+					dq[#dq + 1] = string.format("%s:%s", tostring(t.id), tostring(t.slotIndex))
+				end
+			end
+			table.sort(dq)
+			parts[#parts + 1] = "dq:" .. table.concat(dq, ",")
 			-- Built buildings list (also feeds canBuildHere eligibility).
 			local built = (p and p.buildings) or {}
 			local bsorted = {}

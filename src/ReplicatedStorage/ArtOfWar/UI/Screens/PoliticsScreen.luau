@@ -75,7 +75,7 @@ local function modifierLine(modifiers)
 	return table.concat(parts, "  \u{2022}  ")
 end
 
-function PoliticsScreen.create(ctx)
+local function build(ctx, embedContainer)
 	local registries = ctx.registries or {}
 	local handle
 	local conns = {}
@@ -1177,18 +1177,25 @@ function PoliticsScreen.create(ctx)
 	if WorldConstants.EnableFormables then
 		table.insert(tabs, { key = "releasables", label = "Releasables" })
 	end
-	handle = ScreenKit.open(ctx, {
-		name = "PoliticsScreen",
-		title = "Government",
-		subtitle = ((c0 and c0.displayName) or ctx.tag or "Realm") .. "  \u{00B7}  " .. val(govName(c0)),
-		size = UDim2.new(0, 512, 1, -132),
-		tabs = tabs,
-		activeTab = "overview",
-		onTab = function(key)
-			render(key)
-			lastSig = contentSignature(key)
-		end,
-	})
+	if embedContainer then
+		-- Embedded in a RealmScreen tab pane: no window chrome, no own tab bar. The host owns the tab bar
+		-- and drives panes via the returned setPane; we only render into a scroll body in the container.
+		local b = ScreenKit.body(embedContainer)
+		handle = { root = embedContainer, body = b.body, clearBody = b.clearBody, destroy = function() end }
+	else
+		handle = ScreenKit.open(ctx, {
+			name = "PoliticsScreen",
+			title = "Government",
+			subtitle = ((c0 and c0.displayName) or ctx.tag or "Realm") .. "  \u{00B7}  " .. val(govName(c0)),
+			size = UDim2.new(0, 512, 1, -132),
+			tabs = tabs,
+			activeTab = "overview",
+			onTab = function(key)
+				render(key)
+				lastSig = contentSignature(key)
+			end,
+		})
+	end
 
 	if ctx.cache then
 		table.insert(conns, ctx.cache.onChangePrefix("countries", scheduleRefresh))
@@ -1204,6 +1211,10 @@ function PoliticsScreen.create(ctx)
 
 	return {
 		root = handle.root,
+		setPane = function(key)
+			render(key)
+			lastSig = contentSignature(key)
+		end,
 		destroy = function()
 			for _, d in conns do
 				pcall(d)
@@ -1211,6 +1222,16 @@ function PoliticsScreen.create(ctx)
 			handle.destroy()
 		end,
 	}
+end
+
+function PoliticsScreen.create(ctx)
+	return build(ctx, nil)
+end
+
+-- Embed the screen inside `container` (a RealmScreen tab pane) with no window chrome / no own tab bar.
+-- Returns { root, setPane(key), destroy }; the host drives Court/Estates/Reforms via setPane.
+function PoliticsScreen.mount(container, ctx)
+	return build(ctx, container)
 end
 
 return PoliticsScreen

@@ -745,6 +745,32 @@ InputValidator.register("CancelBuilding", {
 	schema = { { name = "ticketId", type = "string" } },
 	rate = { count = 6, window = 15 },
 })
+InputValidator.register("BuildDistrict", {
+	schema = {
+		{ name = "provinceId", type = "integer" },
+		{ name = "slotIndex", type = "integer" },
+		{ name = "districtType", type = "string" },
+	},
+	rate = { count = 8, window = 10 },
+})
+InputValidator.register("UpgradeDistrict", {
+	schema = {
+		{ name = "provinceId", type = "integer" },
+		{ name = "slotIndex", type = "integer" },
+	},
+	rate = { count = 8, window = 10 },
+})
+InputValidator.register("UpgradeDistrictAll", {
+	schema = { { name = "districtType", type = "string" } },
+	rate = { count = 4, window = 10 },
+})
+InputValidator.register("RazeDistrict", {
+	schema = {
+		{ name = "provinceId", type = "integer" },
+		{ name = "slotIndex", type = "integer" },
+	},
+	rate = { count = 8, window = 10 },
+})
 InputValidator.register("CancelMove", {
 	schema = { { name = "armyId", type = "string" } },
 	rate = { count = 20, window = 10 },
@@ -1915,6 +1941,57 @@ bindEvent("CancelBuilding", function(player, ticketId)
 		return
 	end
 	system.cancel(tag, ticketId)
+end)
+
+bindEvent("BuildDistrict", function(player, provinceId, slotIndex, districtType)
+	local auth = authority()
+	local system = loadedSystems.DistrictSystem
+	if not auth or not system then
+		return
+	end
+	local tag = auth.tagFor(player)
+	if not tag then
+		return
+	end
+	system.buildDistrict(tag, provinceId, slotIndex, districtType)
+end)
+
+bindEvent("UpgradeDistrict", function(player, provinceId, slotIndex)
+	local auth = authority()
+	local system = loadedSystems.DistrictSystem
+	if not auth or not system then
+		return
+	end
+	local tag = auth.tagFor(player)
+	if not tag then
+		return
+	end
+	system.upgradeDistrict(tag, provinceId, slotIndex)
+end)
+
+bindEvent("UpgradeDistrictAll", function(player, districtType)
+	local auth = authority()
+	local system = loadedSystems.DistrictSystem
+	if not auth or not system then
+		return
+	end
+	local tag = auth.tagFor(player)
+	if not tag then
+		return
+	end
+	system.upgradeDistrictAll(tag, districtType)
+end)
+bindEvent("RazeDistrict", function(player, provinceId, slotIndex)
+	local auth = authority()
+	local system = loadedSystems.DistrictSystem
+	if not auth or not system then
+		return
+	end
+	local tag = auth.tagFor(player)
+	if not tag then
+		return
+	end
+	system.razeDistrict(tag, provinceId, slotIndex)
 end)
 bindEvent("DeclareWar", function(player, targetTag)
 	local auth = authority()

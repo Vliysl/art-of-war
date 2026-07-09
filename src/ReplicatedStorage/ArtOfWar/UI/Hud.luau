@@ -29,6 +29,7 @@ local MENU_KEYS = {
 	[Enum.KeyCode.Seven] = "Settings",
 }
 local SCREEN_MODULES = {
+	Realm = "RealmScreen",
 	Politics = "PoliticsScreen",
 	Economy = "EconomyScreen",
 	Military = "MilitaryScreen",
@@ -82,6 +83,9 @@ local function buildCountryBar()
 		resources = countryData.resources or {},
 		onMenu = function(menu)
 			Hud.openScreen(menu)
+		end,
+		onCrest = function()
+			Hud.openScreen("Realm")
 		end,
 	})
 	if activeScreen then
@@ -349,6 +353,9 @@ function Hud.closeScreen()
 	end
 	local handle = activeScreen.handle
 	activeScreen = nil
+	if widgets.countryBar and widgets.countryBar.setActive then
+		widgets.countryBar.setActive(nil)
+	end
 	if handle then
 		if handle.destroy then
 			handle.destroy()
@@ -421,16 +428,16 @@ function Hud.openFleetPanel(fleetData)
 end
 
 -- Deep-link to a country's diplomacy profile (e.g. from the province-panel crest). Force-(re)opens the
--- Diplomacy screen focused on `tag`; openScreen toggles closed when re-invoked with the active screen's
--- name, so pre-close Diplomacy if it is already open.
+-- Realm window on its Diplomacy tab focused on `tag`; openScreen toggles closed when re-invoked with the
+-- active screen's name, so pre-close Realm if it is already open.
 function Hud.openCountryProfile(tag)
 	if not tag then
 		return
 	end
-	if activeScreen and activeScreen.name == "Diplomacy" then
+	if activeScreen and activeScreen.name == "Realm" then
 		Hud.closeScreen()
 	end
-	return Hud.openScreen("Diplomacy", { focusTag = tag })
+	return Hud.openScreen("Realm", { initialTab = "Diplomacy", focusTag = tag })
 end
 
 function Hud.openSettings()

@@ -62,6 +62,13 @@ local ALL_KINDS = {
 local SCHEMA_KEY = "meta:schema_version"
 local SCHEMA_VERSION = "v2"
 
+-- Single-server editor "blessed server" claim (Phase 2 of the snapshot-save rework). A GLOBAL meta key (NOT
+-- per-kind, NOT :edit-suffixed) that names the one private server allowed to write the shared :edit world, so a
+-- stray second server can't clobber it with a full snapshot. Keyed by the stable game.PrivateServerId; a holder
+-- whose heartbeat (stampedAt) is older than BLESSED_STALE_SECONDS is treated as dead and can be reclaimed.
+local EDITOR_SERVER_KEY = "meta:editorServerId"
+local BLESSED_STALE_SECONDS = 6 * 3600
+
 -- Identity-collapse (Phase C) schema. When the stored schema == COLLAPSED_VERSION the world is
 -- keyed by the map PART id (prov_<N>): provinces/countries are read from parallel "@v3" keys while
 -- the original serial-keyed v2 keys are left completely intact, so a rollback is a single schema
@@ -916,6 +923,134 @@ function DataOverlay.pushEditToLive()
 		end
 	end
 	return result
+end
+
+-- Full-snapshot save for the single-server editor model (SINGLE_SERVER_EDITOR). Overwrites EACH :edit
+-- aggregate with the complete in-memory world passed in -- no per-record merge, no diff. Writes only the
+-- editor env's :edit keys (keyFor honors IS_EDITOR_ENV); the live game's un-suffixed keys are untouched.
+-- Guards: refuse to blank provinces/countries; per-key size cap via writeAggregateToKey. On success adopts
+-- the snapshot into cache.data and clears the pending journal + dirty flag so no later flush() re-merges.
+-- worldByKind is keyed by KIND_* (country/province/eu4map/tile/culture/religion/ideology/government_type).
+function DataOverlay.writeFullSnapshot(worldByKind)
+	ensureLoaded()
+	if type(worldByKind) ~= "table" then
+		return { ok = false, writes = 0, failures = 1, kinds = {}, errors = { { error = "worldByKind table required" } } }
+	end
+	-- Never blank the editable map: provinces/countries must be non-empty to snapshot.
+	local prov = worldByKind[KIND_PROVINCES]
+	local ctry = worldByKind[KIND_COUNTRIES]
+	if type(prov) ~= "table" or next(prov) == nil or type(ctry) ~= "table" or next(ctry) == nil then
+		return {
+			ok = false,
+			writes = 0,
+			failures = 1,
+			kinds = {},
+			errors = { { error = "refusing snapshot: provinces/countries are empty (would blank the map) -- edit something first" } },
+		}
+	end
+	-- All-or-nothing read-failed guard: if ANY kind's aggregate failed to LOAD at boot, cache.loadStatus marks it
+	-- "read_failed" and our in-memory copy is empty (tiles/eu4map have no source-file fallback), so a full snapshot
+	-- would blank the stored aggregate. Refuse the whole save (mirrors flush's block + saveNamedConfig's refusal).
+	for _, kind in ipairs(ALL_KINDS) do
+		if cache.loadStatus[kind] == "read_failed" then
+			return {
+				ok = false,
+				writes = 0,
+				failures = 1,
+				kinds = {},
+				errors = {
+					{
+						kind = kind,
+						error = "refusing snapshot: aggregate '"
+							.. kind
+							.. "' failed to load (saving now would blank it) -- wait for the retry to recover it, then save again",
+					},
+				},
+			}
+		end
+	end
+	local result = { ok = true, writes = 0, failures = 0, kinds = {}, errors = {} }
+	for _, kind in ipairs(ALL_KINDS) do
+		local map = worldByKind[kind]
+		if type(map) ~= "table" then
+			map = cache.data[kind] or {}
+		end
+		local ok, err = writeAggregateToKey(keyFor(kind), kind, map)
+		if ok then
+			result.writes += 1
+			result.kinds[#result.kinds + 1] = kind
+			-- Adopt into the cache (re-key to the canonical key type) and drop any journal + dirty flag so a
+			-- later flush() can't re-apply stale per-record edits over the snapshot we just wrote.
+			local adopted = {}
+			for k, v in pairs(map) do
+				adopted[coerceKey(kind, k)] = v
+			end
+			cache.data[kind] = adopted
+			cache.pending[kind] = {}
+			cache.dirty[kind] = nil
+		else
+			result.ok = false
+			result.failures += 1
+			result.errors[#result.errors + 1] = { kind = kind, error = tostring(err) }
+		end
+	end
+	return result
+end
+
+-- Claim/refresh the single-server "blessed server" crown via a DataStore compare-and-set. Returns true iff THIS
+-- server holds it after the op. No-op false on a public server / Studio (PrivateServerId == ""). CAS rules:
+-- (1) unclaimed -> take it; (2) already ours -> re-affirm + refresh heartbeat (a respawn of the SAME private
+-- server keeps the crown, since PrivateServerId is stable even though JobId changes); (3) held by a DIFFERENT
+-- server -> take it ONLY if that holder's heartbeat is stale (dead link), else leave it. Because it is a CAS,
+-- if two private servers race, exactly one wins the key and the loser reads back the winner's id.
+function DataOverlay.claimBlessedServer()
+	local myId = game.PrivateServerId
+	if myId == "" then
+		return false
+	end
+	local ds = store()
+	local winner
+	local ok = withRetry(function()
+		return ds:UpdateAsync(EDITOR_SERVER_KEY, function(raw)
+			local current = decodeValue(raw)
+			local mine = HttpService:JSONEncode({ serverId = myId, jobId = game.JobId, stampedAt = os.time() })
+			if type(current) ~= "table" or current.serverId == nil or current.serverId == "" then
+				winner = myId
+				return mine -- unclaimed
+			end
+			if current.serverId == myId then
+				winner = myId
+				return mine -- re-affirm + refresh heartbeat (same private server, maybe a new JobId)
+			end
+			if os.time() - (tonumber(current.stampedAt) or 0) > BLESSED_STALE_SECONDS then
+				winner = myId
+				return mine -- previous holder is stale/dead -> take over
+			end
+			winner = current.serverId
+			return nil -- someone else is blessed and alive: leave unchanged
+		end)
+	end, "UpdateAsync " .. EDITOR_SERVER_KEY, 3)
+	if not ok then
+		return false -- store unreachable: fail safe to NOT-blessed (read-only) rather than risk a false crown
+	end
+	return winner == myId
+end
+
+-- Read-only check (no claim): does THIS server currently hold the blessed crown? False on a public server.
+function DataOverlay.isBlessedServer()
+	local myId = game.PrivateServerId
+	if myId == "" then
+		return false
+	end
+	local ds = store()
+	local ok, raw = withRetry(function()
+		return ds:GetAsync(EDITOR_SERVER_KEY)
+	end, "GetAsync " .. EDITOR_SERVER_KEY, 3)
+	if not ok then
+		return false
+	end
+	local current = decodeValue(raw)
+	return type(current) == "table" and current.serverId == myId
 end
 
 -- ─────────────────────────── named Save/Load map configs (RoN "Save/Load Map") ───────────────────────────

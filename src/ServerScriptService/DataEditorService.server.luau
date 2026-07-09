@@ -1,12 +1,14 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 
 local Editor = require(ServerStorage:WaitForChild("Dev"):WaitForChild("DataEditor"))
 local EditorAdmins = require(ServerStorage:WaitForChild("Dev"):WaitForChild("EditorAdmins"))
 local DataStoreService = game:GetService("DataStoreService")
 local HttpService = game:GetService("HttpService")
 local RelayConfig = require(ServerStorage:WaitForChild("Dev"):WaitForChild("RelayConfig"))
+local DataOverlay = require(ServerStorage:WaitForChild("Services"):WaitForChild("DataOverlay"))
 
 local STAGING_ENABLED = true
 
@@ -43,6 +45,9 @@ local function syncProvinceToWorld(id)
 		if type(rec.defaultCores) == "table" then
 			existing.defaultCores = table.clone(rec.defaultCores)
 		end
+		if type(rec.claims) == "table" then
+			existing.claims = table.clone(rec.claims)
+		end
 		if type(rec.goods) == "table" then
 			existing.goods = table.clone(rec.goods)
 		end
@@ -54,6 +59,9 @@ local function syncProvinceToWorld(id)
 		end
 		if type(rec.defaultCores) == "table" then
 			clone.defaultCores = table.clone(rec.defaultCores)
+		end
+		if type(rec.claims) == "table" then
+			clone.claims = table.clone(rec.claims)
 		end
 		if type(rec.goods) == "table" then
 			clone.goods = table.clone(rec.goods)
@@ -92,7 +100,9 @@ local function provinceOwnerKey(rec)
 	if type(rec) ~= "table" then
 		return "NONE|NONE"
 	end
-	return tostring(rec.ownerTag or rec.owner or "NONE") .. "|" .. tostring(rec.controllerTag or rec.controller or "NONE")
+	return tostring(rec.ownerTag or rec.owner or "NONE")
+		.. "|"
+		.. tostring(rec.controllerTag or rec.controller or "NONE")
 end
 
 -- Live-refresh WorldState + the map after a full-world LOAD (named config / draft). A load only writes
@@ -305,6 +315,8 @@ local PAINT_COMMANDS = {
 	assignProvince = true,
 	setTileOwner = true,
 	assignBatch = true,
+	paintTag = true,
+	paintTagBatch = true,
 }
 
 local SNAPSHOT_COMMANDS = {
@@ -319,6 +331,121 @@ local saveOwnerUserId = nil
 local presence = {}
 
 local isAuthorized = EditorAdmins.isAllowed
+
+-- Commands that never mutate the dataset (pure reads / diffs / exports). Everything NOT in this set is treated
+-- as a write for the place gate below. Allowlist (not denylist) so any newly-added command is write-gated by
+-- default -- fail safe. getLogs is served directly in OnServerInvoke and never reaches the gate.
+local READ_ONLY_COMMANDS = {
+	authCheck = true,
+	loadState = true,
+	reloadState = true,
+	provincesPage = true,
+	listConfigs = true,
+	listAccess = true,
+	getDiff = true,
+	computeDiffVsShared = true,
+	isStagingEnabled = true,
+	exportToLua = true,
+	dumpDataStore = true,
+	auditMapping = true,
+}
+
+-- Legacy per-user staging commands (personal drafts + the 3-way `promote` merge). These are incoherent with the
+-- single-server snapshot model, so they are rejected when it's active. The editor client never sends them; this
+-- blocks a crafted RemoteFunction call. (They branch on `not STAGING_ENABLED`, which stays false in single-server
+-- mode, so they'd otherwise still run the retired merge path.)
+local STAGING_ONLY_COMMANDS = {
+	saveDraft = true,
+	loadDraft = true,
+	discardDraft = true,
+	pullFromShared = true,
+	computeDiffVsShared = true,
+	promote = true,
+}
+
+-- The editor may open (browse) anywhere an admin is recognised, but it must be READ-ONLY off the Map Editor
+-- place: DataOverlay only redirects writes to the ':edit' key set on the editor place or in Studio, so a save
+-- on the LIVE game place would mutate the un-suffixed keys the live game reads. Official managers bypass the
+-- ── Single-server "blessed server" write gate + crash-safety state (Phases 2 & 5 of the snapshot-save rework) ──
+-- In SINGLE_SERVER_EDITOR mode only ONE server (the blessed private server) may write the shared :edit world, so
+-- a stray second server can't clobber it with a full snapshot. Studio/Team-Test is always exempt (it IS a single
+-- shared server and testing must work). `isBlessed` is the cached hint that drives the read-only UI gate
+-- (resolved at boot + refreshed periodically); the authoritative write guard is ensureWriteAuthority, which
+-- re-asserts the crown via a DataStore CAS on every real write. `worldDirty` tracks whether the shared world
+-- changed since the last snapshot; `maybeSnapshot` (forward-declared, assigned after safeCall) is the single
+-- choke point every crash-safety save funnels through.
+local AUTOSAVE_INTERVAL = 120
+local BLESSED_REFRESH_INTERVAL = 120
+local isBlessed = false
+local worldDirty = false
+local maybeSnapshot
+
+local function singleServerMode()
+	return (Editor.isSingleServerMode and Editor.isSingleServerMode()) == true
+end
+
+-- open-gate on any place, so this is the backstop that stops a dev from painting/saving into live prod data.
+local function isEditorWriteAllowed()
+	if RunService:IsStudio() then
+		return true
+	end
+	if not EditorAdmins.isMapEditorPlace() then
+		return false
+	end
+	if not singleServerMode() then
+		return true -- legacy per-user model untouched until the flag flips
+	end
+	-- Single-server mode on the editor place: only the blessed private server may write. A public instance
+	-- (PrivateServerId == "") is always read-only so a stray public server can never own the shared world.
+	if game.PrivateServerId == "" then
+		return false
+	end
+	return isBlessed
+end
+
+-- Re-assert write authority via a DataStore CAS right before an actual write (save / autosave / pushToLive).
+-- This is the REAL single-writer guard (cached isBlessed only drives the read-only UI gate): even if the cache
+-- is momentarily stale, the CAS makes exactly one server hold the crown, and refreshes its heartbeat.
+local function ensureWriteAuthority()
+	if RunService:IsStudio() then
+		return true
+	end
+	if not singleServerMode() then
+		return true
+	end
+	if game.PrivateServerId == "" then
+		return false
+	end
+	if not EditorAdmins.isMapEditorPlace() then
+		return false -- only the Map Editor place contends for the crown (a live VIP server must never claim it)
+	end
+	local ok, blessed = pcall(DataOverlay.claimBlessedServer)
+	isBlessed = ok and blessed == true
+	return isBlessed
+end
+
+-- Serialize the whole staging command path. Every staging editorCall runs Editor.setActiveUser, which swaps the
+-- module-global country/province tables to the caller's world AND yields on DataStore I/O; save/promote also
+-- yield mid-flight. Without a lock, a second editor's command can swap the shared globals while the first is
+-- parked, so it resumes against the wrong world and clobbers/promotes bad data. This lock makes commands run
+-- one-at-a-time (an admin tool with a handful of concurrent editors -- the small added latency is fine).
+local commandLock = false
+local function withCommandLock(fn)
+	local startedAt = os.clock()
+	while commandLock do
+		task.wait()
+		if os.clock() - startedAt > 20 then
+			break -- safety valve: never wedge forever if a holder somehow failed to release
+		end
+	end
+	commandLock = true
+	local ok, a, b, c = pcall(fn)
+	commandLock = false
+	if not ok then
+		error(a, 0)
+	end
+	return a, b, c
+end
 
 local function presenceSnapshot()
 	local list = {}
@@ -344,7 +471,30 @@ Players.PlayerRemoving:Connect(function(player)
 		broadcastPresence()
 	end
 	if STAGING_ENABLED and Editor.dropUserState then
-		Editor.dropUserState(player.UserId)
+		-- Take the command lock so we never nil out the shared active-user state while THIS player's own
+		-- save/promote is still parked mid-flight on a DataStore round-trip (would make it write the wrong id).
+		task.spawn(function()
+			withCommandLock(function()
+				Editor.dropUserState(player.UserId)
+			end)
+		end)
+	end
+	if singleServerMode() then
+		-- Last editor leaving: snapshot the shared in-memory world so a later empty->respawn can't lose unsaved
+		-- edits. PlayerRemoving fires while `player` is still in GetPlayers(), so exclude them from the count.
+		local othersLeft = 0
+		for _, plr in ipairs(Players:GetPlayers()) do
+			if plr ~= player and isAuthorized(plr) then
+				othersLeft += 1
+			end
+		end
+		if othersLeft == 0 and worldDirty then
+			task.spawn(function()
+				withCommandLock(function()
+					maybeSnapshot("last-editor-left")
+				end)
+			end)
+		end
 	end
 end)
 
@@ -413,7 +563,11 @@ local function rateLimit(player, command)
 		end
 		local last = kept[#kept]
 		if last and now - last < DELETE_COOLDOWN then
-			return false, string.format("country deletes are limited to one every 2.5 min — wait %ds", math.ceil(DELETE_COOLDOWN - (now - last)))
+			return false,
+				string.format(
+					"country deletes are limited to one every 2.5 min — wait %ds",
+					math.ceil(DELETE_COOLDOWN - (now - last))
+				)
 		end
 		if #kept >= DELETE_MAX then
 			return false, string.format("country delete limit reached (%d per hour) — try again later", DELETE_MAX)
@@ -449,6 +603,36 @@ local function safeCall(fn, ...)
 	return { ok = true, result = result }
 end
 
+-- Single-server crash-safety snapshot choke point (Phase 5). The non-manual saves (autosave, last-editor-leaves,
+-- shutdown) funnel through here; the manual Save handler clears worldDirty on its own success. Writes only when
+-- single-server mode is on, this server holds write authority (blessed CAS), and the world actually changed.
+maybeSnapshot = function(reason)
+	if not singleServerMode() then
+		return false
+	end
+	if not worldDirty then
+		return false
+	end
+	if not ensureWriteAuthority() then
+		return false -- not the blessed server: never write (a stray server must not clobber the shared world)
+	end
+	local res = safeCall(Editor.snapshotSave)
+	local ok = res.ok and res.result ~= nil and res.result.ok == true
+	if ok then
+		worldDirty = false
+		print(string.format("[DataEditorService] crash-safe snapshot (%s): %s", reason, res.result.message or "ok"))
+	else
+		warn(
+			string.format(
+				"[DataEditorService] crash-safe snapshot FAILED (%s): %s",
+				reason,
+				tostring(res.error or (res.result and res.result.message) or "unknown")
+			)
+		)
+	end
+	return ok
+end
+
 local function readState(kind, key)
 	local state = Editor.getState()
 	if kind == "country" then
@@ -478,7 +662,9 @@ local function readState(kind, key)
 end
 
 local function broadcastDelta(originPlayer, kind, key)
-	if STAGING_ENABLED then
+	-- Per-edit live sync: suppressed under legacy staging, but ENABLED in single-server mode so co-editors see
+	-- each other's edits in real time (the client applies these deltas into its snapshot).
+	if STAGING_ENABLED and not (Editor.isSingleServerMode and Editor.isSingleServerMode()) then
 		return
 	end
 	local payload = {
@@ -496,7 +682,8 @@ local function broadcastDelta(originPlayer, kind, key)
 end
 
 local function broadcastBatch(originPlayer, items)
-	if STAGING_ENABLED then
+	-- Per-edit live sync (batch): see broadcastDelta. Suppressed under legacy staging, enabled in single-server.
+	if STAGING_ENABLED and not (Editor.isSingleServerMode and Editor.isSingleServerMode()) then
 		return
 	end
 	local payload = {
@@ -623,6 +810,9 @@ local function snapshotState()
 	end
 	return {
 		collapsed = (Editor.isCollapsed and Editor.isCollapsed()) or false,
+		-- Whether THIS server may write (off the editor place, or not the blessed single-server writer -> false),
+		-- so the client can surface a read-only banner up-front instead of only on a rejected edit.
+		canWriteHere = isEditorWriteAllowed(),
 		countries = state.countries,
 		-- Provinces are NOT sent inline: the full set (~5.7k records, ~2.7 MB) does not survive a single
 		-- RemoteFunction return -- a sparse id-keyed table that large silently loses its high ids in transit,
@@ -666,6 +856,8 @@ local PAINT_COALESCE_WINDOW = 8 -- seconds: merge a user's consecutive same-owne
 local LOG_ACTIONS = {
 	assignProvince = "Paint",
 	assignBatch = "Paint",
+	paintTag = "Paint",
+	paintTagBatch = "Paint",
 	assignProvinceField = "Province",
 	assignProvinceFieldBatch = "Province",
 	addProvince = "Province",
@@ -732,7 +924,8 @@ end
 local function describeAction(command, payload)
 	payload = type(payload) == "table" and payload or {}
 	if command == "assignProvince" then
-		return string.format("painted #%s -> %s", tostring(payload.id), tostring(payload.ownerTag)), "paint:" .. tostring(payload.ownerTag)
+		return string.format("painted #%s -> %s", tostring(payload.id), tostring(payload.ownerTag)),
+			"paint:" .. tostring(payload.ownerTag)
 	elseif command == "assignBatch" then
 		local n = (type(payload.items) == "table" and #payload.items) or 0
 		return string.format("painted %d tiles -> %s", n, tostring(payload.ownerTag)), nil
@@ -764,7 +957,12 @@ local function appendLog(player, command, payload)
 	local now = os.time()
 	if coalesceKey then
 		local last = pendingLog[#pendingLog]
-		if last and last.uid == player.UserId and last.ck == coalesceKey and (now - (last.t or 0)) <= PAINT_COALESCE_WINDOW then
+		if
+			last
+			and last.uid == player.UserId
+			and last.ck == coalesceKey
+			and (now - (last.t or 0)) <= PAINT_COALESCE_WINDOW
+		then
 			last.n = (last.n or 1) + 1
 			last.t = now
 			last.msg = string.format("painted %d tiles -> %s", last.n, string.sub(coalesceKey, 7))
@@ -845,14 +1043,27 @@ local function handleEditorCommand(player, command, payload)
 		return {
 			ok = true,
 			result = {
-				allowed = true,
+				allowed = isAuthorized(player), -- always true here (gated above), but don't hardcode the invariant
 				canManage = EditorAdmins.canManage(player),
 				role = EditorAdmins.classify(player),
+				canWriteHere = isEditorWriteAllowed(), -- client can surface a read-only banner off the editor place
 			},
 		}
 	end
 	if payload ~= nil and not validatePayload(payload) then
 		return { ok = false, error = "payload rejected" }
+	end
+	-- Read-only off the Map Editor place (Studio exempt) so the editor can never write into live prod data.
+	if not READ_ONLY_COMMANDS[command] and not isEditorWriteAllowed() then
+		-- Distinguish the two read-only causes so the message tells the user how to fix it: on the editor place but
+		-- not the blessed single-server writer vs. off the editor place entirely.
+		local msg
+		if singleServerMode() and EditorAdmins.isMapEditorPlace() and not RunService:IsStudio() then
+			msg = "Read-only: this isn't the editing server. Reopen the editor from the blessed private-server link."
+		else
+			msg = "the data editor is read-only outside the Map Editor place — open it there to make changes"
+		end
+		return { ok = false, error = msg }
 	end
 	local allowed, rateErr = rateLimit(player, command)
 	if not allowed then
@@ -863,10 +1074,21 @@ local function handleEditorCommand(player, command, payload)
 		pcall(Editor.setActiveUser, player.UserId)
 	end
 
+	-- Legacy staging commands must never run in single-server mode (they'd invoke the retired draft/promote
+	-- 3-way merge). The client never sends them; this blocks a crafted call.
+	if singleServerMode() and STAGING_ONLY_COMMANDS[command] then
+		return { ok = false, error = "that action is unavailable in single-server editing mode" }
+	end
+
 	if command == "loadState" then
 		return safeCall(snapshotState)
 	elseif command == "reloadState" then
-		Editor.load()
+		-- Single-server: only the blessed WRITER's in-memory world can hold unsaved shared edits, so it must NOT
+		-- re-read DataStore on reload (that would clobber them) -- it just re-sends its current snapshot. A read-only
+		-- (non-blessed / public) server has no unsaved edits, so it SHOULD re-read to pick up the writer's saves.
+		if not (singleServerMode() and isEditorWriteAllowed()) then
+			Editor.load()
+		end
 		return safeCall(snapshotState)
 	elseif command == "provincesPage" then
 		-- Streams provinces to the client in dense pages (snapshotState omits them; see the note there).
@@ -998,7 +1220,9 @@ local function handleEditorCommand(player, command, payload)
 		local result = safeCall(Editor.removeCountry, tag)
 		if result.ok then
 			if WorldState and WorldState.deleteCountry then
-				pcall(WorldState.deleteCountry, tag)
+				-- stripMembership=true: editor delete removes the country from existence, so purge it from live
+				-- cores/defaultCores/claims too (combat annexation, the other caller, keeps those).
+				pcall(WorldState.deleteCountry, tag, nil, true)
 			end
 			local items = { { kind = "country", key = tag } }
 			for _, id in ipairs(affectedProvinces) do
@@ -1136,6 +1360,50 @@ local function handleEditorCommand(player, command, payload)
 			broadcastDelta(player, "province", payload.id)
 		end
 		return result
+	elseif command == "paintTag" then
+		-- Add/remove one country tag on a province's cores / defaultCores / claims array.
+		local result = safeCall(Editor.paintProvinceTag, payload.id, payload.target, payload.tag, payload.mode)
+		if result.ok then
+			syncProvinceToWorld(payload.id)
+			broadcastDelta(player, "province", payload.id)
+		end
+		return result
+	elseif command == "paintTagBatch" then
+		local items = type(payload) == "table" and payload.items
+		local target = type(payload) == "table" and payload.target or nil
+		local tag = type(payload) == "table" and payload.tag or nil
+		local mode = (type(payload) == "table" and payload.mode) or "add"
+		if type(items) ~= "table" then
+			return { ok = false, error = "items must be a table" }
+		end
+		if type(target) ~= "string" or type(tag) ~= "string" or tag == "" then
+			return { ok = false, error = "target and tag required" }
+		end
+		if #items > 500 then
+			return { ok = false, error = string.format("batch too large: %d items (max 500) — split it up", #items) }
+		end
+		return safeCall(function()
+			local processed, errors, deltas = 0, {}, {}
+			Editor.beginBatch(string.format("paintTagBatch %s %s -> %s", mode, target, tag))
+			for i, item in ipairs(items) do
+				if type(item) == "table" and item.id ~= nil then
+					local ok, err = pcall(Editor.paintProvinceTag, item.id, target, tag, mode)
+					if ok then
+						processed += 1
+						syncProvinceToWorld(item.id)
+						table.insert(deltas, { kind = "province", key = item.id })
+					else
+						table.insert(errors, { id = item.id, error = tostring(err) })
+					end
+				end
+				if i % 100 == 0 then
+					task.wait() -- a max 500-item bulk apply fires ~69 SetAttribute/item; yield so it can't stall a frame
+				end
+			end
+			Editor.endBatch()
+			broadcastBatch(player, deltas)
+			return { processed = processed, errors = errors, total = #items }
+		end)
 	elseif command == "assignProvinceField" then
 		local result = safeCall(Editor.assignProvinceField, payload.id, payload.field, payload.value)
 		if result.ok then
@@ -1218,7 +1486,7 @@ local function handleEditorCommand(player, command, payload)
 			local map = workspace:FindFirstChild("ArtOfWarMap")
 			local processed, errors, deltas = 0, {}, {}
 			Editor.beginBatch(string.format("assignBatch -> %s", ownerTag))
-			for _, item in ipairs(items) do
+			for i, item in ipairs(items) do
 				if type(item) == "table" then
 					if item.kind == "seed" and item.id ~= nil then
 						local ok, err = pcall(Editor.assignProvince, item.id, ownerTag)
@@ -1244,12 +1512,83 @@ local function handleEditorCommand(player, command, payload)
 						end
 					end
 				end
+				if i % 100 == 0 then
+					task.wait() -- yield so a max 500-item bulk apply can't monopolize a server frame
+				end
 			end
 			Editor.endBatch()
 			broadcastBatch(player, deltas)
 			return { processed = processed, errors = errors, total = #items }
 		end)
 	elseif command == "save" then
+		if Editor.isSingleServerMode and Editor.isSingleServerMode() then
+			-- Single-server model: Save is a full snapshot of the one shared world to the :edit aggregates
+			-- (no draft, no diff, no per-record merge). Full per-edit live sync is a later phase; for now we
+			-- nudge other editors to re-sync on this save boundary (their client's reloadState re-fetches the
+			-- shared world) and refresh stamping/adjacency for any tiles promoted during the snapshot.
+			-- Blessed-server guard: only the one designated server may overwrite the shared :edit world.
+			if not ensureWriteAuthority() then
+				return {
+					ok = false,
+					mode = "datastore",
+					message = "Read-only: this isn't the editing server. Reopen from the blessed private-server link.",
+					error = "another server holds the editing session",
+				}
+			end
+			local saveResult = safeCall(Editor.snapshotSave)
+			local snapOk = saveResult.ok and saveResult.result ~= nil and saveResult.result.ok == true
+			if snapOk then
+				worldDirty = false
+				local stamperMod = game.ServerScriptService.ArtOfWar.Systems:FindFirstChild("ProvinceStamper")
+				if stamperMod then
+					local stamperOk, stamper = pcall(require, stamperMod)
+					if stamperOk and stamper then
+						if stamper.refreshEU4Mappings then
+							pcall(stamper.refreshEU4Mappings)
+						end
+						if stamper.applyTileOwnership then
+							pcall(stamper.applyTileOwnership)
+						end
+					end
+				end
+				local adjMod = game.ServerScriptService.ArtOfWar.Systems:FindFirstChild("AdjacencyGraph")
+				if adjMod then
+					local adjOk, adj = pcall(require, adjMod)
+					if adjOk and adj and adj.build then
+						pcall(adj.build)
+					end
+				end
+				for _, plr in ipairs(Players:GetPlayers()) do
+					if plr ~= player and isAuthorized(plr) then
+						LiveSync:FireClient(plr, {
+							sharedMoved = true,
+							originUserId = player.UserId,
+							originName = player.DisplayName or player.Name,
+						})
+					end
+				end
+			end
+			local res = saveResult.result or {}
+			local writes = res.writes or 0
+			local failures = res.failures or (snapOk and 0 or 1)
+			local msg
+			if snapOk then
+				msg = string.format("Saved \u{2713} full snapshot (%d aggregates)", writes)
+			else
+				local errText = (res.errors and res.errors[1] and res.errors[1].error)
+					or saveResult.error
+					or "snapshot error"
+				msg = "Save failed: " .. tostring(errText)
+			end
+			return {
+				ok = snapOk,
+				mode = "datastore",
+				result = { mode = "datastore", writes = { failures = failures }, message = msg },
+				writes = { failures = failures },
+				message = msg,
+				error = (not snapOk) and msg or nil,
+			}
+		end
 		if STAGING_ENABLED then
 			local draftResult = safeCall(Editor.saveDraft)
 			local promoteResult = safeCall(Editor.promote, nil)
@@ -1518,6 +1857,15 @@ local function handleEditorCommand(player, command, payload)
 		local force = type(payload) == "table" and payload.force == true
 		return safeCall(Editor.importSeed, { force = force })
 	elseif command == "undo" then
+		if singleServerMode() then
+			-- The undo/redo history is a single shared stack in single-server mode, so an undo pops whatever the
+			-- most recent editor did (and a full-snapshot undo would roll the whole shared world back over other
+			-- editors' unsaved edits). Disabled until per-user undo lands. See the plan doc.
+			return {
+				ok = false,
+				error = "Undo isn't available in collaborative editing yet (the history is shared — an undo could revert another editor's work).",
+			}
+		end
 		local result = safeCall(function()
 			local ok, label = Editor.undo()
 			return { ok = ok, label = label, depth = Editor.historyDepth(), redoDepth = Editor.redoDepth() }
@@ -1530,15 +1878,12 @@ local function handleEditorCommand(player, command, payload)
 				snap.result.redoDepth = result.result.redoDepth
 				for _, plr in ipairs(Players:GetPlayers()) do
 					if plr ~= player and isAuthorized(plr) then
-						LiveSync:FireClient(
-							plr,
-							{
-								reload = true,
-								originUserId = player.UserId,
-								originName = player.DisplayName or player.Name,
-								reason = "undo",
-							}
-						)
+						LiveSync:FireClient(plr, {
+							reload = true,
+							originUserId = player.UserId,
+							originName = player.DisplayName or player.Name,
+							reason = "undo",
+						})
 					end
 				end
 				return snap
@@ -1546,6 +1891,12 @@ local function handleEditorCommand(player, command, payload)
 		end
 		return result
 	elseif command == "redo" then
+		if singleServerMode() then
+			return {
+				ok = false,
+				error = "Redo isn't available in collaborative editing yet (the history is shared across editors).",
+			}
+		end
 		local result = safeCall(function()
 			local ok, label = Editor.redo()
 			return { ok = ok, label = label, depth = Editor.historyDepth(), redoDepth = Editor.redoDepth() }
@@ -1558,15 +1909,12 @@ local function handleEditorCommand(player, command, payload)
 				snap.result.redoDepth = result.result.redoDepth
 				for _, plr in ipairs(Players:GetPlayers()) do
 					if plr ~= player and isAuthorized(plr) then
-						LiveSync:FireClient(
-							plr,
-							{
-								reload = true,
-								originUserId = player.UserId,
-								originName = player.DisplayName or player.Name,
-								reason = "redo",
-							}
-						)
+						LiveSync:FireClient(plr, {
+							reload = true,
+							originUserId = player.UserId,
+							originName = player.DisplayName or player.Name,
+							reason = "redo",
+						})
 					end
 				end
 				return snap
@@ -1659,12 +2007,29 @@ api.OnServerInvoke = function(player, command, payload)
 		local limit = (type(payload) == "table" and tonumber(payload.limit)) or 300
 		return { ok = true, logs = readLogs(limit), actions = LOG_ACTION_LIST }
 	end
-	local result = handleEditorCommand(player, command, payload)
+	-- Serialize the staging command path so concurrent editors' commands can't interleave through the shared
+	-- module-global world swaps + DataStore yields (see withCommandLock). Reads go through it too -- they also
+	-- run setActiveUser -- but they're fast, so the added latency is negligible.
+	local result
+	if STAGING_ENABLED then
+		result = withCommandLock(function()
+			return handleEditorCommand(player, command, payload)
+		end)
+	else
+		result = handleEditorCommand(player, command, payload)
+	end
 	if LOG_ACTIONS[command] and type(result) == "table" and result.ok ~= false then
 		appendLog(player, command, payload)
 		if FLUSH_NOW_ACTIONS[command] then
 			task.spawn(flushLogs)
 		end
+	end
+	-- Single-server crash-safety: mark the shared world dirty after ANY successful mutating command (not just
+	-- the LOG_ACTIONS-logged ones) so autosave / shutdown / last-editor-leaves persist it. Excludes read-only
+	-- commands and `save` (which clears the flag on its own success). This is what covers setTileOwner / undo /
+	-- redo, which mutate the shared world but are not in LOG_ACTIONS.
+	if type(result) == "table" and result.ok ~= false and not READ_ONLY_COMMANDS[command] and command ~= "save" then
+		worldDirty = true
 	end
 	return result
 end
@@ -1676,9 +2041,45 @@ task.spawn(function()
 		flushLogs()
 	end
 end)
-game:BindToClose(flushLogs)
+
+-- Single-server crash-safety (Phase 5): the shared editor world lives only in this server's memory between
+-- Saves, so autosave it on a timer (only when it changed) and snapshot on shutdown BEFORE the log flush so
+-- world data wins the ~30s BindToClose budget. Both run only in single-server mode via maybeSnapshot's guards.
+task.spawn(function()
+	while true do
+		task.wait(AUTOSAVE_INTERVAL)
+		if singleServerMode() and worldDirty then
+			withCommandLock(function()
+				maybeSnapshot("autosave")
+			end)
+		end
+	end
+end)
+
+game:BindToClose(function()
+	if singleServerMode() and worldDirty then
+		-- Snapshot FIRST (world data outranks the audit log) and skip the command lock's 20s wait so the log
+		-- flush still gets time inside the shared close budget.
+		pcall(maybeSnapshot, "shutdown")
+	end
+	flushLogs()
+end)
 
 Editor.load()
+
+-- Single-server blessed-server resolution (Phase 2): claim/refresh this server's write authority. Runs once at
+-- boot (synchronously, so the blessed private server is writable immediately) then periodically, so a server can
+-- take over a freed/stale crown without a restart and the blessed server keeps its heartbeat fresh.
+if singleServerMode() and game.PrivateServerId ~= "" and EditorAdmins.isMapEditorPlace() then
+	pcall(ensureWriteAuthority)
+	task.spawn(function()
+		while true do
+			task.wait(BLESSED_REFRESH_INTERVAL)
+			pcall(ensureWriteAuthority)
+		end
+	end)
+end
+
 local function countTable(t)
 	local n = 0
 	for _ in pairs(t) do

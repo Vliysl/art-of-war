@@ -35,9 +35,11 @@ function CountryBadge.create(config)
 	badge.BorderSizePixel = 0
 	badge.LayoutOrder = config.layoutOrder or 0
 
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 4)
-	corner.Parent = badge
+	if not config.square then
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0, 4)
+		corner.Parent = badge
+	end
 
 	local stroke = Instance.new("UIStroke")
 	stroke.Color = Colors.BorderSubtle
@@ -62,9 +64,11 @@ function CountryBadge.create(config)
 	crestImg.ScaleType = Enum.ScaleType.Crop
 	crestImg.ZIndex = 2
 	crestImg.Parent = badge
-	local crestImgCorner = Instance.new("UICorner")
-	crestImgCorner.CornerRadius = UDim.new(0, 4)
-	crestImgCorner.Parent = crestImg
+	if not config.square then
+		local crestImgCorner = Instance.new("UICorner")
+		crestImgCorner.CornerRadius = UDim.new(0, 4)
+		crestImgCorner.Parent = crestImg
+	end
 
 	local label = Instance.new("TextLabel")
 	label.Name = "Code"

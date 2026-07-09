@@ -152,6 +152,12 @@ local function makeSearchBox(parent, placeholder, initialText, onChanged)
 	stroke.Parent = box
 	box.Parent = parent
 	local debounce
+	box.Destroying:Connect(function()
+		if debounce then
+			task.cancel(debounce)
+			debounce = nil
+		end
+	end)
 	box:GetPropertyChangedSignal("Text"):Connect(function()
 		local text = box.Text
 		if debounce then
@@ -165,7 +171,7 @@ local function makeSearchBox(parent, placeholder, initialText, onChanged)
 	return box
 end
 
-function DiplomacyScreen.create(ctx)
+local function build(ctx, embedContainer)
 	local cache = ctx.cache
 	local mineTag = ctx.tag
 	local handle
@@ -176,6 +182,9 @@ function DiplomacyScreen.create(ctx)
 	local mode = "list"
 	local currentTag = nil
 	local listQuery = ""
+	local pageSize = 25 -- rows per page; the nation list can hold 700+ countries, so it is paged
+	local pageIndex = 0
+	local visibleTags = {} -- tags on the currently-rendered list page (drives the cheap list signature)
 	local focusTag = ctx.data and ctx.data.focusTag
 	if focusTag and focusTag ~= mineTag then
 		-- Deep-link straight to the profile. renderProfile's guard handles a not-yet-synced or annexed tag,
@@ -185,6 +194,7 @@ function DiplomacyScreen.create(ctx)
 	end
 
 	local render, showList, showProfile
+	local listRebuild -- set by renderList; a list-mode refresh rebuilds only the rows (preserving the search box)
 
 	-- ---- remote fire helpers -------------------------------------------------
 	local function declareWar(tag)
@@ -423,23 +433,39 @@ function DiplomacyScreen.create(ctx)
 			return
 		end
 
-		local listContainer = Instance.new("Frame")
-		listContainer.Name = "List"
-		listContainer.Size = UDim2.fromScale(1, 0)
-		listContainer.AutomaticSize = Enum.AutomaticSize.Y
-		listContainer.BackgroundTransparency = 1
-		listContainer.LayoutOrder = 1
-		local listLayout = Instance.new("UIListLayout")
-		listLayout.SortOrder = Enum.SortOrder.LayoutOrder
-		listLayout.Padding = UDim.new(0, 4)
-		listLayout.Parent = listContainer
+		local rebuild
 
-		local function rebuild()
-			for _, ch in listContainer:GetChildren() do
+		makeSearchBox(body, "Search nations\u{2026}", listQuery, function(text)
+			listQuery = text
+			pageIndex = 0 -- a new filter starts back on page 1
+			rebuild()
+		end)
+
+		-- Controls + the current page of rows are rebuilt together on every page / size / search change
+		-- (cheap: a few buttons + at most `pageSize` rows). Only ONE page is ever built, so 700+ nations never
+		-- freeze the window.
+		local dyn = Instance.new("Frame")
+		dyn.Name = "ListPaged"
+		dyn.Size = UDim2.fromScale(1, 0)
+		dyn.AutomaticSize = Enum.AutomaticSize.Y
+		dyn.BackgroundTransparency = 1
+		dyn.LayoutOrder = 1
+		local dynLayout = Instance.new("UIListLayout")
+		dynLayout.SortOrder = Enum.SortOrder.LayoutOrder
+		dynLayout.Padding = UDim.new(0, 8)
+		dynLayout.Parent = dyn
+		dyn.Parent = body
+
+		rebuild = function()
+			if not dyn.Parent then
+				return
+			end
+			for _, ch in dyn:GetChildren() do
 				if ch:IsA("GuiObject") then
 					ch:Destroy()
 				end
 			end
+
 			local q = listQuery:lower()
 			local entries = {}
 			for tag in pairs(cache.allCountries()) do
@@ -453,24 +479,114 @@ function DiplomacyScreen.create(ctx)
 			table.sort(entries, function(a, b)
 				return a.name < b.name
 			end)
-			if #entries == 0 then
-				ScreenKit.note(listContainer, "No nations match your search.", 1)
+			local total = #entries
+			local pages = math.max(1, math.ceil(total / pageSize))
+			pageIndex = math.clamp(pageIndex, 0, pages - 1)
+
+			-- Controls row: [10][25][50]  [<]  Page x / y  N  [>]
+			local controls = Instance.new("Frame")
+			controls.Name = "Pager"
+			controls.Size = UDim2.fromScale(1, 0)
+			controls.AutomaticSize = Enum.AutomaticSize.Y
+			controls.BackgroundTransparency = 1
+			controls.LayoutOrder = 0
+			local cl = Instance.new("UIListLayout")
+			cl.FillDirection = Enum.FillDirection.Horizontal
+			cl.VerticalAlignment = Enum.VerticalAlignment.Center
+			cl.SortOrder = Enum.SortOrder.LayoutOrder
+			cl.Padding = UDim.new(0, 6)
+			cl.Parent = controls
+			controls.Parent = dyn
+
+			local ord = 0
+			for _, sz in ipairs({ 10, 25, 50 }) do
+				ord += 1
+				Button.create({
+					parent = controls,
+					variant = (sz == pageSize) and "primary" or "secondary",
+					text = tostring(sz),
+					size = "sm",
+					layoutOrder = ord,
+					onClick = function()
+						pageSize = sz
+						pageIndex = 0
+						rebuild()
+					end,
+				})
+			end
+			ord += 1
+			Button.create({
+				parent = controls,
+				variant = "ghost",
+				text = "\u{2039}",
+				size = "sm",
+				layoutOrder = ord,
+				disabled = pageIndex <= 0,
+				onClick = function()
+					pageIndex = math.max(0, pageIndex - 1)
+					rebuild()
+				end,
+			})
+			ord += 1
+			local pageLbl = Instance.new("TextLabel")
+			pageLbl.Name = "PageInfo"
+			pageLbl.AutomaticSize = Enum.AutomaticSize.XY
+			pageLbl.Size = UDim2.fromOffset(0, 0)
+			pageLbl.BackgroundTransparency = 1
+			pageLbl.Text = string.format("Page %d / %d   \u{00B7}   %d", pageIndex + 1, pages, total)
+			pageLbl.TextColor3 = Colors.TextSecondary
+			pageLbl.LayoutOrder = ord
+			Typography.apply(pageLbl, "caption")
+			local lblPad = Instance.new("UIPadding")
+			lblPad.PaddingLeft = UDim.new(0, 6)
+			lblPad.PaddingRight = UDim.new(0, 6)
+			lblPad.Parent = pageLbl
+			pageLbl.Parent = controls
+			ord += 1
+			Button.create({
+				parent = controls,
+				variant = "ghost",
+				text = "\u{203A}",
+				size = "sm",
+				layoutOrder = ord,
+				disabled = pageIndex >= pages - 1,
+				onClick = function()
+					pageIndex = math.min(pages - 1, pageIndex + 1)
+					rebuild()
+				end,
+			})
+
+			-- Rows for the CURRENT page only.
+			visibleTags = {}
+			if total == 0 then
+				ScreenKit.note(dyn, "No nations match your search.", 1)
 				return
 			end
-			local order = 0
-			for _, e in ipairs(entries) do
-				order += 1
-				listRow(listContainer, e.tag, order)
+			local listContainer = Instance.new("Frame")
+			listContainer.Name = "List"
+			listContainer.Size = UDim2.fromScale(1, 0)
+			listContainer.AutomaticSize = Enum.AutomaticSize.Y
+			listContainer.BackgroundTransparency = 1
+			listContainer.LayoutOrder = 1
+			local listLayout = Instance.new("UIListLayout")
+			listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			listLayout.Padding = UDim.new(0, 4)
+			listLayout.Parent = listContainer
+			listContainer.Parent = dyn
+
+			local startI = pageIndex * pageSize
+			local rowOrder = 0
+			for idx = startI + 1, math.min(startI + pageSize, total) do
+				rowOrder += 1
+				local e = entries[idx]
+				visibleTags[#visibleTags + 1] = e.tag
+				listRow(listContainer, e.tag, rowOrder)
 			end
 		end
-
-		makeSearchBox(body, "Search nations…", listQuery, function(text)
-			listQuery = text
-			rebuild()
-		end)
-		listContainer.Parent = body
+		listRebuild = rebuild
 		rebuild()
 	end
+
 
 	-- ---- profile mode --------------------------------------------------------
 	local function renderProfile(body)
@@ -1117,14 +1233,23 @@ function DiplomacyScreen.create(ctx)
 				end
 			end
 		else
-			for tag in pairs(cache.allCountries()) do
-				if tag ~= mineTag then
-					parts[#parts + 1] = tag
-						.. ":"
-						.. relationStatus(cache, mineTag, tag)
-						.. ":"
-						.. tostring(opinionOf(tag))
-				end
+			-- Cheap PAGED list signature: page state + total country count (detects add/remove) + only the
+			-- VISIBLE rows relation/opinion. An off-page country changing no longer re-renders the list, and
+			-- relationStatus runs at most `pageSize` times per refresh instead of 700x.
+			local n = 0
+			for _ in pairs(cache.allCountries()) do
+				n += 1
+			end
+			parts[#parts + 1] = "pg:"
+				.. tostring(pageIndex)
+				.. "/"
+				.. tostring(pageSize)
+				.. "/"
+				.. listQuery
+				.. "/"
+				.. tostring(n)
+			for _, tag in ipairs(visibleTags) do
+				parts[#parts + 1] = tag .. ":" .. relationStatus(cache, mineTag, tag) .. ":" .. tostring(opinionOf(tag)) .. ":" .. nameOf(cache, tag)
 			end
 		end
 		table.sort(parts)
@@ -1147,16 +1272,29 @@ function DiplomacyScreen.create(ctx)
 				return
 			end
 			lastSig = sig
-			render()
+			-- List-mode refresh: rebuild only the rows (preserves the search box + its focus/caret) instead of a
+			-- full clearBody()/renderList() teardown. Profile mode still does a full render.
+			if mode == "list" and listRebuild then
+				listRebuild()
+			else
+				render()
+			end
 		end)
 	end
 
 	local mine = mineTag and cache.getCountry(mineTag)
-	handle = ScreenKit.open(ctx, {
-		name = "DiplomacyScreen",
-		title = "Diplomacy",
-		subtitle = (mine and (mine.displayName or mineTag)) or "Realm",
-	})
+	if embedContainer then
+		-- Embedded in a RealmScreen tab pane: no window chrome. List->profile navigation is internal, and
+		-- ctx.data.focusTag still deep-links straight to a profile. Just render into a scroll body.
+		local b = ScreenKit.body(embedContainer)
+		handle = { root = embedContainer, body = b.body, clearBody = b.clearBody, destroy = function() end }
+	else
+		handle = ScreenKit.open(ctx, {
+			name = "DiplomacyScreen",
+			title = "Diplomacy",
+			subtitle = (mine and (mine.displayName or mineTag)) or "Realm",
+		})
+	end
 	render()
 	lastSig = contentSignature()
 
@@ -1178,6 +1316,16 @@ function DiplomacyScreen.create(ctx)
 			handle.destroy()
 		end,
 	}
+end
+
+function DiplomacyScreen.create(ctx)
+	return build(ctx, nil)
+end
+
+-- Embed inside `container` (a RealmScreen tab pane) with no window chrome. Returns { root, destroy };
+-- ctx.data.focusTag still deep-links to a profile. No setPane -- list/profile nav is internal.
+function DiplomacyScreen.mount(container, ctx)
+	return build(ctx, container)
 end
 
 return DiplomacyScreen

@@ -25,7 +25,9 @@ function Responsive.computeScale()
 	end
 	local base = math.clamp(h / REF_HEIGHT, MIN_SCALE, MAX_SCALE)
 	if Responsive.isTouch() then
-		base = base * 1.15
+		-- D1: touch screens are small AND the landscape lock makes viewport.Y short, shrinking text/targets.
+		-- Bump harder + floor so the HUD stays legible on phones. Tune on-device.
+		base = math.clamp(base * 1.25, 0.9, MAX_SCALE)
 	end
 	return base
 end

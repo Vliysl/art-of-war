@@ -7,10 +7,13 @@ local Hud = require(UI.Hud)
 local Registries = require(UI.Registries)
 local ProvinceTooltip = require(UI.Components.ProvinceTooltip)
 local Platform = require(ArtOfWar.Modules.Platform)
+local CameraController = require(ArtOfWar.Modules.CameraController)
 local Button = require(UI.Components.Button)
+local RadialMenu = require(UI.RadialMenu)
 local PeaceInfo = require(UI.PeaceInfo)
 local WorldConstants = require(ArtOfWar.Shared.WorldConstants)
 local SeaNodes = require(ArtOfWar.Shared.SeaNodes)
+local Technologies = require(ArtOfWar.Data.Technologies)
 
 -- Sea targeting (C9): a hovered water point snaps to the nearest baked sea node within this
 -- many studs (mirrors ProvinceInteraction's click-side SEA_TARGET_MAX_DIST).
@@ -180,6 +183,24 @@ function HudWiring.start(modules)
 		return totals
 	end
 
+	-- Active tech + progress %, for the Research button tooltip (e.g. "Field Howitzers  62%").
+	local function researchLabel(c)
+		local rec = c.research
+		local techId = rec and rec.active
+		if not techId then
+			return "No active research"
+		end
+		local def = Technologies[techId]
+		local name = (def and def.name) or techId
+		local cost = (def and def.cost) or 0
+		local prog = (rec.progress and rec.progress[techId]) or 0
+		if cost <= 0 then
+			return name .. "  100%"
+		end
+		local pct = math.clamp(math.floor(prog / cost * 100 + 0.5), 0, 100)
+		return string.format("%s  %d%%", name, pct)
+	end
+
 	local function normalizeCountry(tag)
 		local c = ClientStateCache.getCountry(tag)
 		if not c then
@@ -199,6 +220,9 @@ function HudWiring.start(modules)
 				pp = abbreviate(c.politicalPower or 0) or "0",
 				stability = signed(c.stability),
 				legitimacy = tostring(math.floor((c.legitimacy or 0) + 0.5)),
+				prestige = tostring(math.floor((c.prestige or 0) + 0.5)),
+				manpowerCap = c.manpowerCap and abbreviate(c.manpowerCap) or nil,
+				research = researchLabel(c),
 			},
 		}
 	end
@@ -428,8 +452,11 @@ function HudWiring.start(modules)
 	-- Display-equality guard: updating the CountryBar only matters when a value it actually shows
 	-- changed. The server re-sends the country record on every economy/army tick, so without this the
 	-- bar would update every frame even when nothing visible moved.
+	-- Keys the CountryBar shows: treasury (+income delta) + manpower on the big buttons, and PP / stability /
+	-- legitimacy / prestige as the right-side stat readouts. A shown value missing here would render once but
+	-- never live-update (sameCountryData would treat ticks changing only it as "no change").
 	local RESOURCE_KEYS =
-		{ "treasury", "treasuryDelta", "treasuryDeltaNum", "manpower", "pp", "stability", "legitimacy" }
+		{ "treasury", "treasuryDelta", "treasuryDeltaNum", "manpower", "manpowerCap", "research", "pp", "stability", "legitimacy", "prestige" }
 	local lastCountryData = nil
 	local function sameCountryData(a, b)
 		if a == nil or b == nil then
@@ -693,11 +720,13 @@ function HudWiring.start(modules)
 	local WaterBodies = modules.WaterBodies
 	local tooltip = ProvinceTooltip.create(Hud.getLayer("Tooltips"))
 
+	local groupStripMod = nil -- set below when the army-group strip inits; drives the touch Hide/Show Groups button
 	-- Army-group card strip (bottom-center HUD). Owns all group commands; needs fire/requestTarget/cache
 	-- and a live tag getter (claimedTag is reassigned on claim/switch, so pass a closure, not the value).
 	if WorldConstants.EnableArmyGroups and WorldConstants.EnableGroupCards then
 		local okStrip, ArmyGroupStrip = pcall(require, UI:WaitForChild("ArmyGroupStrip"))
 		if okStrip and ArmyGroupStrip and ArmyGroupStrip.init then
+			groupStripMod = ArmyGroupStrip
 			pcall(ArmyGroupStrip.init, {
 				parent = Hud.getLayer("Hud"),
 				cache = ClientStateCache,
@@ -1136,6 +1165,57 @@ function HudWiring.start(modules)
 		end
 	end
 
+	-- C1: long-press on the map with an army selected opens a radial order menu at the finger (touch). Flag-gated.
+	if WorldConstants.EnableRadialOrders and ProvinceInteraction.onLongPress then
+		ProvinceInteraction.onLongPress(function(screenPos)
+			local sel = selectedArmies()
+			if not sel or #sel == 0 then
+				return false
+			end
+			-- Aggregate current state across the selection (mirrors ArmyPanel): all reinforcing? all auto-capturing?
+			local reAllOn, capAllOn = true, true
+			for _, id in ipairs(sel) do
+				local a = ClientStateCache.getArmy(id)
+				if a then
+					if a.reinforceEnabled == false then
+						reAllOn = false
+					end
+					if not a.autoCapture then
+						capAllOn = false
+					end
+				end
+			end
+			RadialMenu.show(screenPos, {
+				{
+					text = "Halt",
+					onSelect = function()
+						for _, id in ipairs(sel) do
+							fire("CancelMove", id)
+						end
+					end,
+				},
+				{
+					text = reAllOn and "Reinforce Off" or "Reinforce On",
+					onSelect = function()
+						for _, id in ipairs(sel) do
+							fire("SetReinforce", id, not reAllOn)
+						end
+					end,
+				},
+				{
+					text = capAllOn and "Auto-Cap Off" or "Auto-Cap On",
+					onSelect = function()
+						for _, id in ipairs(sel) do
+							fire("SetAutoCapture", id, not capAllOn)
+						end
+					end,
+				},
+				{ text = "Deselect", onSelect = doDeselect },
+			})
+			return true
+		end)
+	end
+
 	-- Ctrl+M toggles all UI for clean screenshots: every enabled 2D ScreenGui plus the world-space
 	-- overlays (army banners, capture/battle bars, capital markers). Snapshot-based -- re-showing only
 	-- re-enables what we hid, never Guis that were already off.
@@ -1190,70 +1270,147 @@ function HudWiring.start(modules)
 		if input.KeyCode == Enum.KeyCode.X then
 			doDeselect()
 		end
+		if input.KeyCode == Enum.KeyCode.G and ArmyView and ArmyView.selectOwnedArmiesOnScreen then
+			ArmyView.selectOwnedArmiesOnScreen() -- B2: select all my armies on screen (Conquerors G)
+		end
 	end)
 
-	-- Touch has no keyboard: an always-available on-screen Deselect button mirrors the X key. (A no-op
-	-- when nothing is selected; needed because with units selected a tap on land issues a move, so there
-	-- is otherwise no way to deselect without tapping empty water.)
+	-- Touch on-screen controls (left-edge column): Deselect, Select Army (B2), Box Select toggle + its
+	-- Units/Provinces target sub-toggle (A3). Touch has no keyboard/modifiers, so these mirror X / G / Alt.
 	if Platform.isTouch then
 		local hudLayer = Hud.getLayer("Hud")
 		if hudLayer then
-			local deselectBtn = Button.create({
+			local COL_X, COL_BOTTOM, ROW_GAP = 16, 124, 56
+			local function place(btn, row)
+				-- Bottom-anchored, growing UP above the country bar: clears the settings gear (top-left) and never
+				-- overlaps the country bar on short landscape phones; ROW_GAP=56 leaves ~12px between 44px buttons.
+				btn.AnchorPoint = Vector2.new(0, 1)
+				btn.Position = UDim2.new(0, COL_X, 1, -(COL_BOTTOM + row * ROW_GAP))
+				btn:SetAttribute("AoWInputSink", true)
+			end
+			local deselectBtn = Button.create({ parent = hudLayer, variant = "secondary", text = "Deselect", onClick = doDeselect })
+			deselectBtn.Name = "TouchDeselect"
+			place(deselectBtn, 0)
+			-- B2: one-tap select-all-my-armies-on-screen (no drag).
+			local nearbyBtn = Button.create({
 				parent = hudLayer,
 				variant = "secondary",
-				text = "Deselect",
-				onClick = doDeselect,
+				text = "Select Army",
+				onClick = function()
+					if ArmyView and ArmyView.selectOwnedArmiesOnScreen then
+						ArmyView.selectOwnedArmiesOnScreen()
+					end
+				end,
 			})
-			deselectBtn.Name = "TouchDeselect"
-			deselectBtn.AnchorPoint = Vector2.new(0, 0)
-			deselectBtn.Position = UDim2.fromOffset(68, 16) -- top-left, just right of the settings gear
-			deselectBtn:SetAttribute("AoWInputSink", true)
-			-- Touch has no Ctrl/Shift: an on-screen toggle makes plain taps add/remove provinces
-			-- from the multi-selection (C6). Turning it off clears the selection.
-			local multiBtn = nil
+			nearbyBtn.Name = "TouchSelectNearby"
+			place(nearbyBtn, 1)
+			-- Box-select (marquee) toggle + its Units/Provinces target sub-toggle.
+			local multiBtn, targetBtn = nil, nil
 			local function setMultiBtnText(on)
-				-- Button.create's visible text lives on the child "Label" (the TextButton's own
-				-- Text is intentionally empty).
 				local lbl = multiBtn and multiBtn:FindFirstChild("Label")
 				if lbl then
-					lbl.Text = on and "Multi: On" or "Multi: Off"
+					lbl.Text = on and "Box Select: On" or "Box Select: Off"
+				end
+			end
+			local function setTargetBtnText()
+				local lbl = targetBtn and targetBtn:FindFirstChild("Label")
+				if lbl and ProvinceInteraction.getDragSelectTarget then
+					lbl.Text = ProvinceInteraction.getDragSelectTarget() == "provinces" and "Box: Provinces" or "Box: Units"
 				end
 			end
 			if WorldConstants.EnableMultiProvinceActions and ProvinceInteraction.setMultiSelectMode then
 				multiBtn = Button.create({
 					parent = hudLayer,
 					variant = "secondary",
-					text = "Multi: Off",
+					text = "Box Select: Off",
 					onClick = function()
 						local on = not ProvinceInteraction.getMultiSelectMode()
 						ProvinceInteraction.setMultiSelectMode(on)
 						setMultiBtnText(on)
+						if targetBtn then
+							targetBtn.Visible = on
+						end
 					end,
 				})
 				multiBtn.Name = "TouchMultiSelect"
-				multiBtn.AnchorPoint = Vector2.new(0, 0)
-				multiBtn.Position = UDim2.fromOffset(172, 16) -- right of the Deselect button
-				multiBtn:SetAttribute("AoWInputSink", true)
+				place(multiBtn, 2)
+				targetBtn = Button.create({
+					parent = hudLayer,
+					variant = "secondary",
+					text = "Box: Units",
+					onClick = function()
+						if not ProvinceInteraction.getDragSelectTarget then
+							return
+						end
+						local nextT = ProvinceInteraction.getDragSelectTarget() == "provinces" and "units" or "provinces"
+						ProvinceInteraction.setDragSelectTarget(nextT)
+						setTargetBtnText()
+					end,
+				})
+				targetBtn.Name = "TouchDragTarget"
+				place(targetBtn, 3)
+				targetBtn.Visible = false -- only meaningful while box-select is on
+				setTargetBtnText()
+			end
+			-- Hide/show the army-group card strip (it can occlude the map on small screens).
+			if groupStripMod and groupStripMod.setHidden then
+				local groupsBtn
+				groupsBtn = Button.create({
+					parent = hudLayer,
+					variant = "secondary",
+					text = "Hide Groups",
+					onClick = function()
+						local hide = not (groupStripMod.isHidden and groupStripMod.isHidden())
+						groupStripMod.setHidden(hide)
+						local lbl = groupsBtn:FindFirstChild("Label")
+						if lbl then
+							lbl.Text = hide and "Show Groups" or "Hide Groups"
+						end
+					end,
+				})
+				groupsBtn.Name = "TouchGroupsToggle"
+				place(groupsBtn, 4)
 			end
 			-- Only meaningful in command mode -- field mode (walking the ruler) has no map selection.
 			local function syncDeselectVisible()
 				local visible = (MapModeController == nil) or (MapModeController.current() == "command")
 				deselectBtn.Visible = visible
+				nearbyBtn.Visible = visible
 				if multiBtn then
 					multiBtn.Visible = visible
-					if
-						not visible
-						and ProvinceInteraction.getMultiSelectMode
-						and ProvinceInteraction.getMultiSelectMode()
-					then
-						ProvinceInteraction.setMultiSelectMode(false)
-						setMultiBtnText(false)
+					if not visible then
+						if ProvinceInteraction.getMultiSelectMode and ProvinceInteraction.getMultiSelectMode() then
+							ProvinceInteraction.setMultiSelectMode(false)
+							setMultiBtnText(false)
+						end
+						if targetBtn then
+							targetBtn.Visible = false
+						end
 					end
 				end
 			end
 			syncDeselectVisible()
 			if MapModeController and MapModeController.onChange then
 				MapModeController.onChange(syncDeselectVisible)
+			end
+			-- D5: on-screen zoom +/- (pinch is otherwise the only zoom on touch).
+			if CameraController and CameraController.setZoom and CameraController.getZoom then
+				local function zoomBtn(sym, factor, y)
+					local b = Button.create({
+						parent = hudLayer,
+						variant = "secondary",
+						text = sym,
+						onClick = function()
+							CameraController.setZoom(CameraController.getZoom() * factor)
+						end,
+					})
+					b.Name = "TouchZoom" .. sym
+					b.AnchorPoint = Vector2.new(1, 1)
+					b.Position = UDim2.new(1, -16, 1, -y)
+					b:SetAttribute("AoWInputSink", true)
+				end
+				zoomBtn("+", 0.8, 180) -- bottom-right, above the "-" and clear of the top-right toasts
+				zoomBtn("-", 1.25, 124)
 			end
 		end
 	end

@@ -4,8 +4,9 @@
 -- A themed window on the (unchanged) DataEditorService command protocol. Tabs: Countries (create/edit
 -- definition fields), Provinces (virtualized list, owner + cores/claims chip editors), Identity
 -- (cultures/religions/ideologies/governments create/edit/delete), Formables (author custom formable /
--- releasable definitions). Shows only authoritative DEFINITION fields (no derived/runtime noise like
--- manpower). Remaining: the owner suite (Phase 6 -- province painting, named Save/Load map configs).
+-- releasable definitions), Saves (named Save/Load/Delete map configs), Access (grant/revoke), Logs. Shows
+-- only authoritative DEFINITION fields (no derived/runtime noise like manpower). Map painting (owner + the
+-- unified cores/defaultCores/claims paint tool) and named Save/Load configs are wired.
 -- Toggle with the backslash (\) key.
 
 local Players = game:GetService("Players")
@@ -262,18 +263,30 @@ local function openColorPicker(parentGui, initialRGB, onChange)
 			cb(rx, ry)
 		end
 		region.InputBegan:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			if
+				input.UserInputType == Enum.UserInputType.MouseButton1
+				or input.UserInputType == Enum.UserInputType.Touch
+			then
 				dragging = true
 				upd(input)
 			end
 		end)
 		region.InputChanged:Connect(function(input)
-			if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			if
+				dragging
+				and (
+					input.UserInputType == Enum.UserInputType.MouseMovement
+					or input.UserInputType == Enum.UserInputType.Touch
+				)
+			then
 				upd(input)
 			end
 		end)
 		region.InputEnded:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			if
+				input.UserInputType == Enum.UserInputType.MouseButton1
+				or input.UserInputType == Enum.UserInputType.Touch
+			then
 				dragging = false
 			end
 		end)
@@ -352,11 +365,15 @@ local formablesConn -- live-refresh subscription for the Formables tab (disconne
 local setDirty -- fwd (defined once the header marker exists)
 local function markDirty()
 	state.dirty = true
-	if setDirty then setDirty() end
+	if setDirty then
+		setDirty()
+	end
 end
 local function clearDirty()
 	state.dirty = false
-	if setDirty then setDirty() end
+	if setDirty then
+		setDirty()
+	end
 end
 
 -- Search cache: precompute one lowercased "id + display name" string per country/province ONCE when a
@@ -383,7 +400,9 @@ local function frame(props)
 	f.BackgroundTransparency = props.transparent and 1 or 0
 	f.Size = props.size or UDim2.fromScale(1, 1)
 	f.Position = props.position or UDim2.new()
-	if props.anchor then f.AnchorPoint = props.anchor end
+	if props.anchor then
+		f.AnchorPoint = props.anchor
+	end
 	f.Parent = props.parent
 	return f
 end
@@ -515,8 +534,10 @@ do
 		startPos = root.Position
 	end
 	header.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
+		if
+			input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch
+		then
 			beginDrag(input)
 			input.Changed:Connect(function()
 				if input.UserInputState == Enum.UserInputState.End then
@@ -526,14 +547,16 @@ do
 		end
 	end)
 	UserInputService.InputChanged:Connect(function(input)
-		if not dragging then return end
-		if input.UserInputType == Enum.UserInputType.MouseMovement
-			or input.UserInputType == Enum.UserInputType.Touch then
+		if not dragging then
+			return
+		end
+		if
+			input.UserInputType == Enum.UserInputType.MouseMovement
+			or input.UserInputType == Enum.UserInputType.Touch
+		then
 			local delta = input.Position - dragStart
-			root.Position = UDim2.new(
-				startPos.X.Scale, startPos.X.Offset + delta.X,
-				startPos.Y.Scale, startPos.Y.Offset + delta.Y
-			)
+			root.Position =
+				UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
 		end
 	end)
 end
@@ -548,17 +571,47 @@ local TABS = {
 	{ key = "logs", label = "Logs" },
 	{ key = "access", label = "Access" },
 }
-local tabRow = frame({ parent = root, transparent = true, size = UDim2.new(1, 0, 0, 34), position = UDim2.fromOffset(0, 40) })
+local tabRow =
+	frame({ parent = root, transparent = true, size = UDim2.new(1, 0, 0, 34), position = UDim2.fromOffset(0, 40) })
 local tabButtons = {}
 
 -- body (leaves room for the global action footer at the bottom)
-local body = frame({ parent = root, transparent = true, size = UDim2.new(1, -20, 1, -124), position = UDim2.fromOffset(10, 78) })
+local body =
+	frame({ parent = root, transparent = true, size = UDim2.new(1, -20, 1, -124), position = UDim2.fromOffset(10, 78) })
 body.Name = "Body"
 
 local render -- fwd
+local ensureLoaded -- fwd (render's load-failed state offers a Retry that re-runs it)
 local applySnapshot -- fwd (set snapshot + status + re-render; used by loadState / reload / undo / redo)
 local paintInteraction -- ProvinceInteraction ref (map-click select/paint + bulk assign), set at module scope below
-local bulkApplyBtn, bulkCountLabel -- Provinces-tab bulk-assign controls, kept live by the multi-select listener
+local bulkApplyBtn -- Provinces-tab Apply-selected button, kept live (label + enabled) by the multi-select listener
+local paintUpdate -- Provinces-tab paint-status refresher (updates the live hint + membership count from the map-click handler)
+
+-- Map cores/defaultCores/claims paint targets to their province-record array field ("owner" -> nil = single value).
+local function paintFieldForTarget(target)
+	return (target == "core" and "cores")
+		or (target == "defaultCore" and "defaultCores")
+		or (target == "claim" and "claims")
+		or nil
+end
+
+-- Transient tint flash on a just-painted province (green add / red remove); auto-clears after a moment.
+local function flashPaint(part, mode)
+	if not part then
+		return
+	end
+	local hl = Instance.new("Highlight")
+	hl.FillColor = (mode == "remove") and Colors.Negative or Colors.Positive
+	hl.OutlineColor = hl.FillColor
+	hl.FillTransparency = 0.45
+	hl.OutlineTransparency = 0
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Adornee = part
+	hl.Parent = workspace.CurrentCamera
+	task.delay(0.6, function()
+		hl:Destroy()
+	end)
+end
 
 local function selectTab(key)
 	state.tab = key
@@ -567,7 +620,9 @@ local function selectTab(key)
 	for k, b in pairs(tabButtons) do
 		local labelChild = b:FindFirstChildWhichIsA("TextLabel")
 		b.BackgroundColor3 = (k == key) and Colors.SurfaceOverlay or Colors.SurfaceElevated
-		if labelChild then labelChild.TextColor3 = (k == key) and Colors.Accent or Colors.TextSecondary end
+		if labelChild then
+			labelChild.TextColor3 = (k == key) and Colors.Accent or Colors.TextSecondary
+		end
 	end
 	render()
 end
@@ -585,7 +640,9 @@ do
 		b.Parent = tabRow
 		local lbl = label(b, def.label, "label", Colors.TextSecondary)
 		lbl.TextXAlignment = Enum.TextXAlignment.Center
-		b.MouseButton1Click:Connect(function() selectTab(def.key) end)
+		b.MouseButton1Click:Connect(function()
+			selectTab(def.key)
+		end)
 		tabButtons[def.key] = b
 		x += 128
 	end
@@ -594,7 +651,8 @@ end
 -- ─────────────────────────── global action footer (Save / Reload / Undo / Redo) ───────────────────────────
 -- The everyday editor operations. Save persists to the DataStore (publishes to the live map); Reload pulls
 -- a fresh server snapshot; Undo/Redo return an updated snapshot the server rebuilds from its history.
-local footer = frame({ parent = root, transparent = true, size = UDim2.new(1, -20, 0, 30), position = UDim2.new(0, 10, 1, -38) })
+local footer =
+	frame({ parent = root, transparent = true, size = UDim2.new(1, -20, 0, 30), position = UDim2.new(0, 10, 1, -38) })
 -- Undo/Redo depth labels: the undo/redo command responses carry historyDepth/redoDepth so the buttons can
 -- read "Undo (3)". applyDepths() (defined once both buttons exist) is called from applySnapshot too.
 local applyDepths
@@ -617,7 +675,9 @@ do
 				closeArmed = false
 				closeBtn.Text = "Close (\\)"
 				reloadArmed = false
-				if reloadBtn then reloadBtn.Text = "Reload" end
+				if reloadBtn then
+					reloadBtn.Text = "Reload"
+				end
 				setStatus((type(res) == "table" and res.message) or "Saved", Colors.Positive)
 			else
 				setStatus("Save failed: " .. tostring(err), Colors.Negative)
@@ -627,41 +687,44 @@ do
 	saveBtn.Position = UDim2.fromOffset(x, 0)
 	x += 164
 
-		-- Push to Live: publishes the editor world to the MAIN GAME (danger; two-click confirm). Save only
-		-- commits to the editor world; this is the explicit publish step. Anchored right, clear of the cluster.
-		local pushArmed = false
-		local pushBtn
-		pushBtn = Button.create({
-			parent = footer,
-			variant = "danger",
-			text = "Push to Live",
-			width = 132,
-			onClick = function()
-				if state.dirty then
-					pushArmed = false
-					pushBtn.Text = "Push to Live"
-					setStatus("You have unsaved edits - click Save first, then Push to Live.", Colors.Negative)
-					return
-				end
-				if not pushArmed then
-					pushArmed = true
-					pushBtn.Text = "Publish to LIVE game?"
-					setStatus("This publishes the editor map to the MAIN GAME (applies on its next restart). Click again to confirm.", Colors.Negative)
-					return
-				end
+	-- Push to Live: publishes the editor world to the MAIN GAME (danger; two-click confirm). Save only
+	-- commits to the editor world; this is the explicit publish step. Anchored right, clear of the cluster.
+	local pushArmed = false
+	local pushBtn
+	pushBtn = Button.create({
+		parent = footer,
+		variant = "danger",
+		text = "Push to Live",
+		width = 132,
+		onClick = function()
+			if state.dirty then
 				pushArmed = false
 				pushBtn.Text = "Push to Live"
-				setStatus("Pushing to live...", Colors.TextSecondary)
-				local res, err = editorCall("pushToLive")
-				if res and (type(res) ~= "table" or res.ok ~= false) then
-					setStatus((type(res) == "table" and res.message) or "Pushed to live", Colors.Positive)
-				else
-					setStatus("Push failed: " .. tostring((type(res) == "table" and res.error) or err), Colors.Negative)
-				end
-			end,
-		})
-		pushBtn.AnchorPoint = Vector2.new(1, 0)
-		pushBtn.Position = UDim2.new(1, 0, 0, 0)
+				setStatus("You have unsaved edits - click Save first, then Push to Live.", Colors.Negative)
+				return
+			end
+			if not pushArmed then
+				pushArmed = true
+				pushBtn.Text = "Publish to LIVE game?"
+				setStatus(
+					"This publishes the editor map to the MAIN GAME (applies on its next restart). Click again to confirm.",
+					Colors.Negative
+				)
+				return
+			end
+			pushArmed = false
+			pushBtn.Text = "Push to Live"
+			setStatus("Pushing to live...", Colors.TextSecondary)
+			local res, err = editorCall("pushToLive")
+			if res and (type(res) ~= "table" or res.ok ~= false) then
+				setStatus((type(res) == "table" and res.message) or "Pushed to live", Colors.Positive)
+			else
+				setStatus("Push failed: " .. tostring((type(res) == "table" and res.error) or err), Colors.Negative)
+			end
+		end,
+	})
+	pushBtn.AnchorPoint = Vector2.new(1, 0)
+	pushBtn.Position = UDim2.new(1, 0, 0, 0)
 
 	reloadBtn = Button.create({
 		parent = footer,
@@ -738,10 +801,12 @@ do
 		local ubtn = undoBtn:FindFirstChildWhichIsA("TextLabel")
 		local rbtn = redoBtn:FindFirstChildWhichIsA("TextLabel")
 		if ubtn then
-			ubtn.Text = ud and (ul and string.format("Undo %s (%d)", tostring(ul), ud) or ("Undo (" .. ud .. ")")) or "Undo"
+			ubtn.Text = ud and (ul and string.format("Undo %s (%d)", tostring(ul), ud) or ("Undo (" .. ud .. ")"))
+				or "Undo"
 		end
 		if rbtn then
-			rbtn.Text = rd and (rl and string.format("Redo %s (%d)", tostring(rl), rd) or ("Redo (" .. rd .. ")")) or "Redo"
+			rbtn.Text = rd and (rl and string.format("Redo %s (%d)", tostring(rl), rd) or ("Redo (" .. rd .. ")"))
+				or "Redo"
 		end
 	end
 end
@@ -752,8 +817,32 @@ local function sortedKeys(dict)
 	for k in pairs(dict or {}) do
 		out[#out + 1] = k
 	end
-	table.sort(out, function(a, b) return tostring(a) < tostring(b) end)
+	table.sort(out, function(a, b)
+		return tostring(a) < tostring(b)
+	end)
 	return out
+end
+
+-- Memoized sorted country-tag list. The tag SET only changes on add/remove country, so re-sorting the ~180
+-- tags on every dropdown build / province selection is wasted work. Keyed on the snapshot.countries table
+-- identity + count (so a new snapshot or an add/remove rebuilds); invalidateCountryTags() closes the rare
+-- add-then-remove-to-equal-count gap by being called at the two client-side country-set mutation sites.
+local countryTagsMemo = { src = nil, n = -1, list = nil }
+local function invalidateCountryTags()
+	countryTagsMemo.src = nil
+end
+local function sortedCountryTags()
+	local dict = (state.snapshot and state.snapshot.countries) or {}
+	local n = 0
+	for _ in pairs(dict) do
+		n += 1
+	end
+	if countryTagsMemo.src == dict and countryTagsMemo.n == n and countryTagsMemo.list then
+		return countryTagsMemo.list
+	end
+	local list = sortedKeys(dict)
+	countryTagsMemo.src, countryTagsMemo.n, countryTagsMemo.list = dict, n, list
+	return list
 end
 
 -- Lightweight dropdown (no shared component exists). cfg: { parent, size, position, options[], value, onChange? }.
@@ -815,7 +904,9 @@ local function dropdown(cfg)
 		cs.Thickness = 1
 		cs.Parent = container
 		container.Destroying:Connect(function()
-			if catcher then catcher:Destroy() end
+			if catcher then
+				catcher:Destroy()
+			end
 		end)
 		openPopup = container
 
@@ -843,8 +934,12 @@ local function dropdown(cfg)
 		-- filter changes the row count. Prefer opening below; flip up only when the full list would clip the
 		-- bottom and it does fit above. `gui` is the already-laid-out ScreenGui (a fresh catcher reads size 0).
 		local screenH, screenW = gui.AbsoluteSize.Y, gui.AbsoluteSize.X
-		if screenH < 1 then screenH = 720 end
-		if screenW < 1 then screenW = 1280 end
+		if screenH < 1 then
+			screenH = 720
+		end
+		if screenW < 1 then
+			screenW = 1280
+		end
 		local maxH = listTop + MAX_ROWS * ROW_H
 		local openUp = (abs.Y + sz.Y + maxH > screenH) and (abs.Y - maxH >= 0)
 		local function place(totalH)
@@ -857,14 +952,18 @@ local function dropdown(cfg)
 		local emptyLbl
 		local function renderOptions(query)
 			for _, ch in popup:GetChildren() do
-				if ch:IsA("TextButton") then ch:Destroy() end
+				if ch:IsA("TextButton") then
+					ch:Destroy()
+				end
 			end
 			if query == "" then
 				matches = cfg.options
 			else
 				local q, tmp = string.lower(query), {}
 				for _, opt in ipairs(cfg.options) do
-					if string.lower(tostring(opt)):find(q, 1, true) then tmp[#tmp + 1] = opt end
+					if string.lower(tostring(opt)):find(q, 1, true) then
+						tmp[#tmp + 1] = opt
+					end
 				end
 				matches = tmp
 			end
@@ -885,7 +984,9 @@ local function dropdown(cfg)
 					current = opt
 					lbl.Text = opt
 					closePopup()
-					if cfg.onChange then cfg.onChange(opt) end
+					if cfg.onChange then
+						cfg.onChange(opt)
+					end
 				end)
 				ob.Parent = popup
 			end
@@ -911,28 +1012,41 @@ local function dropdown(cfg)
 
 		if useSearch then
 			searchBox:GetPropertyChangedSignal("Text"):Connect(function()
-				if container.Parent then renderOptions(searchBox.Text) end
+				if container.Parent then
+					renderOptions(searchBox.Text)
+				end
 			end)
 			searchBox.FocusLost:Connect(function(enterPressed)
 				-- Never close on a plain focus loss: clicking an option steals focus first and must still register.
-				if not enterPressed then return end
+				if not enterPressed then
+					return
+				end
 				if #matches > 0 and container.Parent then
 					local first = matches[1]
 					current = first
 					lbl.Text = first
 					closePopup()
-					if cfg.onChange then cfg.onChange(first) end
+					if cfg.onChange then
+						cfg.onChange(first)
+					end
 				end
 			end)
 			task.defer(function()
-				if searchBox and searchBox.Parent then searchBox:CaptureFocus() end
+				if searchBox and searchBox.Parent then
+					searchBox:CaptureFocus()
+				end
 			end)
 		end
 
 		renderOptions("")
 	end)
 
-	return { instance = btn, get = function() return current end }
+	return {
+		instance = btn,
+		get = function()
+			return current
+		end,
+	}
 end
 
 -- Editable set of tags shown as removable chips + a "+ add" dropdown of the remaining options.
@@ -952,6 +1066,10 @@ local function tagListEditor(parent, currentList, allTags)
 	for _, t in ipairs(currentList or {}) do
 		set[t] = true
 	end
+	-- Tracks whether the user actually edited this list, so the detail Save can send ONLY the arrays that
+	-- changed (a blind full-array send would clobber cores/claims painted on the same province via the map
+	-- tool since the pane opened -- the chip set is a stale snapshot captured at pane-open).
+	local dirty = false
 
 	local rebuild
 	local function chip(tag)
@@ -983,21 +1101,30 @@ local function tagListEditor(parent, currentList, allTags)
 		x.Parent = c
 		x.MouseButton1Click:Connect(function()
 			set[tag] = nil
+			dirty = true
 			rebuild()
 		end)
 	end
 
 	rebuild = function()
 		for _, ch in container:GetChildren() do
-			if ch:IsA("GuiObject") then ch:Destroy() end
+			if ch:IsA("GuiObject") then
+				ch:Destroy()
+			end
 		end
 		local tags = {}
-		for t in pairs(set) do tags[#tags + 1] = t end
+		for t in pairs(set) do
+			tags[#tags + 1] = t
+		end
 		table.sort(tags)
-		for _, t in ipairs(tags) do chip(t) end
+		for _, t in ipairs(tags) do
+			chip(t)
+		end
 		local avail = {}
 		for _, t in ipairs(allTags) do
-			if not set[t] then avail[#avail + 1] = t end
+			if not set[t] then
+				avail[#avail + 1] = t
+			end
 		end
 		if #avail > 0 then
 			dropdown({
@@ -1008,6 +1135,7 @@ local function tagListEditor(parent, currentList, allTags)
 				value = "+ add",
 				onChange = function(t)
 					set[t] = true
+					dirty = true
 					rebuild()
 				end,
 			})
@@ -1018,9 +1146,14 @@ local function tagListEditor(parent, currentList, allTags)
 	return {
 		get = function()
 			local out = {}
-			for t in pairs(set) do out[#out + 1] = t end
+			for t in pairs(set) do
+				out[#out + 1] = t
+			end
 			table.sort(out)
 			return out
+		end,
+		dirty = function()
+			return dirty
 		end,
 	}
 end
@@ -1031,7 +1164,12 @@ local function listColumn(cfg)
 	local col = frame({ parent = cfg.parent, transparent = true, size = UDim2.new(0, 300, 1, 0) })
 	local search = textbox(col, "Search…")
 	search.Size = UDim2.new(1, 0, 0, 28)
-	local holder = frame({ parent = col, color = Colors.SurfaceBase, size = UDim2.new(1, 0, 1, -34), position = UDim2.fromOffset(0, 34) })
+	local holder = frame({
+		parent = col,
+		color = Colors.SurfaceBase,
+		size = UDim2.new(1, 0, 1, -34),
+		position = UDim2.fromOffset(0, 34),
+	})
 	do
 		local s = Instance.new("UIStroke")
 		s.Color = Colors.BorderSubtle
@@ -1044,7 +1182,9 @@ local function listColumn(cfg)
 	vlist = VirtualList.create({
 		parent = holder,
 		rowHeight = cfg.rowHeight or 26,
-		getCount = function() return #keys end,
+		getCount = function()
+			return #keys
+		end,
 		createRow = function()
 			local row = Instance.new("TextButton")
 			row.AutoButtonColor = false
@@ -1057,7 +1197,14 @@ local function listColumn(cfg)
 			rl.Size = UDim2.new(1, -12, 1, 0)
 			row.MouseButton1Click:Connect(function()
 				local key = row:GetAttribute("key")
-				if key ~= nil then cfg.onSelect(key) end
+				if key ~= nil then
+					cfg.onSelect(key)
+					-- Re-bind the visible rows so the active-row highlight follows the new selection. Skip if
+					-- onSelect tore the list down via render() (holder detached) -- that path re-highlights itself.
+					if holder.Parent and vlist then
+						vlist.refresh()
+					end
+				end
 			end)
 			return row
 		end,
@@ -1065,7 +1212,14 @@ local function listColumn(cfg)
 			local key = keys[i]
 			row:SetAttribute("key", key)
 			local rl = row:FindFirstChildWhichIsA("TextLabel")
-			if rl then rl.Text = cfg.labelFor(key) end
+			if rl then
+				rl.Text = cfg.labelFor(key)
+			end
+			-- Highlight the row that matches the current selection (so the edited record stays findable in a
+			-- 5713-row virtualized list). Map-click selection re-renders and re-binds, so it highlights too.
+			local isSel = key ~= nil and key == state.selected
+			row.BackgroundColor3 = isSel and Colors.Accent or Colors.SurfaceElevated
+			row.BackgroundTransparency = isSel and 0.55 or 0.35
 		end,
 	})
 
@@ -1103,7 +1257,9 @@ local function sortedMatching(dict, query, keyToText, cache, filterFn, sortFn)
 			end
 		end
 	end
-	table.sort(out, sortFn or function(a, b) return tostring(a) < tostring(b) end)
+	table.sort(out, sortFn or function(a, b)
+		return tostring(a) < tostring(b)
+	end)
 	return out
 end
 
@@ -1117,6 +1273,7 @@ local function clearDetail(detail)
 	pad.PaddingLeft = UDim.new(0, 14)
 	pad.PaddingRight = UDim.new(0, 14)
 	pad.PaddingTop = UDim.new(0, 12)
+	pad.PaddingBottom = UDim.new(0, 12) -- keep the last row (Save/Delete) off the scroll canvas bottom edge
 	pad.Parent = detail
 	local layout = Instance.new("UIListLayout")
 	layout.Padding = UDim.new(0, 8)
@@ -1125,7 +1282,20 @@ local function clearDetail(detail)
 end
 
 local function makeDetailPane(columns)
-	local detail = frame({ parent = columns, color = Colors.SurfaceBase, size = UDim2.new(1, -312, 1, 0), position = UDim2.fromOffset(312, 0) })
+	-- A ScrollingFrame (not a plain Frame) so tall forms -- Formables' ~15 rows, or a province with many
+	-- core/claim chips -- scroll instead of overflowing the fixed-height window (Save/Delete stayed off-screen).
+	-- clearDetail parents a UIListLayout here, so AutomaticCanvasSize=Y sizes the canvas to the content.
+	local detail = Instance.new("ScrollingFrame")
+	detail.BackgroundColor3 = Colors.SurfaceBase
+	detail.BorderSizePixel = 0
+	detail.Size = UDim2.new(1, -312, 1, 0)
+	detail.Position = UDim2.fromOffset(312, 0)
+	detail.CanvasSize = UDim2.new()
+	detail.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	detail.ScrollingDirection = Enum.ScrollingDirection.Y
+	detail.ScrollBarThickness = 6
+	detail.ScrollBarImageColor3 = Colors.BorderStrong
+	detail.Parent = columns
 	local s = Instance.new("UIStroke")
 	s.Color = Colors.BorderSubtle
 	s.Thickness = 1
@@ -1155,10 +1325,16 @@ local function renderCountries()
 		local rel = state.countryReligionFilter
 		local hasCul = cul and cul ~= ALL_FILTER
 		local hasRel = rel and rel ~= ALL_FILTER
-		if not hasCul and not hasRel then return nil end
+		if not hasCul and not hasRel then
+			return nil
+		end
 		return function(_, c)
-			if hasCul and c.primaryCulture ~= cul then return false end
-			if hasRel and c.stateReligion ~= rel then return false end
+			if hasCul and c.primaryCulture ~= cul then
+				return false
+			end
+			if hasRel and c.stateReligion ~= rel then
+				return false
+			end
 			return true
 		end
 	end
@@ -1168,7 +1344,9 @@ local function renderCountries()
 	label(filterRow, "Culture:", "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 54, 1, 0)
 	do
 		local culOptions = { ALL_FILTER }
-		for _, k in ipairs(sortedKeys(snap.cultures)) do culOptions[#culOptions + 1] = k end
+		for _, k in ipairs(sortedKeys(snap.cultures)) do
+			culOptions[#culOptions + 1] = k
+		end
 		dropdown({
 			parent = filterRow,
 			size = UDim2.fromOffset(190, 28),
@@ -1177,15 +1355,24 @@ local function renderCountries()
 			value = state.countryCultureFilter or ALL_FILTER,
 			onChange = function(sel)
 				state.countryCultureFilter = sel
-				if listCol then listCol() end
+				if listCol then
+					listCol()
+				end
 			end,
 		})
 	end
-	local filterRow2 = frame({ parent = body, transparent = true, size = UDim2.fromOffset(300, 28), position = UDim2.fromOffset(0, 30) })
+	local filterRow2 = frame({
+		parent = body,
+		transparent = true,
+		size = UDim2.fromOffset(300, 28),
+		position = UDim2.fromOffset(0, 30),
+	})
 	label(filterRow2, "Religion:", "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 54, 1, 0)
 	do
 		local relOptions = { ALL_FILTER }
-		for _, k in ipairs(sortedKeys(snap.religions)) do relOptions[#relOptions + 1] = k end
+		for _, k in ipairs(sortedKeys(snap.religions)) do
+			relOptions[#relOptions + 1] = k
+		end
 		dropdown({
 			parent = filterRow2,
 			size = UDim2.fromOffset(190, 28),
@@ -1194,12 +1381,15 @@ local function renderCountries()
 			value = state.countryReligionFilter or ALL_FILTER,
 			onChange = function(sel)
 				state.countryReligionFilter = sel
-				if listCol then listCol() end
+				if listCol then
+					listCol()
+				end
 			end,
 		})
 	end
 
-	local columns = frame({ parent = body, transparent = true, size = UDim2.new(1, 0, 1, -62), position = UDim2.fromOffset(0, 62) })
+	local columns =
+		frame({ parent = body, transparent = true, size = UDim2.new(1, 0, 1, -62), position = UDim2.fromOffset(0, 62) })
 	-- Detail pane is built once; only its contents refresh on selection, so the list column's search box
 	-- and scroll position persist across clicks.
 	local detail = makeDetailPane(columns)
@@ -1252,33 +1442,44 @@ local function renderCountries()
 			boxes[i] = b
 		end
 		local swatch = Instance.new("TextButton")
-			swatch.Size = UDim2.fromOffset(24, 24)
-			swatch.Position = UDim2.fromOffset(96 + 3 * 58 + 6, 2)
-			swatch.Text = ""
-			swatch.AutoButtonColor = false
-			swatch.BorderSizePixel = 0
-			swatch.Parent = colorRow
-			swatch.Activated:Connect(function()
-				openColorPicker(gui, { tonumber(boxes[1].Text) or 0, tonumber(boxes[2].Text) or 0, tonumber(boxes[3].Text) or 0 }, function(rgb)
+		swatch.Size = UDim2.fromOffset(24, 24)
+		swatch.Position = UDim2.fromOffset(96 + 3 * 58 + 6, 2)
+		swatch.Text = ""
+		swatch.AutoButtonColor = false
+		swatch.BorderSizePixel = 0
+		swatch.Parent = colorRow
+		swatch.Activated:Connect(function()
+			openColorPicker(
+				gui,
+				{ tonumber(boxes[1].Text) or 0, tonumber(boxes[2].Text) or 0, tonumber(boxes[3].Text) or 0 },
+				function(rgb)
 					boxes[1].Text = tostring(rgb[1])
 					boxes[2].Text = tostring(rgb[2])
 					boxes[3].Text = tostring(rgb[3])
-				end)
-			end)
-		local function refreshSwatch()
-			swatch.BackgroundColor3 = Color3.fromRGB(
-				tonumber(boxes[1].Text) or 0, tonumber(boxes[2].Text) or 0, tonumber(boxes[3].Text) or 0
+				end
 			)
+		end)
+		local function refreshSwatch()
+			swatch.BackgroundColor3 =
+				Color3.fromRGB(tonumber(boxes[1].Text) or 0, tonumber(boxes[2].Text) or 0, tonumber(boxes[3].Text) or 0)
 		end
 		refreshSwatch()
-		for _, b in ipairs(boxes) do b:GetPropertyChangedSignal("Text"):Connect(refreshSwatch) end
+		for _, b in ipairs(boxes) do
+			b:GetPropertyChangedSignal("Text"):Connect(refreshSwatch)
+		end
 
 		-- editable definition fields via dropdowns (options from the snapshot); derived/runtime fields
 		-- (manpower, treasury, ...) are intentionally omitted -- they're recomputed, not definition data.
 		local function ddRow(name, options, value)
 			local r = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 26) })
 			label(r, name, "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 90, 1, 0)
-			return dropdown({ parent = r, size = UDim2.new(1, -96, 1, 0), position = UDim2.fromOffset(96, 0), options = options, value = value })
+			return dropdown({
+				parent = r,
+				size = UDim2.new(1, -96, 1, 0),
+				position = UDim2.fromOffset(96, 0),
+				options = options,
+				value = value,
+			})
 		end
 
 		-- Capital: on create, a province-id text box (must be an existing province). On edit, a picker over the
@@ -1293,11 +1494,17 @@ local function renderCountries()
 			end
 			local owned = {}
 			for id, p in pairs(snap.provinces) do
-				if p.ownerTag == tag then owned[#owned + 1] = { id = id, label = provLabel(id) } end
+				if p.ownerTag == tag then
+					owned[#owned + 1] = { id = id, label = provLabel(id) }
+				end
 			end
-			table.sort(owned, function(a, b) return a.id < b.id end)
+			table.sort(owned, function(a, b)
+				return a.id < b.id
+			end)
 			local capOptions = {}
-			for _, o in ipairs(owned) do capOptions[#capOptions + 1] = o.label end
+			for _, o in ipairs(owned) do
+				capOptions[#capOptions + 1] = o.label
+			end
 			capDD = ddRow("Capital", capOptions, c.capitalProvinceId and provLabel(c.capitalProvinceId) or "—")
 		end
 		local cultureDD = ddRow("Culture", sortedKeys(snap.cultures), c and c.primaryCulture)
@@ -1353,7 +1560,9 @@ local function renderCountries()
 			width = 120,
 			onClick = function()
 				local newColor = validate()
-				if not newColor then return end
+				if not newColor then
+					return
+				end
 				local opts = {
 					displayName = nameBox.Text,
 					color = newColor,
@@ -1374,6 +1583,7 @@ local function renderCountries()
 					if res then
 						opts.tag = newTag
 						snap.countries[newTag] = opts
+						invalidateCountryTags()
 						searchCache.countries[newTag] = string.lower(newTag .. " " .. (opts.displayName or ""))
 						state.selected = newTag
 						markDirty()
@@ -1383,16 +1593,47 @@ local function renderCountries()
 						setStatus("Create failed: " .. tostring(err), Colors.Negative)
 					end
 				else
-					local res, err = editorCall("updateCountry", { tag = tag, opts = opts })
+					-- Dirty-gate: send ONLY the fields changed vs the loaded record. updateCountry field-patches
+					-- whatever it receives, so a blind full-field send would revert a co-editor's concurrent change
+					-- to a DIFFERENT field of this same country back to our stale widget value. Mirrors the province
+					-- detail Save's dirty-gating.
+					local function fieldSame(k, v)
+						if k == "color" then
+							local cur = c.color
+							if type(cur) ~= "table" then
+								-- record has no explicit colour: the swatch shows the {150,150,150} default, so an untouched
+								-- save must NOT ship that default (not a user change; could clobber a co-editor colour).
+								return type(v) == "table" and v[1] == 150 and v[2] == 150 and v[3] == 150
+							end
+							return type(v) == "table" and v[1] == cur[1] and v[2] == cur[2] and v[3] == cur[3]
+						end
+						if v == c[k] then
+							return true
+						end
+						-- an empty-string widget value equals a nil/absent record field (untouched default) -- do not ship
+						-- it, else an untouched Save writes "" over a semantically-nil field (clobbering a co-editor).
+						if (v == nil or v == "") and (c[k] == nil or c[k] == "") then
+							return true
+						end
+						return false
+					end
+					local patch, changed = {}, false
+					for k, v in pairs(opts) do
+						if not fieldSame(k, v) then
+							patch[k] = v
+							changed = true
+						end
+					end
+					if not changed then
+						setStatus("No changes to save", Colors.TextSecondary)
+						return
+					end
+					local res, err = editorCall("updateCountry", { tag = tag, opts = patch })
 					if res then
-						c.displayName = opts.displayName
-						c.color = opts.color
-						c.primaryCulture = opts.primaryCulture
-						c.stateReligion = opts.stateReligion
-						c.governmentForm = opts.governmentForm
-						c.ideology = opts.ideology
-						c.capitalProvinceId = opts.capitalProvinceId
-						searchCache.countries[tag] = string.lower(tostring(tag) .. " " .. (opts.displayName or ""))
+						for k, v in pairs(patch) do
+							c[k] = v
+						end
+						searchCache.countries[tag] = string.lower(tostring(tag) .. " " .. (c.displayName or ""))
 						markDirty()
 						setStatus("Saved " .. tostring(tag), Colors.Positive)
 					else
@@ -1417,22 +1658,34 @@ local function renderCountries()
 					local lab = delBtn:FindFirstChild("Label")
 					if not armed then
 						armed = true
-						if lab then lab.Text = "Click again to delete " .. tostring(tag) end
-						setStatus("Deleting " .. tostring(tag) .. " removes the nation and frees its provinces. Click again to confirm.", Colors.Negative)
+						if lab then
+							lab.Text = "Click again to delete " .. tostring(tag)
+						end
+						setStatus(
+							"Deleting "
+								.. tostring(tag)
+								.. " removes the nation and frees its provinces. Click again to confirm.",
+							Colors.Negative
+						)
 						return
 					end
 					local res, err = editorCall("removeCountry", { tag = tag })
 					if res then
 						snap.countries[tag] = nil
+						invalidateCountryTags()
 						searchCache.countries[tag] = nil
 						state.selected = nil
 						markDirty()
 						setStatus("Deleted " .. tostring(tag), Colors.Positive)
-						if listCol then listCol() end
+						if listCol then
+							listCol()
+						end
 						showDetail(nil)
 					else
 						armed = false
-						if lab then lab.Text = "Delete country" end
+						if lab then
+							lab.Text = "Delete country"
+						end
 						setStatus("Delete failed: " .. tostring(err), Colors.Negative)
 					end
 				end,
@@ -1458,6 +1711,7 @@ local function renderCountries()
 		end,
 	})
 	listCol = rebuildList
+	state.refreshList = rebuildList -- live co-editor delta refreshes this list surgically (applyLiveDelta)
 
 	showDetail(state.selected)
 end
@@ -1471,55 +1725,190 @@ local function renderProvinces()
 	local snap = state.snapshot
 	local listCol -- fwd (owner filter dropdown re-filters this column's list)
 
-	-- Paint control row: pick an owner, then click land tiles on the map to assign it (Phase 6 painting).
-	-- The click hook lives at module scope (below) and reads state.paintOwner.
-	local paintRow = frame({ parent = body, transparent = true, size = UDim2.new(1, 0, 0, 30) })
-	label(paintRow, "Paint owner:", "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 90, 1, 0)
-	local paintHint = label(
-		paintRow,
-		state.paintOwner and ("Painting → " .. state.paintOwner) or "",
-		"bodySm",
-		state.paintOwner and Colors.Positive or Colors.TextSecondary
-	)
-	paintHint.TextTruncate = Enum.TextTruncate.AtEnd -- never let a long status overflow the window edge
-	paintHint.Position = UDim2.fromOffset(600, 0)
-	paintHint.Size = UDim2.new(1, -600, 1, 0)
-	dropdown({
+	-- ===== Provinces tab header: auto-arranged rows (paint controls / hint / filter+sort) so nothing overlaps.
+	-- Pick a TARGET (owner / core / default core / claim) + a brush country, then click land tiles on the map.
+	-- Owner is single-valued (SET); cores/defaultCores/claims are lists, so the Add/Remove toggle drives them.
+	state.paintTarget = state.paintTarget or "owner"
+	state.paintMode = state.paintMode or "add"
+	local TARGET_TO_LABEL = { owner = "Owner", core = "Core", defaultCore = "Default Core", claim = "Claim" }
+	local LABEL_TO_TARGET = { Owner = "owner", Core = "core", ["Default Core"] = "defaultCore", Claim = "claim" }
+
+	local HEADER_H = 84
+	local provHeader = frame({ parent = body, transparent = true, size = UDim2.new(1, 0, 0, HEADER_H) })
+	do
+		local hl = Instance.new("UIListLayout")
+		hl.FillDirection = Enum.FillDirection.Vertical
+		hl.SortOrder = Enum.SortOrder.LayoutOrder
+		hl.Padding = UDim.new(0, 6)
+		hl.Parent = provHeader
+	end
+
+	-- Row 1: paint controls -- a horizontal UIListLayout, so controls flow left->right and never overlap
+	-- (mirrors the only other auto-laid row in the editor, tagListEditor). All controls stay present:
+	-- the mode toggle greys out for Owner and Apply-selected greys when nothing is selected, so no gaps.
+	local paintRow = frame({ parent = provHeader, transparent = true, size = UDim2.new(1, 0, 0, 28) })
+	paintRow.LayoutOrder = 1
+	do
+		local pl = Instance.new("UIListLayout")
+		pl.FillDirection = Enum.FillDirection.Horizontal
+		pl.VerticalAlignment = Enum.VerticalAlignment.Center
+		pl.Padding = UDim.new(0, 8)
+		pl.SortOrder = Enum.SortOrder.LayoutOrder
+		pl.Parent = paintRow
+	end
+
+	local paintHint, modeToggle -- fwd
+	local function isListTarget()
+		return state.paintTarget ~= "owner"
+	end
+	-- How many owned provinces already carry the brush tag for the active list target (for the live hint).
+	local function membershipCount()
+		local field = paintFieldForTarget(state.paintTarget)
+		if not field or not state.paintOwner then
+			return nil
+		end
+		local n = 0
+		for _, p in pairs(snap.provinces) do
+			local arr = p[field]
+			if type(arr) == "table" then
+				for _, t in ipairs(arr) do
+					if t == state.paintOwner then
+						n += 1
+						break
+					end
+				end
+			end
+		end
+		return n
+	end
+	local function updatePaintUI()
+		if modeToggle then
+			-- Greyed + inert for the Owner target (kept in the layout, so no gap).
+			local list = isListTarget()
+			modeToggle.Active = list
+			modeToggle.Text = (state.paintMode == "remove") and "Remove" or "Add"
+			modeToggle.TextColor3 = (not list and Colors.TextDisabled)
+				or (state.paintMode == "remove" and Colors.Negative)
+				or Colors.Positive
+		end
+		if paintHint then
+			if state.paintOwner then
+				local suffix = isListTarget() and (" (" .. state.paintMode .. ")") or ""
+				local count = membershipCount()
+				local countStr = count and string.format("   %d province%s", count, count == 1 and "" or "s") or ""
+				paintHint.Text = string.format(
+					"Painting %s%s -> %s%s",
+					TARGET_TO_LABEL[state.paintTarget],
+					suffix,
+					state.paintOwner,
+					countStr
+				)
+				paintHint.TextColor3 = Colors.Positive
+			else
+				paintHint.Text = "Pick a target + brush country, then click land tiles on the map."
+				paintHint.TextColor3 = Colors.TextSecondary
+			end
+		end
+		if bulkApplyBtn then
+			-- Always present; greyed unless there's BOTH a selection and an armed brush (so it isn't a
+			-- dead-end click after Stop clears the brush). Count folds into its label.
+			local n = state.multiSelCount or 0
+			bulkApplyBtn.Active = n > 0 and state.paintOwner ~= nil
+			local bl = bulkApplyBtn:FindFirstChild("Label")
+			if bl then
+				bl.Text = n > 0 and ("Apply " .. n) or "Apply selected"
+			end
+		end
+	end
+	paintUpdate = updatePaintUI -- module ref so the map-click handler + multi-select listener refresh live UI
+
+	-- Row 2: live paint hint / status (own line, so it can never squeeze the controls).
+	paintHint = label(provHeader, "", "bodySm", Colors.TextSecondary)
+	paintHint.LayoutOrder = 2
+	paintHint.Size = UDim2.new(1, 0, 0, 16)
+	paintHint.TextTruncate = Enum.TextTruncate.AtEnd
+
+	local plabel = label(paintRow, "Paint", "bodySm", Colors.TextSecondary)
+	plabel.Size = UDim2.fromOffset(38, 26)
+	plabel.LayoutOrder = 1
+
+	-- Target selector
+	local targetDD = dropdown({
+		parent = paintRow,
+		size = UDim2.fromOffset(120, 26),
+		position = UDim2.new(),
+		options = { "Owner", "Core", "Default Core", "Claim" },
+		value = TARGET_TO_LABEL[state.paintTarget],
+		onChange = function(lbl)
+			state.paintTarget = LABEL_TO_TARGET[lbl] or "owner"
+			updatePaintUI()
+		end,
+	})
+	targetDD.instance.LayoutOrder = 2
+
+	-- Brush country
+	local countryDD = dropdown({
 		parent = paintRow,
 		size = UDim2.fromOffset(150, 26),
-		position = UDim2.fromOffset(96, 2),
-		options = sortedKeys(snap.countries),
+		position = UDim2.new(),
+		options = sortedCountryTags(),
 		value = state.paintOwner or "— pick —",
 		onChange = function(tag)
 			state.paintOwner = tag
-			paintHint.Text = "Painting → " .. tag
-			paintHint.TextColor3 = Colors.Positive
+			updatePaintUI()
 		end,
 	})
+	countryDD.instance.LayoutOrder = 3
+
+	-- Add/Remove toggle (greyed + inert for the Owner target, kept in the layout so there's no gap)
+	modeToggle = Instance.new("TextButton")
+	modeToggle.Name = "PaintMode"
+	modeToggle.Size = UDim2.fromOffset(72, 26)
+	modeToggle.BackgroundColor3 = Colors.SurfaceOverlay
+	modeToggle.AutoButtonColor = true
+	modeToggle.Text = "Add"
+	modeToggle.TextColor3 = Colors.Positive
+	modeToggle.TextSize = 14
+	modeToggle.FontFace = Typography.SansBold
+	modeToggle.LayoutOrder = 4
+	modeToggle.Parent = paintRow
+	do
+		local s = Instance.new("UIStroke")
+		s.Color = Colors.BorderSubtle
+		s.Parent = modeToggle
+	end
+	modeToggle.MouseButton1Click:Connect(function()
+		if not isListTarget() then
+			return -- Owner has no add/remove
+		end
+		state.paintMode = (state.paintMode == "add") and "remove" or "add"
+		updatePaintUI()
+	end)
+
 	local stopBtn = Button.create({
 		parent = paintRow,
 		variant = "ghost",
-		text = "Stop paint",
-		width = 100,
+		text = "Stop",
+		width = 64,
 		onClick = function()
 			state.paintOwner = nil
-			paintHint.Text = ""
-			paintHint.TextColor3 = Colors.TextSecondary
+			updatePaintUI()
 		end,
 	})
-	stopBtn.Position = UDim2.fromOffset(256, 2)
+	stopBtn.LayoutOrder = 5
 
-	-- Bulk assign: shift-select tiles on the map, then assign them all to the paint owner at once
-	-- (assignBatch). bulkApplyBtn/bulkCountLabel are module refs the multi-select listener keeps live.
+	-- Bulk assign: shift-select tiles on the map, then apply the brush to all at once (assignBatch /
+	-- paintTagBatch). Always present (greyed when nothing's selected, count folded into its label) so it
+	-- never leaves a gap in the layout. bulkApplyBtn is a module ref the multi-select listener keeps live.
 	bulkApplyBtn = Button.create({
 		parent = paintRow,
 		variant = "primary",
-		text = "Assign selected",
-		width = 140,
+		text = "Apply selected",
+		width = 150,
 		onClick = function()
-			local owner = state.paintOwner
-			if not owner then
-				setStatus("Pick a paint owner first", Colors.Negative)
+			local tag = state.paintOwner
+			if not tag then
+				setStatus("Pick a brush country first", Colors.Negative)
 				return
 			end
 			if not (paintInteraction and paintInteraction.getMultiSelection) then
@@ -1541,95 +1930,162 @@ local function renderProvinces()
 				setStatus(string.format("Too many (%d); max 500 — select fewer", #items), Colors.Negative)
 				return
 			end
-			local res, err = editorCall("assignBatch", { ownerTag = owner, items = items })
+			local target = state.paintTarget or "owner"
+			local field = paintFieldForTarget(target)
+			local mode = state.paintMode or "add"
+			local res, err
+			if not field then
+				res, err = editorCall("assignBatch", { ownerTag = tag, items = items })
+			else
+				res, err = editorCall("paintTagBatch", { target = target, tag = tag, mode = mode, items = items })
+			end
 			if res then
-				for _, it in ipairs(items) do
-					local p = snap.provinces[it.id]
-					if p then
-						p.ownerTag = owner
-						p.controllerTag = owner
+				-- Honor the server's per-item results: only mirror tiles it actually applied into the local
+				-- snapshot (so rejected tiles don't show a tag/owner the server never wrote and then get
+				-- persisted on the next Save), and surface any failures.
+				local failed = {}
+				if type(res.errors) == "table" then
+					for _, e in ipairs(res.errors) do
+						if e and e.id ~= nil then
+							failed[e.id] = true
+						end
 					end
 				end
-				setStatus(string.format("Assigned %d tiles → %s", #items, owner), Colors.Positive)
+				for _, it in ipairs(items) do
+					local p = not failed[it.id] and snap.provinces[it.id]
+					if p then
+						if not field then
+							p.ownerTag = tag
+							p.controllerTag = tag
+						else
+							p[field] = p[field] or {}
+							local idx
+							for i, t in ipairs(p[field]) do
+								if t == tag then
+									idx = i
+									break
+								end
+							end
+							if mode == "remove" then
+								if idx then
+									table.remove(p[field], idx)
+								end
+							elseif not idx then
+								table.insert(p[field], tag)
+							end
+						end
+					end
+				end
+				local processed = tonumber(res.processed) or #items
+				local failCount = (type(res.errors) == "table") and #res.errors or 0
+				local what = field and (mode .. " " .. target) or "owner"
+				setStatus(
+					string.format(
+						"Applied %s to %d tile%s -> %s%s",
+						what,
+						processed,
+						processed == 1 and "" or "s",
+						tag,
+						failCount > 0 and string.format(" (%d failed)", failCount) or ""
+					),
+					failCount > 0 and (Colors.Warning or Colors.Negative) or Colors.Positive
+				)
 				markDirty()
+				if paintUpdate then
+					paintUpdate()
+				end
 				if paintInteraction.clearMultiSelection then
 					paintInteraction.clearMultiSelection()
 				end
 				state.multiSelCount = 0
-				if bulkCountLabel then bulkCountLabel.Text = "" end
-				bulkApplyBtn.Visible = false
+				updatePaintUI() -- refresh the Apply-selected label/enabled state
 			else
-				setStatus("Bulk assign failed: " .. tostring(err), Colors.Negative)
+				setStatus("Bulk apply failed: " .. tostring(err), Colors.Negative)
 			end
 		end,
 	})
-	bulkApplyBtn.Position = UDim2.fromOffset(364, 2)
-	bulkApplyBtn.Visible = (state.multiSelCount or 0) > 0
+	bulkApplyBtn.LayoutOrder = 6
+	updatePaintUI() -- initial Apply-selected label + enabled state
 
-	bulkCountLabel = label(
-		paintRow,
-		(state.multiSelCount or 0) > 0 and (state.multiSelCount .. " selected") or "",
-		"bodySm",
-		Colors.Accent
-	)
-	bulkCountLabel.Position = UDim2.fromOffset(512, 0)
-	bulkCountLabel.Size = UDim2.new(0, 84, 1, 0)
-
+	-- Row 3: owner filter (left) + sort (right). Absolute within this fixed-height row (they don't overlap).
+	local filterSort = frame({ parent = provHeader, transparent = true, size = UDim2.new(1, 0, 0, 28) })
+	filterSort.LayoutOrder = 3
 	-- Faceted owner filter (combined with the list's text search). Options: All / none(unowned) / each country.
-	local filterRow = frame({ parent = body, transparent = true, size = UDim2.fromOffset(300, 28), position = UDim2.fromOffset(0, 36) })
-	label(filterRow, "Owner:", "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 48, 1, 0)
+	label(filterSort, "Owner:", "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 48, 1, 0)
 	do
 		local ownerOptions = { ALL_OWNERS, NO_OWNER }
-		for _, t in ipairs(sortedKeys(snap.countries)) do ownerOptions[#ownerOptions + 1] = t end
+		for _, t in ipairs(sortedCountryTags()) do
+			ownerOptions[#ownerOptions + 1] = t
+		end
 		dropdown({
-			parent = filterRow,
-			size = UDim2.new(1, -52, 1, 0),
-			position = UDim2.fromOffset(52, 0),
+			parent = filterSort,
+			size = UDim2.fromOffset(240, 26),
+			position = UDim2.fromOffset(52, 1),
 			options = ownerOptions,
 			value = state.provOwnerFilter or ALL_OWNERS,
 			onChange = function(sel)
 				state.provOwnerFilter = sel
-				if listCol then listCol() end -- re-run the list's getKeys with the new filter
+				if listCol then
+					listCol()
+				end -- re-run the list's getKeys with the new filter
 			end,
 		})
 	end
 
 	-- Sort toggle: Numeric (by #id, so #1..#2..#10 not #1..#10..#100) or Alphabetical (by name).
-	local sortLbl = label(body, "Sort:", "bodySm", Colors.TextSecondary)
-	sortLbl.Position = UDim2.fromOffset(316, 36)
-	sortLbl.Size = UDim2.fromOffset(38, 28)
+	local sortLbl = label(filterSort, "Sort:", "bodySm", Colors.TextSecondary)
+	sortLbl.Position = UDim2.fromOffset(312, 1)
+	sortLbl.Size = UDim2.fromOffset(38, 26)
 	dropdown({
-		parent = body,
+		parent = filterSort,
 		size = UDim2.fromOffset(150, 26),
-		position = UDim2.fromOffset(356, 37),
+		position = UDim2.fromOffset(352, 1),
 		options = { "Numeric", "Alphabetical" },
 		value = ((state.provSort or "numeric") == "alpha") and "Alphabetical" or "Numeric",
 		onChange = function(sel)
 			state.provSort = (sel == "Alphabetical") and "alpha" or "numeric"
-			if listCol then listCol() end
+			if listCol then
+				listCol()
+			end
 		end,
 	})
 
-	local columns = frame({ parent = body, transparent = true, size = UDim2.new(1, 0, 1, -68), position = UDim2.fromOffset(0, 68) })
+	local columns = frame({
+		parent = body,
+		transparent = true,
+		size = UDim2.new(1, 0, 1, -(HEADER_H + 6)),
+		position = UDim2.fromOffset(0, HEADER_H + 6),
+	})
 	local detail = makeDetailPane(columns)
 
 	local function showDetail(id)
 		clearDetail(detail)
 		local p = id and snap.provinces[id]
 		if not p then
-			local ph = label(detail, "Select a province from the list — or click a tile on the map (shift-click to multi-select).", "bodyMd", Colors.TextSecondary)
+			local ph = label(
+				detail,
+				"Select a province from the list — or click a tile on the map (shift-click to multi-select).",
+				"bodyMd",
+				Colors.TextSecondary
+			)
 			ph.TextWrapped = true
 			ph.Size = UDim2.new(1, 0, 0, 48)
 			return
 		end
 		label(detail, string.format("#%s  %s", tostring(id), p.name or "?"), "displayLg").Size = UDim2.new(1, 0, 0, 26)
 
-		local countryTags = sortedKeys(snap.countries)
+		local countryTags = sortedCountryTags()
 
 		-- Owner (editable; controller follows owner on an ownership edit).
 		local ownerRow = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 26) })
 		label(ownerRow, "Owner", "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 90, 1, 0)
-		local ownerDD = dropdown({ parent = ownerRow, size = UDim2.new(1, -96, 1, 0), position = UDim2.fromOffset(96, 0), options = countryTags, value = p.ownerTag })
+		local ownerDD = dropdown({
+			parent = ownerRow,
+			size = UDim2.new(1, -96, 1, 0),
+			position = UDim2.fromOffset(96, 0),
+			options = countryTags,
+			value = p.ownerTag,
+		})
 
 		readonlyRow(detail, "Controller", p.controllerTag)
 		readonlyRow(detail, "Culture", p.culture)
@@ -1650,7 +2106,19 @@ local function renderProvinces()
 			text = "Save",
 			width = 120,
 			onClick = function()
-				local opts = { cores = coresEd.get(), defaultCores = defaultCoresEd.get(), claims = claimsEd.get() }
+				-- Send a tag array ONLY if the user edited it here. Otherwise a blind full-array send would
+				-- clobber cores/claims painted onto this same province via the map tool since the pane opened
+				-- (the chip editors are a stale snapshot captured at pane-open). Owner is independent.
+				local opts = {}
+				if coresEd.dirty() then
+					opts.cores = coresEd.get()
+				end
+				if defaultCoresEd.dirty() then
+					opts.defaultCores = defaultCoresEd.get()
+				end
+				if claimsEd.dirty() then
+					opts.claims = claimsEd.get()
+				end
 				local newOwner = ownerDD.get()
 				if newOwner and newOwner ~= p.ownerTag then
 					opts.ownerTag = newOwner
@@ -1658,15 +2126,24 @@ local function renderProvinces()
 				end
 				local res, err = editorCall("updateProvince", { id = id, opts = opts })
 				if res then
-					p.cores = opts.cores
-					p.defaultCores = opts.defaultCores
-					p.claims = opts.claims
+					if opts.cores then
+						p.cores = opts.cores
+					end
+					if opts.defaultCores then
+						p.defaultCores = opts.defaultCores
+					end
+					if opts.claims then
+						p.claims = opts.claims
+					end
 					if opts.ownerTag then
 						p.ownerTag = opts.ownerTag
 						p.controllerTag = opts.controllerTag
 					end
 					markDirty()
 					setStatus("Saved province #" .. tostring(id), Colors.Positive)
+					if paintUpdate then
+						paintUpdate() -- keep the paint header's live membership count in sync with chip edits
+					end
 				else
 					setStatus("Save failed: " .. tostring(err), Colors.Negative)
 				end
@@ -1682,15 +2159,20 @@ local function renderProvinces()
 			local filterFn = nil
 			if ownerSel and ownerSel ~= ALL_OWNERS then
 				local want = (ownerSel == NO_OWNER) and nil or ownerSel
-				filterFn = function(_, p) return (p.ownerTag or nil) == want end
+				filterFn = function(_, p)
+					return (p.ownerTag or nil) == want
+				end
 			end
 			local sortFn
 			if (state.provSort or "numeric") == "alpha" then
 				sortFn = function(a, b)
-					return ((snap.provinces[a] and snap.provinces[a].name) or "") < ((snap.provinces[b] and snap.provinces[b].name) or "")
+					return ((snap.provinces[a] and snap.provinces[a].name) or "")
+						< ((snap.provinces[b] and snap.provinces[b].name) or "")
 				end
 			else
-				sortFn = function(a, b) return (tonumber(a) or 0) < (tonumber(b) or 0) end
+				sortFn = function(a, b)
+					return (tonumber(a) or 0) < (tonumber(b) or 0)
+				end
 			end
 			return sortedMatching(snap.provinces, q, function(id, p)
 				return tostring(id) .. " " .. (p.name or "")
@@ -1706,6 +2188,7 @@ local function renderProvinces()
 		end,
 	})
 	listCol = rebuildList
+	state.refreshList = rebuildList -- live co-editor delta refreshes this list surgically (applyLiveDelta)
 
 	showDetail(state.selected)
 end
@@ -1765,7 +2248,13 @@ local function renderFormables()
 		local function ddYesNo(name, isYes)
 			local r = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 26) })
 			label(r, name, "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 120, 1, 0)
-			return dropdown({ parent = r, size = UDim2.new(0, 90, 1, 0), position = UDim2.fromOffset(126, 0), options = YESNO, value = isYes and "Yes" or "No" })
+			return dropdown({
+				parent = r,
+				size = UDim2.new(0, 90, 1, 0),
+				position = UDim2.fromOffset(126, 0),
+				options = YESNO,
+				value = isYes and "Yes" or "No",
+			})
 		end
 
 		-- The forming nation KEEPS its own tag (HoI4-style); a formable is just an identity (name/colour/
@@ -1775,7 +2264,11 @@ local function renderFormables()
 		local nameBox = field("Display name", def and def.displayName or "")
 		local formerBox = field("Formed by (tags)", def and def.formerTags and table.concat(def.formerTags, ", ") or "")
 		local col3 = (def and def.color) or { 150, 150, 150 }
-		local reqBox = bigField("Required province IDs", def and def.requiredProvinceIds and table.concat(def.requiredProvinceIds, ", ") or "", 60)
+		local reqBox = bigField(
+			"Required province IDs",
+			def and def.requiredProvinceIds and table.concat(def.requiredProvinceIds, ", ") or "",
+			60
+		)
 		-- Map-select flow: shift-select tiles on the map, then add them here instead of typing ids.
 		do
 			local reqTools = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 28) })
@@ -1791,7 +2284,9 @@ local function renderFormables()
 						return
 					end
 					local set = {}
-					for s in string.gmatch(reqBox.Text or "", "%d+") do set[tonumber(s)] = true end
+					for s in string.gmatch(reqBox.Text or "", "%d+") do
+						set[tonumber(s)] = true
+					end
 					local added = 0
 					for _, part in ipairs(paintInteraction.getMultiSelection()) do
 						local pid = part:GetAttribute("province_id")
@@ -1802,10 +2297,17 @@ local function renderFormables()
 						end
 					end
 					local ids = {}
-					for id in pairs(set) do ids[#ids + 1] = id end
-					table.sort(ids, function(a, b) return a < b end)
+					for id in pairs(set) do
+						ids[#ids + 1] = id
+					end
+					table.sort(ids, function(a, b)
+						return a < b
+					end)
 					reqBox.Text = table.concat(ids, ", ")
-					setStatus(string.format("Added %d tiles (%d total)", added, #ids), added > 0 and Colors.Positive or Colors.TextSecondary)
+					setStatus(
+						string.format("Added %d tiles (%d total)", added, #ids),
+						added > 0 and Colors.Positive or Colors.TextSecondary
+					)
 				end,
 			})
 			addSel.Position = UDim2.fromOffset(126, 0)
@@ -1827,31 +2329,32 @@ local function renderFormables()
 			hint.TextTruncate = Enum.TextTruncate.AtEnd
 		end
 		local colorBox = field("Colour (r,g,b)", string.format("%d, %d, %d", col3[1] or 0, col3[2] or 0, col3[3] or 0))
-			do
-				local pick = Instance.new("TextButton")
-				pick.Size = UDim2.fromOffset(46, 22)
-				pick.AnchorPoint = Vector2.new(1, 0.5)
-				pick.Position = UDim2.new(1, -2, 0.5, 0)
-				pick.BackgroundColor3 = Colors.SurfaceOverlay or Colors.SurfaceElevated
-				pick.TextColor3 = Colors.TextPrimary
-				pick.Text = "Pick"
-				pick.Font = Enum.Font.GothamMedium
-				pick.TextSize = 12
-				pick.BorderSizePixel = 0
-				pick.ZIndex = 3
-				pick.Parent = colorBox
-				pick.Activated:Connect(function()
-					local cur = {}
-					for n in string.gmatch(colorBox.Text or "", "%d+") do
-						cur[#cur + 1] = tonumber(n)
-					end
-					openColorPicker(gui, { cur[1] or 150, cur[2] or 150, cur[3] or 150 }, function(rgb)
-						colorBox.Text = string.format("%d, %d, %d", rgb[1], rgb[2], rgb[3])
-					end)
+		do
+			local pick = Instance.new("TextButton")
+			pick.Size = UDim2.fromOffset(46, 22)
+			pick.AnchorPoint = Vector2.new(1, 0.5)
+			pick.Position = UDim2.new(1, -2, 0.5, 0)
+			pick.BackgroundColor3 = Colors.SurfaceOverlay or Colors.SurfaceElevated
+			pick.TextColor3 = Colors.TextPrimary
+			pick.Text = "Pick"
+			pick.Font = Enum.Font.GothamMedium
+			pick.TextSize = 12
+			pick.BorderSizePixel = 0
+			pick.ZIndex = 3
+			pick.Parent = colorBox
+			pick.Activated:Connect(function()
+				local cur = {}
+				for n in string.gmatch(colorBox.Text or "", "%d+") do
+					cur[#cur + 1] = tonumber(n)
+				end
+				openColorPicker(gui, { cur[1] or 150, cur[2] or 150, cur[3] or 150 }, function(rgb)
+					colorBox.Text = string.format("%d, %d, %d", rgb[1], rgb[2], rgb[3])
 				end)
-			end
+			end)
+		end
 		local flagBox = field("Flag (rbxassetid)", (def and def.flag) or "")
-		local bonusBox = field("Form bonus: stability", def and def.formBonuses and tostring(def.formBonuses.stability or "") or "")
+		local bonusBox =
+			field("Form bonus: stability", def and def.formBonuses and tostring(def.formBonuses.stability or "") or "")
 		local canFormDD = ddYesNo("Can form", def == nil or def.canForm ~= false)
 		local canReleaseDD = ddYesNo("Can release", def == nil or def.canRelease ~= false)
 		-- Secret: hide from the Missions tab until a nation already holds the full territory (otherwise
@@ -1968,16 +2471,50 @@ end
 -- Editing is displayName + create/delete (universal & safe); other scalar fields show read-only. Modifier
 -- maps stay seed-file authored for now.
 local REGISTRIES = {
-	{ kind = "cultures", label = "Cultures", singular = "Culture", key = "cultures", add = "addCulture", update = "updateCulture", remove = "removeCulture" },
-	{ kind = "religions", label = "Religions", singular = "Religion", key = "religions", add = "addReligion", update = "updateReligion", remove = "removeReligion" },
-	{ kind = "ideologies", label = "Ideologies", singular = "Ideology", key = "ideologies", add = "addIdeology", update = "updateIdeology", remove = "removeIdeology" },
-	{ kind = "governments", label = "Governments", singular = "Government", key = "governmentTypes", add = "addGovernmentType", update = "updateGovernmentType", remove = "removeGovernmentType" },
+	{
+		kind = "cultures",
+		label = "Cultures",
+		singular = "Culture",
+		key = "cultures",
+		add = "addCulture",
+		update = "updateCulture",
+		remove = "removeCulture",
+	},
+	{
+		kind = "religions",
+		label = "Religions",
+		singular = "Religion",
+		key = "religions",
+		add = "addReligion",
+		update = "updateReligion",
+		remove = "removeReligion",
+	},
+	{
+		kind = "ideologies",
+		label = "Ideologies",
+		singular = "Ideology",
+		key = "ideologies",
+		add = "addIdeology",
+		update = "updateIdeology",
+		remove = "removeIdeology",
+	},
+	{
+		kind = "governments",
+		label = "Governments",
+		singular = "Government",
+		key = "governmentTypes",
+		add = "addGovernmentType",
+		update = "updateGovernmentType",
+		remove = "removeGovernmentType",
+	},
 }
 
 local function currentRegistry()
 	local kind = state.registryKind or "cultures"
 	for _, r in ipairs(REGISTRIES) do
-		if r.kind == kind then return r end
+		if r.kind == kind then
+			return r
+		end
 	end
 	return REGISTRIES[1]
 end
@@ -2005,7 +2542,8 @@ local function renderIdentity()
 		x += 122
 	end
 
-	local columns = frame({ parent = body, transparent = true, size = UDim2.new(1, 0, 1, -36), position = UDim2.fromOffset(0, 36) })
+	local columns =
+		frame({ parent = body, transparent = true, size = UDim2.new(1, 0, 1, -36), position = UDim2.fromOffset(0, 36) })
 	local detail = makeDetailPane(columns)
 	local store = snap[reg.key] or {}
 
@@ -2049,8 +2587,11 @@ local function renderIdentity()
 		if rec then
 			for _, k in ipairs(sortedKeys(rec)) do
 				local v = rec[k]
-				if k ~= "id" and k ~= "displayName"
-					and (type(v) == "string" or type(v) == "number" or type(v) == "boolean") then
+				if
+					k ~= "id"
+					and k ~= "displayName"
+					and (type(v) == "string" or type(v) == "number" or type(v) == "boolean")
+				then
 					readonlyRow(detail, k, v)
 				end
 			end
@@ -2148,9 +2689,16 @@ local function renderSaves()
 	local res = editorCall("listConfigs")
 	if type(res) == "table" and type(res.configs) == "table" then
 		for _, cfg in ipairs(res.configs) do
-			if cfg.name then configs[cfg.name] = cfg end
+			if cfg.name then
+				configs[cfg.name] = cfg
+			end
 		end
 	end
+
+	-- deleteConfig is manager-only server-side (historians can Load but not Delete), so only show Delete to
+	-- managers instead of letting a historian click it and get a rejection.
+	local authRes = editorCall("authCheck")
+	local canManage = type(authRes) == "table" and authRes.canManage == true
 
 	local function showDetail(name)
 		clearDetail(detail)
@@ -2184,13 +2732,23 @@ local function renderSaves()
 		})
 		saveNewBtn.Position = UDim2.new(1, -128, 0, 0)
 
-		local hint = label(detail, "Named snapshots of the full map + nations, stored in the DataStore.", "bodySm", Colors.TextSecondary)
+		local hint = label(
+			detail,
+			"Named snapshots of the full map + nations, stored in the DataStore.",
+			"bodySm",
+			Colors.TextSecondary
+		)
 		hint.LayoutOrder = -2
 		hint.Size = UDim2.new(1, 0, 0, 18)
 
 		local meta = name and configs[name] or nil
 		if not meta then
-			label(detail, "Select a saved config on the left, or save the current world above.", "bodyMd", Colors.TextSecondary)
+			label(
+				detail,
+				"Select a saved config on the left, or save the current world above.",
+				"bodyMd",
+				Colors.TextSecondary
+			)
 			return
 		end
 
@@ -2212,7 +2770,10 @@ local function renderSaves()
 				if not owArmed then
 					owArmed = true
 					owBtn.Text = "Click again to overwrite"
-					setStatus("Overwrite '" .. name .. "' with the current editor map? Click again to confirm.", Colors.Negative)
+					setStatus(
+						"Overwrite '" .. name .. "' with the current editor map? Click again to confirm.",
+						Colors.Negative
+					)
 					return
 				end
 				owArmed = false
@@ -2241,7 +2802,10 @@ local function renderSaves()
 				if not armed then
 					armed = true
 					loadBtn.Text = "Click again to confirm load"
-					setStatus("Load replaces the live map (current world is auto-backed up). Click again to confirm.", Colors.Negative)
+					setStatus(
+						"Load replaces the live map (current world is auto-backed up). Click again to confirm.",
+						Colors.Negative
+					)
 					return
 				end
 				setStatus("Loading config '" .. name .. "'…", Colors.TextSecondary)
@@ -2261,23 +2825,25 @@ local function renderSaves()
 		})
 		loadBtn.LayoutOrder = 90
 
-		local delBtn = Button.create({
-			parent = detail,
-			variant = "ghost",
-			text = "Delete",
-			width = 100,
-			onClick = function()
-				local r, err = editorCall("deleteConfig", { name = name })
-				if r then
-					setStatus("Deleted config '" .. name .. "'", Colors.Positive)
-					state.selected = nil
-					render()
-				else
-					setStatus("Delete failed: " .. tostring(err), Colors.Negative)
-				end
-			end,
-		})
-		delBtn.LayoutOrder = 91
+		if canManage then
+			local delBtn = Button.create({
+				parent = detail,
+				variant = "ghost",
+				text = "Delete",
+				width = 100,
+				onClick = function()
+					local r, err = editorCall("deleteConfig", { name = name })
+					if r then
+						setStatus("Deleted config '" .. name .. "'", Colors.Positive)
+						state.selected = nil
+						render()
+					else
+						setStatus("Delete failed: " .. tostring(err), Colors.Negative)
+					end
+				end,
+			})
+			delBtn.LayoutOrder = 91
+		end
 	end
 
 	listColumn({
@@ -2400,7 +2966,12 @@ local function renderLogs()
 		local actLbl = label(row, tostring(e.a or "?"), "bodySm", Colors.Accent)
 		actLbl.Position = UDim2.fromOffset(96, 0)
 		actLbl.Size = UDim2.fromOffset(104, 22)
-		local msgLbl = label(row, string.format("%s  -  %s", tostring(e.u or "?"), tostring(e.msg or "")), "bodySm", Colors.TextPrimary)
+		local msgLbl = label(
+			row,
+			string.format("%s  -  %s", tostring(e.u or "?"), tostring(e.msg or "")),
+			"bodySm",
+			Colors.TextPrimary
+		)
 		msgLbl.Position = UDim2.fromOffset(204, 0)
 		msgLbl.Size = UDim2.new(1, -212, 1, 0)
 		msgLbl.TextXAlignment = Enum.TextXAlignment.Left
@@ -2501,7 +3072,10 @@ local function renderAccess()
 					local cmd = p.granted and "revokeAccess" or "grantAccess"
 					local r, err = editorCall(cmd, { userId = p.userId })
 					if r then
-						setStatus((p.granted and "Revoked " or "Granted ") .. (p.name or tostring(p.userId)), Colors.Positive)
+						setStatus(
+							(p.granted and "Revoked " or "Granted ") .. (p.name or tostring(p.userId)),
+							Colors.Positive
+						)
 						render()
 					else
 						setStatus("Failed: " .. tostring(err), Colors.Negative)
@@ -2515,19 +3089,42 @@ local function renderAccess()
 end
 
 render = function()
+	state.refreshList = nil -- drop the previous tab's live-refresh closure; each render<Tab> re-sets it
 	if formablesConn then
 		formablesConn:Disconnect()
 		formablesConn = nil
 	end
 	-- Close any open dropdown popup: it (and its full-screen click-catcher) parent to the root gui, outside
 	-- body, so the body-only clear below would leave a stale invisible click-blocker on a re-render.
-	if openPopup then openPopup:Destroy() end -- its Destroying handler removes the catcher too
+	if openPopup then
+		openPopup:Destroy()
+	end -- its Destroying handler removes the catcher too
 	openPopup = nil
 	for _, child in body:GetChildren() do
-		if child:IsA("GuiObject") then child:Destroy() end
+		if child:IsA("GuiObject") then
+			child:Destroy()
+		end
 	end
 	if not state.snapshot then
-		label(body, "Loading… (or not authorized)", "bodyMd", Colors.TextSecondary)
+		if state.loadError then
+			local msg = label(body, "Couldn't load editor data: " .. state.loadError, "bodyMd", Colors.Negative)
+			msg.Size = UDim2.new(1, 0, 0, 44)
+			msg.TextWrapped = true
+			local retry = Button.create({
+				parent = body,
+				variant = "primary",
+				text = "Retry",
+				width = 120,
+				onClick = function()
+					state.loadError = nil
+					render() -- redraw as the plain loading state while we re-request
+					ensureLoaded()
+				end,
+			})
+			retry.Position = UDim2.fromOffset(0, 52)
+		else
+			label(body, "Loading…", "bodyMd", Colors.TextSecondary)
+		end
 		return
 	end
 	if state.tab == "countries" then
@@ -2554,8 +3151,12 @@ end
 -- #8420-8422). `provincesPage` hands back dense PARALLEL {ids, records} pages we reassemble into the
 -- NUMERIC-keyed dict the rest of the editor expects. Pages are spaced above the server's 0.2s
 -- CALL_COOLDOWN, and a superseding snapshot (reload / undo / redo / tab reload) abandons a stale fill.
+-- Province ids a live co-editor delta patched during an active paging fill: the (possibly stale) page that
+-- arrives after such a delta must not clobber the fresh value (or resurrect a just-deleted province).
+local livePatchedProvinces = {}
 local function loadProvincesPaged(snap)
 	snap.provinces = snap.provinces or {}
+	table.clear(livePatchedProvinces)
 	local offset, total = 0, nil
 	while snap == state.snapshot do
 		task.wait(0.25)
@@ -2570,7 +3171,10 @@ local function loadProvincesPaged(snap)
 		total = page.total or total
 		local ids, recs = page.ids or {}, page.records or {}
 		for i = 1, #ids do
-			snap.provinces[tonumber(ids[i]) or ids[i]] = recs[i]
+			local pid = tonumber(ids[i]) or ids[i]
+			if not livePatchedProvinces[pid] then
+				snap.provinces[pid] = recs[i]
+			end
 		end
 		local loaded = 0
 		for _ in pairs(snap.provinces) do
@@ -2612,10 +3216,16 @@ applySnapshot = function(snap)
 	end
 	state.snapshot = snap
 	buildSearchCache(snap)
-	if applyDepths then applyDepths(snap) end
+	if applyDepths then
+		applyDepths(snap)
+	end
 	local cn, pn = 0, 0
-	for _ in pairs(snap.countries or {}) do cn += 1 end
-	for _ in pairs(snap.provinces or {}) do pn += 1 end
+	for _ in pairs(snap.countries or {}) do
+		cn += 1
+	end
+	for _ in pairs(snap.provinces or {}) do
+		pn += 1
+	end
 	local extra = state.dirty and "  •  unsaved" or ""
 	setStatus(string.format("%d countries  •  %d provinces%s", cn, pn, extra))
 	render()
@@ -2625,15 +3235,29 @@ applySnapshot = function(snap)
 	end
 end
 
-local function ensureLoaded()
-	if state.loaded then return end
-	local snap, err = editorCall("loadState")
-	if not snap then
-		setStatus("Load failed: " .. tostring(err), Colors.Negative)
+ensureLoaded = function()
+	if state.loaded then
 		return
 	end
+	local snap, err = editorCall("loadState")
+	if not snap then
+		-- Distinguish a failed load from still-loading so render() can offer a Retry instead of a permanent
+		-- ambiguous "Loading…" (the header status also shows the error).
+		state.loadError = tostring(err)
+		setStatus("Load failed: " .. tostring(err), Colors.Negative)
+		render()
+		return
+	end
+	state.loadError = nil
 	state.loaded = true
 	applySnapshot(snap)
+	-- Surface read-only up-front: if this server can't write (off the editor place, or not the blessed
+	-- single-server writer), say so now rather than only when an edit is rejected. Edits still round-trip to
+	-- the server, which is the authoritative gate; this is just an early heads-up.
+	state.canWrite = snap.canWriteHere ~= false
+	if not state.canWrite then
+		setStatus("Read-only on this server — browse only. Reopen from the editor's blessed server to make changes.", Colors.Negative)
+	end
 end
 
 -- ─────────────────────────── map-click painting (Phase 6) ───────────────────────────
@@ -2665,17 +3289,61 @@ do
 							setStatus("That tile isn't a seeded province yet", Colors.TextSecondary)
 							return
 						end
-						local owner = state.paintOwner
-						-- assignProvince (paint cooldown 0.05s) sets owner+controller without the 2.5s write throttle.
-						local res, err = editorCall("assignProvince", { id = pid, ownerTag = owner })
-						if res then
-							local p = snap.provinces[pid]
-							p.ownerTag = owner
-							p.controllerTag = owner
-							markDirty()
-							setStatus(string.format("Painted #%s → %s", tostring(pid), owner), Colors.Positive)
+						local tag = state.paintOwner
+						local target = state.paintTarget or "owner"
+						local field = paintFieldForTarget(target)
+						if not field then
+							-- OWNER (single value): assignProvince (paint cooldown) sets owner+controller.
+							local res, err = editorCall("assignProvince", { id = pid, ownerTag = tag })
+							if res then
+								local p = snap.provinces[pid]
+								p.ownerTag = tag
+								p.controllerTag = tag
+								markDirty()
+								setStatus(string.format("Painted #%s owner -> %s", tostring(pid), tag), Colors.Positive)
+							else
+								setStatus("Paint failed: " .. tostring(err), Colors.Negative)
+							end
 						else
-							setStatus("Paint failed: " .. tostring(err), Colors.Negative)
+							-- CORE / DEFAULT CORE / CLAIM (list): add or remove the brush tag.
+							local mode = state.paintMode or "add"
+							local res, err =
+								editorCall("paintTag", { id = pid, target = target, tag = tag, mode = mode })
+							if res then
+								local p = snap.provinces[pid]
+								p[field] = p[field] or {}
+								local idx
+								for i, t in ipairs(p[field]) do
+									if t == tag then
+										idx = i
+										break
+									end
+								end
+								if mode == "remove" then
+									if idx then
+										table.remove(p[field], idx)
+									end
+								elseif not idx then
+									table.insert(p[field], tag)
+								end
+								markDirty()
+								flashPaint(part, mode)
+								if paintUpdate then
+									paintUpdate()
+								end
+								setStatus(
+									string.format(
+										"%s %s %s #%s",
+										mode == "remove" and "Removed" or "Added",
+										tag,
+										target,
+										tostring(pid)
+									),
+									Colors.Positive
+								)
+							else
+								setStatus("Paint failed: " .. tostring(err), Colors.Negative)
+							end
 						end
 					elseif seeded then
 						-- SELECT: jump the Provinces tab to the clicked province + open its detail.
@@ -2686,14 +3354,13 @@ do
 				end)
 			end
 			if PI.addMultiSelectListener then
-				-- Keep the bulk-assign controls live as the map multi-selection (shift-click) changes.
+				-- Keep the Apply-selected button live (label + enabled) as the map multi-selection changes.
+				-- Only while the Provinces tab is showing: off-tab, paintUpdate points at the previous render's
+				-- destroyed controls (render() rebuilt the body), so touching them would be wasted work.
 				PI.addMultiSelectListener(function(selection)
 					state.multiSelCount = selection and #selection or 0
-					if bulkCountLabel and bulkCountLabel.Parent then
-						bulkCountLabel.Text = state.multiSelCount > 0 and (state.multiSelCount .. " selected") or ""
-					end
-					if bulkApplyBtn and bulkApplyBtn.Parent then
-						bulkApplyBtn.Visible = state.multiSelCount > 0
+					if state.tab == "provinces" and paintUpdate then
+						paintUpdate() -- refreshes the Apply-selected label + enabled state
 					end
 				end)
 			end
@@ -2742,21 +3409,95 @@ do
 		return remotesFolder:WaitForChild("DataEditorLive", 15)
 	end)
 	if ok and live then
-		live.OnClientEvent:Connect(function(payload)
-			if type(payload) ~= "table" or not payload.sharedMoved then
-				return
+		-- Per-edit live sync: the server broadcasts co-editor edits on this same remote. Payload shapes:
+		--   {kind,key,value}  single delta (value nil = delete)   |   {batch=true, items={...}}  batch of them
+		--   {sharedMoved=true} / {reload=true}                    save / config-load / undo-redo boundary (full re-sync)
+		local DELTA_FIELD = {
+			country = "countries",
+			province = "provinces",
+			culture = "cultures",
+			religion = "religions",
+			ideology = "ideologies",
+			government = "governmentTypes", -- server kind "government" -> snap field "governmentTypes"
+			tile = "tileOwners",
+		}
+		local DELTA_TAB = { country = "countries", province = "provinces" }
+		-- Apply ONE co-editor edit into the local snapshot WITHOUT a full reload: patch the model + search index
+		-- (never markDirty -- it is a remote edit, not ours) and return true if the CURRENT tab list should refresh.
+		-- Deliberately does NOT rebuild an open detail form (that would clobber mid-edit typing); the selected
+		-- record refreshes on reselect or on a save-boundary reload.
+		local function applyLiveDelta(kind, key, value)
+			local snap = state.snapshot
+			if not snap then
+				return false
 			end
-			local who = payload.originName and (" by " .. tostring(payload.originName)) or ""
-			if state.dirty then
-				setStatus("Map changed" .. who .. " - click Reload to sync (you have unsaved edits).", Colors.Negative)
-				return
+			local field = DELTA_FIELD[kind]
+			if not field or not snap[field] then
+				return false -- unknown / non-UI kind (e.g. eu4Map): ignore
 			end
-			local snap = editorCall("reloadState")
-			if snap and type(snap) == "table" and snap.countries then
+			if kind == "province" then
+				key = tonumber(key) or key -- snap.provinces is numeric-keyed (see applySnapshot)
+				livePatchedProvinces[key] = true -- so an in-flight stale page cannot clobber this (loadProvincesPaged)
+			end
+			local isDelete = value == nil
+			snap[field][key] = value
+			if kind == "country" then
+				if isDelete then
+					searchCache.countries[key] = nil
+				else
+					searchCache.countries[key] = string.lower(tostring(key) .. " " .. (value.displayName or ""))
+				end
+				invalidateCountryTags()
+			elseif kind == "province" then
+				if isDelete then
+					searchCache.provinces[key] = nil
+				else
+					searchCache.provinces[key] = string.lower(tostring(key) .. " " .. (value.name or ""))
+				end
+			end
+			if isDelete and key == state.selected then
 				state.selected = nil
-				clearDirty()
-				applySnapshot(snap)
-				setStatus("Synced with the latest map" .. who, Colors.TextSecondary)
+			end
+			return DELTA_TAB[kind] == state.tab and state.refreshList ~= nil
+		end
+		live.OnClientEvent:Connect(function(payload)
+			if type(payload) ~= "table" then
+				return
+			end
+			-- (1) Batch of per-edit deltas.
+			if payload.batch and type(payload.items) == "table" then
+				local refresh = false
+				for _, item in ipairs(payload.items) do
+					if applyLiveDelta(item.kind, item.key, item.value) then
+						refresh = true
+					end
+				end
+				if refresh and state.refreshList then
+					state.refreshList()
+				end
+				return
+			end
+			-- (2) Single per-edit delta.
+			if payload.kind then
+				if applyLiveDelta(payload.kind, payload.key, payload.value) and state.refreshList then
+					state.refreshList()
+				end
+				return
+			end
+			-- (3) Save / config-load / undo-redo boundary: the shared world moved wholesale -> full re-sync when idle.
+			if payload.sharedMoved or payload.reload then
+				local who = payload.originName and (" by " .. tostring(payload.originName)) or ""
+				if state.dirty then
+					setStatus("Map changed" .. who .. " - click Reload to sync (you have unsaved edits).", Colors.Negative)
+					return
+				end
+				local snap = editorCall("reloadState")
+				if snap and type(snap) == "table" and snap.countries then
+					state.selected = nil
+					clearDirty()
+					applySnapshot(snap)
+					setStatus("Synced with the latest map" .. who, Colors.TextSecondary)
+				end
 			end
 		end)
 	end

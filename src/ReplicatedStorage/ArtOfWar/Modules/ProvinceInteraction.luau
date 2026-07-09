@@ -8,6 +8,7 @@ local GuiService = game:GetService("GuiService")
 local Platform = require(script.Parent:WaitForChild("Platform"))
 local WorldConstants = require(script.Parent.Parent:WaitForChild("Shared"):WaitForChild("WorldConstants"))
 local SeaNodes = require(script.Parent.Parent:WaitForChild("Shared"):WaitForChild("SeaNodes"))
+local InputGuard = require(script.Parent:WaitForChild("InputGuard"))
 
 local DEBOUNCE_FRAMES = 1
 local HOVER_INTERVAL = 1 / 30
@@ -36,6 +37,7 @@ local multiSelection = {}
 local multiHighlights = {}
 
 local raycastFolders = {}
+local screenSelectors = {}
 
 local MULTI_FILL = Color3.fromRGB(120, 220, 255)
 local MULTI_OUTLINE = Color3.fromRGB(180, 235, 255)
@@ -127,8 +129,12 @@ local function isMouseOverUI()
 	end
 	local mp = UserInputService:GetMouseLocation()
 	local now = os.clock()
-	if uiCacheX and (now - uiCacheClock) < UI_CACHE_TTL
-		and math.abs(mp.X - uiCacheX) < UI_CACHE_MOVE and math.abs(mp.Y - uiCacheY) < UI_CACHE_MOVE then
+	if
+		uiCacheX
+		and (now - uiCacheClock) < UI_CACHE_TTL
+		and math.abs(mp.X - uiCacheX) < UI_CACHE_MOVE
+		and math.abs(mp.Y - uiCacheY) < UI_CACHE_MOVE
+	then
 		return uiCacheResult
 	end
 	uiCacheX, uiCacheY, uiCacheClock = mp.X, mp.Y, now
@@ -153,7 +159,9 @@ local function isMouseOverUI()
 			end
 			cursor = cursor.Parent
 		end
-		if result then break end
+		if result then
+			break
+		end
 	end
 	uiCacheResult = result
 	return result
@@ -185,6 +193,16 @@ local altInspecting = false
 -- toggle provinces instead (on-screen toggle in HudWiring).
 local MULTI_SELECT_MAX = 25
 local multiSelectMode = false
+-- Phase C touch-gesture state (flag-gated). dragMoveProbe: fn(screenPos,maxPx)->selected army provinceId near
+-- the point (set by ArmyView) for drag-to-move; dragMoveFrom: province the current drag started on. Long-press
+-- (radial) uses a token to cancel + a fired flag to consume the release.
+local dragMoveProbe = nil
+local dragMoveFrom = nil
+local onLongPressed = nil
+local longPressToken = 0
+local longPressFired = false
+local LONG_PRESS_TIME = 0.35
+local dragSelectTarget = "units" -- A3: "units" | "provinces"; touch on-screen sub-toggle (PC uses Alt)
 
 local function getProvinceAtMouse(skipUiCheck)
 	local cam = activeCamera()
@@ -378,6 +396,44 @@ local function tryClassifierRaycasts()
 	return false
 end
 
+-- Screen-space selectors (touch-friendly, army-beats-province): unlike the raycast classifiers, these receive the
+-- tap point + a pixel radius and may select the NEAREST matching thing (e.g. the nearest owned army token) even
+-- when a precise raycast would miss it and fall through to the province. Returns true if one consumed the tap.
+local function tryScreenSelectors()
+	if #screenSelectors == 0 then
+		return false
+	end
+	if isMouseOverUI() then
+		return false
+	end
+	local mp = UserInputService:GetMouseLocation()
+	local screenPos = Vector2.new(mp.X, mp.Y)
+	local maxPx = Platform.isTouch and 44 or 10 -- forgiving on touch; near-exact on desktop
+	-- B4: in touch box-select mode a plain tap ADDS to the selection (touch has no Shift).
+	local additive = (Platform.isTouch and multiSelectMode)
+		or UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+		or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
+	for _, fn in ipairs(screenSelectors) do
+		local ok, consumed = pcall(fn, screenPos, maxPx, additive)
+		if ok and consumed then
+			return true
+		end
+	end
+	return false
+end
+
+function ProvinceInteraction.addScreenSelector(fn)
+	if type(fn) == "function" then
+		table.insert(screenSelectors, fn)
+	end
+end
+
+-- B3: a callback (registered by ArmyView) returning how many stacks fall inside a viewport rect, for the
+-- live "N selected" marquee count.
+function ProvinceInteraction.setDragCountProvider(fn)
+	dragCountProvider = (type(fn) == "function") and fn or nil
+end
+
 function ProvinceInteraction.addRaycastFolder(folder, classifierFn)
 	if not folder or type(classifierFn) ~= "function" then
 		return
@@ -406,7 +462,8 @@ end
 -- Drag-select rectangle. A small 2D box drawn while the player left-drags over the map. The GUI uses
 -- IgnoreGuiInset so its (0,0) matches GetMouseLocation / WorldToViewportPoint space, keeping the box
 -- aligned with the cursor and consistent with the army hit-test (ArmyView.selectArmiesInScreenRect).
-local dragGui, dragFrame
+local dragGui, dragFrame, dragCountLabel
+local dragCountProvider = nil
 local function ensureDragGui()
 	if dragFrame and dragFrame.Parent then
 		return dragFrame
@@ -436,7 +493,31 @@ local function ensureDragGui()
 	stroke.Transparency = 0.1
 	stroke.Parent = dragFrame
 	dragFrame.Parent = dragGui
+	dragCountLabel = Instance.new("TextLabel")
+	dragCountLabel.Name = "Count"
+	dragCountLabel.BackgroundColor3 = SELECT_OUTLINE
+	dragCountLabel.BackgroundTransparency = 0.15
+	dragCountLabel.TextColor3 = Color3.new(0, 0, 0)
+	dragCountLabel.Font = Enum.Font.GothamBold
+	dragCountLabel.TextSize = 14
+	dragCountLabel.AnchorPoint = Vector2.new(0.5, 1)
+	dragCountLabel.Size = UDim2.fromOffset(130, 22)
+	dragCountLabel.Visible = false
+	dragCountLabel.ZIndex = 12
+	local lc = Instance.new("UICorner")
+	lc.CornerRadius = UDim.new(0, 6)
+	lc.Parent = dragCountLabel
+	dragCountLabel.Parent = dragGui
 	return dragFrame
+end
+
+-- B3: which thing the current drag will box-select (drives the live count label + is set by Alt on PC /
+-- the on-screen target toggle on touch).
+local function currentDragTargetIsProvinces()
+	if Platform.isTouch then
+		return dragSelectTarget == "provinces"
+	end
+	return UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) or UserInputService:IsKeyDown(Enum.KeyCode.RightAlt)
 end
 
 local function updateDragRect(a, b)
@@ -448,17 +529,57 @@ local function updateDragRect(a, b)
 	frame.Position = UDim2.fromOffset(minX, minY)
 	frame.Size = UDim2.fromOffset(math.abs(a.X - b.X), math.abs(a.Y - b.Y))
 	frame.Visible = true
+	if dragCountLabel then
+		-- B3: live count above the current finger/cursor (b) so the box target is legible under the finger.
+		local off = Platform.isTouch and 46 or 20
+		dragCountLabel.Position = UDim2.fromOffset(b.X, b.Y - off)
+		if currentDragTargetIsProvinces() then
+			dragCountLabel.Text = "Provinces"
+		elseif dragCountProvider then
+			local mnX, mnY = math.min(a.X, b.X), math.min(a.Y, b.Y)
+			local mxX, mxY = math.max(a.X, b.X), math.max(a.Y, b.Y)
+			local ok, cnt = pcall(dragCountProvider, Vector2.new(mnX, mnY), Vector2.new(mxX, mxY))
+			local n2 = (ok and cnt) or 0
+			dragCountLabel.Text = n2 .. (n2 == 1 and " army" or " armies")
+		else
+			dragCountLabel.Text = ""
+		end
+		dragCountLabel.Visible = true
+	end
 end
 
 local function hideDragRect()
 	if dragFrame then
 		dragFrame.Visible = false
 	end
+	if dragCountLabel then
+		dragCountLabel.Visible = false
+	end
+end
+
+-- Camera-freeze predicate (InputGuard "dragSelect"): freeze the map camera while box-select mode is on, OR
+-- (C2) while a touch is starting on a SELECTED army so a finger-drag becomes a MOVE order instead of a pan.
+-- A fresh hit-test each check (no stored flag) so it never races the camera controller's own InputBegan.
+local function cameraShouldFreeze()
+	if multiSelectMode then
+		return true
+	end
+	-- C2: freeze for the WHOLE drag once it armed on a selected army (dragMoveFrom set in InputBegan). Do NOT
+	-- re-probe the live cursor here: TouchPan.Begin fires on the FIRST movement, by which point the finger may
+	-- already be past the token, so a live probe would miss and let the map pan mid-move (the intermittent bug).
+	if dragMoveFrom ~= nil then
+		return true
+	end
+	return false
 end
 
 function ProvinceInteraction.init()
 	ensureHighlights()
 	rebuildFilter()
+
+	-- Freeze the camera while drag-select mode is on (mobile): CameraController.TouchPan bails whenever
+	-- InputGuard.isCameraBlocked(), so a finger-drag draws the unit marquee instead of panning the map.
+	InputGuard.register("dragSelect", cameraShouldFreeze)
 
 	connections[#connections + 1] = Players.PlayerAdded:Connect(function(p)
 		rebuildFilter()
@@ -547,8 +668,30 @@ function ProvinceInteraction.init()
 		end
 		-- Touch tap: track the press; resolve as a tap (select/move) or a drag (camera pan) on release.
 		if input.UserInputType == Enum.UserInputType.Touch then
-			touchDownPos = Vector2.new(input.Position.X, input.Position.Y)
+			-- Capture the touch point from input.Position + GUI inset -> the true-top-left space the drag box and
+			-- WorldToViewportPoint hit-tests use. input.Position is reliable on the touch-BEGIN frame (GetMouseLocation
+			-- can be stale then), so the marquee anchor AND the drag-to-move probe do not intermittently miss.
+			local gi = GuiService:GetGuiInset()
+			touchDownPos = Vector2.new(input.Position.X + gi.X, input.Position.Y + gi.Y)
 			touchMoved = false
+			-- C2: if the press starts on a SELECTED army (and not in box-select mode), arm drag-to-move; the
+			-- camera is frozen for this drag by cameraShouldFreeze, so a finger-drag to a province is a move.
+			dragMoveFrom = nil
+			if WorldConstants.EnableDragToMove and dragMoveProbe and not multiSelectMode then
+				dragMoveFrom = dragMoveProbe(touchDownPos, 44)
+			end
+			-- C1: begin a long-press timer; a stationary hold opens the radial order menu.
+			longPressFired = false
+			if WorldConstants.EnableRadialOrders and onLongPressed and not multiSelectMode then
+				longPressToken += 1
+				local myToken = longPressToken
+				local pos = touchDownPos
+				task.delay(LONG_PRESS_TIME, function()
+					if myToken == longPressToken and touchDownPos and not touchMoved then
+						longPressFired = onLongPressed(pos) == true
+					end
+				end)
+			end
 			return
 		end
 		if input.KeyCode == Enum.KeyCode.Escape then
@@ -578,8 +721,10 @@ function ProvinceInteraction.init()
 		if mb1DownPos and input.UserInputType == Enum.UserInputType.MouseMovement then
 			local mp = UserInputService:GetMouseLocation()
 			if not mb1Dragging then
-				if math.abs(mp.X - mb1DownPos.X) > CLICK_DRAG_THRESHOLD
-					or math.abs(mp.Y - mb1DownPos.Y) > CLICK_DRAG_THRESHOLD then
+				if
+					math.abs(mp.X - mb1DownPos.X) > CLICK_DRAG_THRESHOLD
+					or math.abs(mp.Y - mb1DownPos.Y) > CLICK_DRAG_THRESHOLD
+				then
 					mb1Dragging = true
 				end
 			end
@@ -587,12 +732,21 @@ function ProvinceInteraction.init()
 				updateDragRect(mb1DownPos, Vector2.new(mp.X, mp.Y))
 			end
 		end
-		-- Touch drag past the threshold = a pan (handled by CameraController.TouchPan), not a tap.
+		-- Touch drag: in drag-select mode it draws the unit marquee (camera is frozen by the InputGuard
+		-- predicate); otherwise it's a pan (handled by CameraController.TouchPan) and just disqualifies
+		-- the press from being a tap.
 		if touchDownPos and input.UserInputType == Enum.UserInputType.Touch then
-			local p = input.Position
-			if math.abs(p.X - touchDownPos.X) > CLICK_DRAG_THRESHOLD
-				or math.abs(p.Y - touchDownPos.Y) > CLICK_DRAG_THRESHOLD then
+			local gic = GuiService:GetGuiInset()
+			local p = Vector2.new(input.Position.X + gic.X, input.Position.Y + gic.Y)
+			if
+				math.abs(p.X - touchDownPos.X) > CLICK_DRAG_THRESHOLD
+				or math.abs(p.Y - touchDownPos.Y) > CLICK_DRAG_THRESHOLD
+			then
 				touchMoved = true
+				longPressToken += 1 -- C1: a moved touch isn't a long-press
+			end
+			if multiSelectMode and touchMoved then
+				updateDragRect(touchDownPos, Vector2.new(p.X, p.Y))
 			end
 		end
 	end)
@@ -606,23 +760,58 @@ function ProvinceInteraction.init()
 			local moved = touchMoved
 			touchDownPos = nil
 			touchMoved = false
+			-- Capture + clear the drag-to-move arm on EVERY touch-end path so an early return (long-press /
+			-- box-select) can never leak a stale dragMoveFrom (which would keep the camera frozen).
+			local fromArmy = dragMoveFrom
+			dragMoveFrom = nil
+			-- C1: a long-press already opened the radial; consume this release so it doesn't also tap/move.
+			if longPressFired then
+				longPressFired = false
+				return
+			end
+			-- 0) Drag-select mode (on-screen toggle; camera is frozen): a finger-DRAG resolves the marquee
+			--    into a unit box-select (mirrors the mouse mb1 marquee); a plain TAP falls through to the
+			--    normal select path below (touch has no modifier keys, so drag always replaces).
+			if multiSelectMode and moved then
+				hideDragRect()
+				if downPos and not processed and onDragSelected then
+					local gie = GuiService:GetGuiInset()
+					local p = Vector2.new(input.Position.X + gie.X, input.Position.Y + gie.Y)
+					local minV = Vector2.new(math.min(downPos.X, p.X), math.min(downPos.Y, p.Y))
+					local maxV = Vector2.new(math.max(downPos.X, p.X), math.max(downPos.Y, p.Y))
+					if dragSelectTarget == "provinces" and WorldConstants.EnableMultiProvinceActions then
+						ProvinceInteraction.selectProvincesInScreenRect(minV, maxV, false)
+					else
+						onDragSelected(minV, maxV, false)
+					end
+				end
+				return
+			end
+			-- C2: a drag that started on a selected army resolves as a MOVE to the release province (or sea node).
+			if fromArmy ~= nil then
+				if moved and not processed and not isMouseOverUI() then
+					local okm, prov = pcall(getProvinceAtMouse, true)
+					if okm and prov and onRightClicked then
+						onRightClicked(prov)
+						return
+					end
+					if not (okm and prov) then
+						local seaNodeId = getSeaMoveTarget()
+						if seaNodeId and onRightClicked then
+							onRightClicked({ seaNodeId = seaNodeId })
+							return
+						end
+					end
+				end
+			end
 			if not downPos or moved or processed then
 				return
 			end
 			if isMouseOverUI() then
 				return
 			end
-			-- 0) Multi-Select mode (on-screen toggle; touch has no modifier keys): plain taps
-			--    toggle provinces in/out of the multi-selection and never move/select.
-			if multiSelectMode then
-				local okM, provinceM = pcall(getProvinceAtMouse, true)
-				if okM and provinceM then
-					toggleInMultiSelection(provinceM)
-				end
-				return
-			end
 			-- 1) Tapped one of our own armies -> classifier selects/stacks it.
-			if tryClassifierRaycasts() then
+			if tryScreenSelectors() or tryClassifierRaycasts() then
 				clearSelectionSilent()
 				clearMultiSelection()
 				return
@@ -689,7 +878,13 @@ function ProvinceInteraction.init()
 				local maxV = Vector2.new(math.max(downPos.X, mp.X), math.max(downPos.Y, mp.Y))
 				local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
 					or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
-				onDragSelected(minV, maxV, shift)
+				local boxAlt = UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt)
+					or UserInputService:IsKeyDown(Enum.KeyCode.RightAlt)
+				if boxAlt and WorldConstants.EnableMultiProvinceActions then
+					ProvinceInteraction.selectProvincesInScreenRect(minV, maxV, shift)
+				else
+					onDragSelected(minV, maxV, shift)
+				end
 			end
 			return
 		end
@@ -703,7 +898,7 @@ function ProvinceInteraction.init()
 			or UserInputService:IsKeyDown(Enum.KeyCode.RightAlt)
 		-- Alt bypasses unit selection so a click selects the TILE under a unit (the underlying
 		-- province is inspectable even when an army token sits on top of it).
-		if not alt and tryClassifierRaycasts() then
+		if not alt and (tryScreenSelectors() or tryClassifierRaycasts()) then
 			-- A classifier (e.g. ArmyView) already handled this click and selected a unit.
 			-- Clear the province highlight silently so we don't deselect that unit; the
 			-- province detail panel is hidden by the army-selected listener in UIController.
@@ -718,8 +913,14 @@ function ProvinceInteraction.init()
 		-- the same routing the touch tap-to-move rule uses. Alt keeps inspecting; a pending
 		-- targeted command (fleet attack etc.) keeps priority and resolves through the select
 		-- pipeline below; empty clicks fall through to deselect.
-		if WorldConstants.EnableNewInputScheme and not alt and ok3 and province
-			and rightClickArmed() and not commandPending() then
+		if
+			WorldConstants.EnableNewInputScheme
+			and not alt
+			and ok3
+			and province
+			and rightClickArmed()
+			and not commandPending()
+		then
 			if onRightClicked then
 				onRightClicked(province)
 			end
@@ -728,8 +929,13 @@ function ProvinceInteraction.init()
 		-- Sea move (C9): with units selected, an empty click that resolves NO province but sits
 		-- near a baked sea node is a move order onto that node instead of a deselect. Sea stays
 		-- unselectable -- with nothing selected (or no node in range) water still deselects below.
-		if WorldConstants.EnableNewInputScheme and not alt and not (ok3 and province)
-			and rightClickArmed() and not commandPending() then
+		if
+			WorldConstants.EnableNewInputScheme
+			and not alt
+			and not (ok3 and province)
+			and rightClickArmed()
+			and not commandPending()
+		then
 			local seaNodeId = getSeaMoveTarget()
 			if seaNodeId and onRightClicked then
 				onRightClicked({ seaNodeId = seaNodeId })
@@ -779,6 +985,17 @@ end
 -- Coordinates are in viewport space (GetMouseLocation / WorldToViewportPoint).
 function ProvinceInteraction.onDragSelect(cb)
 	onDragSelected = cb
+end
+
+-- C2: probe registered by ArmyView -- given a screen point, returns the provinceId of a SELECTED owned army
+-- token near it (or nil), used to arm drag-to-move and to freeze the camera for that gesture.
+function ProvinceInteraction.setDragMoveProbe(fn)
+	dragMoveProbe = (type(fn) == "function") and fn or nil
+end
+
+-- C1: callback fired on a stationary long-press (screenPos). HudWiring opens the radial order menu.
+function ProvinceInteraction.onLongPress(cb)
+	onLongPressed = cb
 end
 function ProvinceInteraction.setRightClickPredicate(fn)
 	rightClickArmed = (type(fn) == "function") and fn or function()
@@ -878,6 +1095,52 @@ function ProvinceInteraction.destroy()
 		selectHighlight = nil
 	end
 	hoveredProvince, selectedProvince = nil, nil
+end
+
+-- A3: box-select PROVINCES (Alt+drag on PC, or the Provinces drag-target on touch). Projects province parts into
+-- the viewport rect and adds those inside it to the multi-province selection (which drives the aggregate panel).
+-- `additive` keeps the current multi-selection; otherwise it replaces it. Returns the multi-selection size.
+function ProvinceInteraction.selectProvincesInScreenRect(rectMin, rectMax, additive)
+	local cam = activeCamera()
+	if not cam then
+		return 0
+	end
+	local map = workspace:FindFirstChild("ArtOfWarMap")
+	local folder = map and map:FindFirstChild("Provinces")
+	if not folder then
+		return 0
+	end
+	if not additive then
+		clearMultiSelection()
+	end
+	local present = {}
+	for _, part in ipairs(multiSelection) do
+		present[part] = true
+	end
+	local added = false
+	for _, part in ipairs(folder:GetChildren()) do
+		if part:IsA("BasePart") and not present[part] and #multiSelection < MULTI_SELECT_MAX then
+			local sp, onScreen = cam:WorldToViewportPoint(part.Position)
+			if onScreen and sp.X >= rectMin.X and sp.X <= rectMax.X and sp.Y >= rectMin.Y and sp.Y <= rectMax.Y then
+				table.insert(multiSelection, part)
+				present[part] = true
+				added = true
+			end
+		end
+	end
+	if added then
+		applyMultiHighlights()
+		notifyMultiSelectionChanged()
+	end
+	return #multiSelection
+end
+
+function ProvinceInteraction.setDragSelectTarget(target)
+	dragSelectTarget = (target == "provinces") and "provinces" or "units"
+end
+
+function ProvinceInteraction.getDragSelectTarget()
+	return dragSelectTarget
 end
 
 return ProvinceInteraction

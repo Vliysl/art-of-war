@@ -202,14 +202,16 @@ local function applySnapshot()
 					preview = string.sub(preview, 1, 300) .. "..."
 				end
 			end
-			print(string.format(
-				"[EditorAdmins] config '%s' raw(%s)=%s -> managers=%d historians=%d",
-				EditorAdmins.CONFIG_KEY,
-				typeof(rawForLog),
-				preview,
-				countSet(managers),
-				countSet(historians)
-			))
+			print(
+				string.format(
+					"[EditorAdmins] config '%s' raw(%s)=%s -> managers=%d historians=%d",
+					EditorAdmins.CONFIG_KEY,
+					typeof(rawForLog),
+					preview,
+					countSet(managers),
+					countSet(historians)
+				)
+			)
 			if gotRaw and countSet(managers) == 0 and countSet(historians) == 0 then
 				warn(
 					"[EditorAdmins] config '"
@@ -322,6 +324,12 @@ local function isMapEditorPlace()
 	return game.PlaceId == MAP_EDITOR_PLACE_ID
 end
 
+-- Public: DataEditorService uses this to keep the editor read-only on the live game place (where DataOverlay
+-- writes hit the un-suffixed LIVE DataStore keys) even for official managers who can otherwise open it anywhere.
+function EditorAdmins.isMapEditorPlace()
+	return isMapEditorPlace()
+end
+
 -- Managers can use the editor AND run the destructive/admin actions and manage who else can. Official
 -- managers always qualify; config-listed managers qualify; the VIP private-server owner qualifies only when
 -- the owner suite is enabled.
@@ -395,7 +403,12 @@ function EditorAdmins.classify(player)
 	if isMapEditorPlace() and isConfigHistorian(player) then
 		return "historian"
 	end
-	if EditorAdmins.OWNER_SUITE_ENABLED and isMapEditorPlace() and isPlayer(player) and granted[player.UserId] == true then
+	if
+		EditorAdmins.OWNER_SUITE_ENABLED
+		and isMapEditorPlace()
+		and isPlayer(player)
+		and granted[player.UserId] == true
+	then
 		return "granted"
 	end
 	return "none"

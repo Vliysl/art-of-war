@@ -53,6 +53,8 @@ WorldConstants.EnableArmyGroups = true -- Combat depth B: persistent named army 
 WorldConstants.EnableGenerals = true -- Combat depth C: hire/assign named generals that boost a group
 WorldConstants.EnableBorderCover = true -- Combat depth D: "Cover Border vs Nation" auto-front order
 WorldConstants.EnableGroupCards = true -- HUD army-group card strip (moves group functions off the unit panel); off -> old ArmyPanel group bar
+WorldConstants.EnableRadialOrders = false -- Phase C: long-press radial order menu (touch); flag-gated, needs on-device tuning
+WorldConstants.EnableDragToMove = false -- Phase C: drag from a selected army to a province = move (touch); flag-gated, needs on-device tuning
 
 -- Ownership unification (single source of truth = the WorldState record). See the ownership-restructure plan.
 WorldConstants.RecordDrivenMapColoring = true -- P2: client colours the political map + nation-select highlight from the replicated record, not part attributes
@@ -327,6 +329,39 @@ WorldConstants.AutonomyAffectsTax = true -- multiplies (1 - autonomy)
 WorldConstants.ManufactoryInfraScalePerTier = 0.05 -- +5pct manufactory throughput per infra tier above min
 WorldConstants.ArmyUpkeepBaseMultiplier = 0.1 -- daily upkeep cost multiplier on unit upkeep stat
 WorldConstants.ManufactoryDailyCycles = 0.1 -- a manufactory completes 0.1 cycles per day baseline
+
+-- =====================================================================
+-- DISTRICT ECONOMY REWORK (see plan i-want-to-plan-swift-peacock.md)
+-- Phased kill-switches -- each OFF until its phase ships + is verified.
+-- Enable order: MonthlyEconomy -> (seed districts) -> DistrictTax -> DistrictsPlayable -> gates.
+-- =====================================================================
+WorldConstants.MonthlyEconomy = true -- P1: commit treasury + resources once per in-game month
+WorldConstants.DistrictTax = true -- P2: district-based tax (removes tax-per-population)
+WorldConstants.DistrictsPlayable = true -- P3: districts occupy infra slots; build/upgrade; seed migration
+WorldConstants.GateExtractionOnDistricts = true -- P4: a good is produced only if its matching extraction district exists
+WorldConstants.GateRecruitOnMilitary = true -- P4: professional units require a Military district
+
+-- District monthly tax = DistrictBaseTax[type] * D(level), D(L)=(1-g^L)/(1-g) (diminishing; asymptote 1/(1-g)).
+WorldConstants.DistrictBaseTax = {
+	Harbor = 0.5,
+	Manufacturing = 0.7,
+	Industrial = 0.5,
+	Mining = 0.3,
+	Agricultural = 0.2,
+	Military = 0,
+}
+WorldConstants.DistrictLevelDiminish = 0.6 -- g in D(L); 0.6 => L1=1.0 L2=1.6 L3=1.96 ... asymptote 2.5x
+WorldConstants.CapitalInnateTax = 1.0 -- flat +/mo innate tax on the capital province
+WorldConstants.ExportSellRate = 0.01 -- monthly surplus goods auto-sell at basePrice * this
+WorldConstants.DistrictExtractionLevelBonus = 0.25 -- extraction amount *= (1 + this*(level-1))
+
+-- District build / upgrade cost + time (per TARGET level).
+WorldConstants.DistrictBaseCost = 15 -- cost(L) = round(DistrictBaseCost * DistrictCostGrowth^(L-1))
+WorldConstants.DistrictCostGrowth = 1.7
+WorldConstants.DistrictBuildDaysBase = 60 -- buildDays(L) = base + perLevel*(L-1)
+WorldConstants.DistrictBuildDaysPerLevel = 30
+WorldConstants.DistrictManufactoryCostMult = 1.3 -- Industrial/Manufacturing pricier than extraction
+WorldConstants.DistrictBuildConcurrency = 2 -- how many districts may build simultaneously per province
 
 -- HOI4-style combat additions
 WorldConstants.CombatFlankingWidthPerExtraProvince = 30
