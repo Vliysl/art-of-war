@@ -166,6 +166,9 @@ end
 local fireEvent
 
 function fireEvent(tag, def, context)
+	if def.disabled then
+		return -- global kill-switch: a disabled event never surfaces via ANY path (chainEvent / RulerSystem / public API)
+	end
 	context = context or {}
 	local country = ctx.WorldState.getCountry(tag)
 	if not country then return end
@@ -264,9 +267,10 @@ local function tryFireFor(tag, country, day)
 	local events = ctx.Bundle and ctx.Bundle.events
 	if not events then return false end
 
-	-- 1) Estate demand has priority when an estate is disloyal.
+	-- 1) Estate demand has priority when an estate is disloyal. (Skipped while flagged `disabled` -- the
+	-- Estates UI is cut for the playtest, so this card would fire about factions the player cannot see.)
 	local demandDef = events.estate_demands_privilege
-	if demandDef and archetypeAdmits(demandDef, country) and not onCooldown(country, demandDef.id, day) then
+	if demandDef and not demandDef.disabled and archetypeAdmits(demandDef, country) and not onCooldown(country, demandDef.id, day) then
 		local threshold = (demandDef.trigger and demandDef.trigger.loyaltyBelow) or ctx.WorldConstants.EstateDemandLoyaltyThreshold
 		local estateId = disloyalEstate(country, threshold)
 		if estateId then
@@ -279,7 +283,7 @@ local function tryFireFor(tag, country, day)
 	if rng:NextNumber(0, 1) < ctx.WorldConstants.EventAmbientChance then
 		local pool = {}
 		for id, def in events do
-			if def.trigger and def.trigger.type == "random_opportunity"
+			if def.trigger and def.trigger.type == "random_opportunity" and not def.disabled
 				and archetypeAdmits(def, country) and not onCooldown(country, id, day) then
 				table.insert(pool, def)
 			end

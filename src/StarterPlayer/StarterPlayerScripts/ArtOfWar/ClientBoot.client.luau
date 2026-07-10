@@ -91,11 +91,12 @@ if countriesMod then
 	end
 end
 
+local CountryColor = safeRequire("CountryColor")
 local countryColors, countryNames = {}, {}
 if countries then
 	for tag, c in countries do
 		if c.color then
-			countryColors[tag] = Color3.fromRGB(c.color[1], c.color[2], c.color[3])
+			countryColors[tag] = (CountryColor and CountryColor.resolve(tag)) or Color3.fromRGB(c.color[1], c.color[2], c.color[3])
 		end
 		countryNames[tag] = c.displayName
 	end
@@ -273,7 +274,8 @@ task.defer(function()
 		for tag, country in pairs(live) do
 			if type(country) == "table" then
 				if country.color then
-					countryColors[tag] = Color3.fromRGB(country.color[1], country.color[2], country.color[3])
+					countryColors[tag] = (CountryColor and CountryColor.resolve(tag))
+						or Color3.fromRGB(country.color[1], country.color[2], country.color[3])
 				end
 				if type(country.displayName) == "string" and country.displayName ~= "" then
 					countryNames[tag] = country.displayName
@@ -335,6 +337,40 @@ task.defer(function()
 				if idStr then
 					MapRenderer.recolorProvince(idStr)
 				end
+			end)
+		end
+
+		-- Custom Country Colors (+ the viewer's hide toggle) change a country's DISPLAY colour with NO province
+		-- delta, so the map needs its own countries hook (the dead UIController carried this; the live boot path
+		-- did not). Gated on an ACTUAL colour change -- countries deltas fire every economy tick -- then a full
+		-- re-sweep, cheap and rare given the 60s per-player recolor cooldown.
+		local function refreshCountryColor(ctag)
+			if not ctag then
+				return
+			end
+			local rec = ClientStateCache.getCountry and ClientStateCache.getCountry(ctag)
+			local newColor = (rec and CountryColor) and CountryColor.resolve(ctag) or nil
+			if newColor == countryColors[ctag] then
+				return
+			end
+			countryColors[ctag] = newColor
+			reapplyPolitical()
+		end
+		if CountryColor and ClientStateCache.onChangePrefix then
+			ClientStateCache.onChangePrefix("countries", function(_, path)
+				local ctag = typeof(path) == "string" and path:match("^countries%.([^%.]+)")
+				if ctag then
+					refreshCountryColor(ctag)
+				end
+			end)
+		end
+		local hideTogglePlayer = game:GetService("Players").LocalPlayer
+		if CountryColor and hideTogglePlayer then
+			hideTogglePlayer:GetAttributeChangedSignal("HideOtherCustomColors"):Connect(function()
+				for ctag in pairs(countryColors) do
+					countryColors[ctag] = CountryColor.resolve(ctag)
+				end
+				reapplyPolitical()
 			end)
 		end
 	end

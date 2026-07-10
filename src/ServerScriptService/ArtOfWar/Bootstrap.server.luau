@@ -927,6 +927,134 @@ bindEvent("ReleaseCountry", function(player)
 	end
 end)
 
+-- ── Custom Country Colors (gamepass cosmetic) ─────────────────────────────────────────────────────────
+-- Owners of the "Custom Country Colors" gamepass can recolour their nation. The colour lives on the country
+-- record (customColor = {r,g,b}) so it replicates server-wide exactly like the base colour (StateReplicator
+-- copies every non-dropped field). A 60s per-player cooldown throttles changes. Reset stores `false` rather
+-- than nil so the cleared state actually replicates in a delta (a removed key would linger on clients).
+local MarketplaceService = game:GetService("MarketplaceService")
+local CUSTOM_COLORS_GAMEPASS = 1907046397
+local COLOR_CHANGE_COOLDOWN = 60 -- seconds between colour changes, per player
+local ownsColorsCache = {} -- [userId] = bool (gamepass ownership; refreshed on purchase)
+local colorChangeAt = {} -- [userId] = os.clock() of the last successful change
+
+local COLOR_OWNERSHIP_TTL = 45 -- seconds to trust a cached NON-owner result before re-verifying
+local function ownsCustomColors(player)
+	local uid = player.UserId
+	-- Trust a cached TRUE forever (ownership is permanent once bought). Trust a cached FALSE only for a short
+	-- TTL, then re-verify -- this bounds MarketplaceService calls from a spoofing client to ~1 per TTL while
+	-- still honouring a just-completed purchase promptly (also flipped true by PromptGamePassPurchaseFinished).
+	local cached = ownsColorsCache[uid]
+	if type(cached) == "table" then
+		if cached.value == true then
+			return true
+		end
+		if (os.clock() - cached.at) < COLOR_OWNERSHIP_TTL then
+			return false
+		end
+	end
+	local ok, owns = pcall(function()
+		return MarketplaceService:UserOwnsGamePassAsync(uid, CUSTOM_COLORS_GAMEPASS)
+	end)
+	owns = (ok and owns) or false
+	ownsColorsCache[uid] = { value = owns, at = os.clock() }
+	return owns
+end
+
+MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, gamePassId, wasPurchased)
+	if gamePassId == CUSTOM_COLORS_GAMEPASS and wasPurchased then
+		ownsColorsCache[player.UserId] = { value = true, at = os.clock() }
+	end
+end)
+game:GetService("Players").PlayerRemoving:Connect(function(player)
+	ownsColorsCache[player.UserId] = nil
+	colorChangeAt[player.UserId] = nil
+end)
+
+local function colorToast(tag, kind, body)
+	if context.NotificationBroadcaster then
+		context.NotificationBroadcaster.push({
+			kind = kind,
+			title = "Country Color",
+			body = body,
+			audience = "self",
+			tag = tag,
+			eventType = "country.color",
+			ttl = 6,
+		})
+	end
+end
+
+InputValidator.addValidator("colorByte", function(v)
+	return type(v) == "number" and v >= 0 and v <= 255 and v == math.floor(v)
+end)
+InputValidator.register("SetCustomCountryColor", {
+	schema = {
+		{ name = "r", type = "colorByte" },
+		{ name = "g", type = "colorByte" },
+		{ name = "b", type = "colorByte" },
+	},
+	rate = { count = 5, window = 10 },
+})
+InputValidator.register("ResetCustomCountryColor", {
+	schema = {},
+	rate = { count = 5, window = 10 },
+})
+
+bindEvent("SetCustomCountryColor", function(player, r, g, b)
+	local auth = authority()
+	if not auth then
+		return
+	end
+	local tag = auth.tagFor(player)
+	if not tag then
+		return
+	end
+	if not ownsCustomColors(player) then
+		colorToast(tag, "warn", "Requires the \u{201C}Custom Country Colors\u{201D} gamepass.")
+		return
+	end
+	local now = os.clock()
+	local last = colorChangeAt[player.UserId]
+	if last and (now - last) < COLOR_CHANGE_COOLDOWN then
+		colorToast(
+			tag,
+			"warn",
+			string.format("You can change your color again in %ds.", math.ceil(COLOR_CHANGE_COOLDOWN - (now - last)))
+		)
+		return
+	end
+	local country = context.WorldState.getCountry(tag)
+	if not country then
+		return
+	end
+	country.customColor = {
+		math.clamp(math.floor(r), 0, 255),
+		math.clamp(math.floor(g), 0, 255),
+		math.clamp(math.floor(b), 0, 255),
+	}
+	context.WorldState.setCountry(tag, country)
+	colorChangeAt[player.UserId] = now
+	colorToast(tag, "good", "Your country color has been updated.")
+end)
+
+bindEvent("ResetCustomCountryColor", function(player)
+	local auth = authority()
+	if not auth then
+		return
+	end
+	local tag = auth.tagFor(player)
+	if not tag then
+		return
+	end
+	local country = context.WorldState.getCountry(tag)
+	if not country or country.customColor == nil then
+		return
+	end
+	country.customColor = false -- sentinel: replicates the cleared state (nil would linger in the delta)
+	context.WorldState.setCountry(tag, country)
+end)
+
 bindEvent("SetEconomyPolicy", function(player, policyId)
 	local auth = authority()
 	local system = loadedSystems.EconomySystem
@@ -1223,6 +1351,50 @@ bindEvent("SetMapMode", function(player, mode)
 	system.setMode(player, mode)
 end)
 
+-- Human-readable body for a failed recruit/build. RecruitSystem returns snake_case tokens
+-- (insufficient_treasury, district_required:Military, ...); NavalSystem returns space-separated phrases
+-- ("no shipyard here"). Toasting this instead of dropping the click fixes the "Recruit does nothing" trap
+-- flagged in the pre-playtest ArmyPanel/FleetPanel audit.
+local RECRUIT_REASON_TEXT = {
+	insufficient_treasury = "Not enough gold.",
+	insufficient_manpower = "Not enough manpower.",
+	insufficient_levies = "Not enough levy manpower.",
+	province_ineligible = "That province can't recruit this unit.",
+	production_lines_full = "That province's build queue is full.",
+	unit_locked = "That unit isn't available yet.",
+	unknown_unit = "That unit isn't available.",
+	bad_count = "Choose a valid amount.",
+}
+local function recruitFailBody(reason)
+	if type(reason) ~= "string" or reason == "" then
+		return "You can't recruit there right now."
+	end
+	local mapped = RECRUIT_REASON_TEXT[reason]
+	if mapped then
+		return mapped
+	end
+	local district = reason:match("^district_required:(.+)$")
+	if district then
+		return string.format("Requires a %s district in that province.", district)
+	end
+	-- NavalSystem phrases are already human ("no shipyard here"); army tokens fall back to a de-underscored form.
+	local text = reason:gsub("_", " ")
+	return text:sub(1, 1):upper() .. text:sub(2) .. "."
+end
+local function toastRecruitFail(tag, title, reason)
+	if context.NotificationBroadcaster then
+		context.NotificationBroadcaster.push({
+			kind = "warn",
+			title = title,
+			body = recruitFailBody(reason),
+			audience = "self",
+			tag = tag,
+			eventType = "recruit.fail",
+			ttl = 5,
+		})
+	end
+end
+
 bindEvent("RecruitUnit", function(player, provinceId, unitTypeId, count)
 	local auth = authority()
 	local system = loadedSystems.RecruitSystem
@@ -1233,7 +1405,10 @@ bindEvent("RecruitUnit", function(player, provinceId, unitTypeId, count)
 	if not tag then
 		return
 	end
-	system.enqueue(tag, provinceId, unitTypeId, count)
+	local ok, reason = system.enqueue(tag, provinceId, unitTypeId, count)
+	if not ok then
+		toastRecruitFail(tag, "Can't recruit", reason)
+	end
 end)
 
 -- C6: apply a batched action per province, count successes, and toast the partial result
@@ -1782,7 +1957,10 @@ bindEvent("RecruitShip", function(player, provinceId, shipTypeId, count)
 	if not tag then
 		return
 	end
-	system.queueRecruit(tag, provinceId, shipTypeId, count)
+	local ok, reason = system.queueRecruit(tag, provinceId, shipTypeId, count)
+	if not ok then
+		toastRecruitFail(tag, "Can't build ships", reason)
+	end
 end)
 
 bindEvent("MoveFleet", function(player, fleetId, toProvinceId)

@@ -63,8 +63,8 @@ end
 -- ---------------------------------------------------------------------
 -- Manpower: a single UNIFIED national pool (country.manpower) capped by
 -- country.manpowerCap. The cap is population-based -- each owned+controlled
--- province contributes max(floor(population * ManpowerPopFraction),
--- ManpowerProvinceFloor). The old levy/professional split is gone: every unit
+-- province contributes floor(population * ManpowerPopFraction), then a nation
+-- holding any land is floored at ManpowerNationFloor. The old levy/professional split is gone: every unit
 -- draws from country.manpower. Regen is continuous (RoN-style) toward the cap.
 -- (The legacy province baseManpower factor is no longer used.)
 -- ---------------------------------------------------------------------
@@ -75,9 +75,8 @@ end
 local function provinceManpowerContribution(province)
 	local C = ctx.WorldConstants
 	local pop = province.population or 0
-	local frac = C.ManpowerPopFraction or 0.15
-	local floorMP = C.ManpowerProvinceFloor or 5000
-	return math.max(math.floor(pop * frac), floorMP)
+	local frac = C.ManpowerPopFraction or 0.02
+	return math.floor(pop * frac) -- no per-province floor; the 5K floor is applied per-NATION below
 end
 
 -- Recompute every country's manpowerCap from owned+controlled provinces (occupied or
@@ -85,6 +84,9 @@ end
 -- shrinks (lost land -> lost reserve).
 local function recomputeManpowerCaps()
 	local caps = {}
+	-- A nation holding ANY owned+controlled land is floored at ManpowerNationFloor (5K by default); a landless
+	-- nation stays at 0. (This replaced the old per-province 5K floor, which scaled the minimum with tile count.)
+	local nationFloor = ctx.WorldConstants.ManpowerNationFloor or 5000
 	-- perf: iterate each country's owned provinces via the O(1) registry instead of scanning all
 	-- ~5713 provinces. byOwner is the owned set; still require controllerTag == owner (occupied
 	-- provinces contribute 0). Falls back to a full scan if the registry is unavailable.
@@ -92,14 +94,15 @@ local function recomputeManpowerCaps()
 	if registry and registry.byOwner then
 		for _, country in ctx.WorldState.allCountries() do
 			local tag = country.tag
-			local total = 0
+			local total, ownsAny = 0, false
 			for _, id in ipairs(registry.byOwner(tag)) do
 				local province = ctx.WorldState.getProvince(id)
 				if province and province.controllerTag == tag then
+					ownsAny = true
 					total += provinceManpowerContribution(province)
 				end
 			end
-			caps[tag] = total
+			caps[tag] = ownsAny and math.max(total, nationFloor) or 0
 		end
 	else
 		for _, province in ctx.WorldState.allProvinces() do
@@ -107,6 +110,10 @@ local function recomputeManpowerCaps()
 			if owner and province.controllerTag == owner then
 				caps[owner] = (caps[owner] or 0) + provinceManpowerContribution(province)
 			end
+		end
+		-- Any owner present in `caps` holds >=1 controlled province, so floor its national cap.
+		for owner, total in caps do
+			caps[owner] = math.max(total, nationFloor)
 		end
 	end
 	for _, country in ctx.WorldState.allCountries() do

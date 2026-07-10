@@ -15,27 +15,49 @@ local Components = UI.Components
 local CountryBar = require(Screens.CountryBar)
 local TopBar = require(Screens.TopBar)
 local NotificationCard = require(Components.NotificationCard)
+-- TopbarPlus (v3) icon library, installed at ReplicatedStorage.TopbarPlus. Drives the native-look topbar
+-- Settings button that replaces the old on-screen gear. Client-only module (Hud is only required on the client).
+-- Guarded: a bare WaitForChild would YIELD FOREVER if TopbarPlus is missing from a republished place (it is
+-- not in Rojo/git; it survives only via $ignoreUnknownInstances), hanging every client behind the loading
+-- screen. Time out + pcall so a missing/broken package degrades to "no topbar button" instead of a brick.
+local TopbarIcon
+do
+	local tbp = ArtOfWar.Parent:WaitForChild("TopbarPlus", 10)
+	local iconMod = tbp and tbp:WaitForChild("Icon", 10)
+	if iconMod then
+		local ok, mod = pcall(require, iconMod)
+		if ok then
+			TopbarIcon = mod
+		else
+			warn("[AoW Hud] TopbarPlus.Icon failed to load: " .. tostring(mod))
+		end
+	else
+		warn("[AoW Hud] TopbarPlus not found -- settings topbar button disabled")
+	end
+end
 
 local Hud = {}
 
 local LAYER_ORDER = { Hud = 10, Screens = 20, Modals = 50, Notifications = 60, Tooltips = 80 }
+-- Court/Estates/Reforms (the PoliticsScreen) were cut ahead of the public playtest, so key 1 (which opened the
+-- standalone Politics window) is unbound and "Politics" is dropped from SCREEN_MODULES. The crest still opens
+-- the Realm window (now Diplomacy-only). Key 4 opens the standalone Diplomacy list.
 local MENU_KEYS = {
-	[Enum.KeyCode.One] = "Politics",
 	[Enum.KeyCode.Two] = "Economy",
 	[Enum.KeyCode.Three] = "Military",
 	[Enum.KeyCode.Four] = "Diplomacy",
 	[Enum.KeyCode.Five] = "Research",
-	[Enum.KeyCode.Six] = "Missions",
 	[Enum.KeyCode.Seven] = "Settings",
 }
+-- Missions (key 6) was hidden ahead of the public playtest: mission trees are an unpopulated placeholder and
+-- the only real content (form Iberia) is gated behind ~152 provinces, so the screen reads as empty/broken.
+-- FormableSystem stays intact server-side for a future reachable entry point.
 local SCREEN_MODULES = {
 	Realm = "RealmScreen",
-	Politics = "PoliticsScreen",
 	Economy = "EconomyScreen",
 	Military = "MilitaryScreen",
 	Diplomacy = "DiplomacyScreen",
 	Research = "ResearchScreen",
-	Missions = "MissionsScreen",
 	Settings = "SettingsScreen",
 }
 
@@ -142,30 +164,33 @@ local function mountPersistent(opts)
 	layout.Parent = holder
 	widgets.notifHolder = holder
 
-	local gear = Instance.new("ImageButton")
-	gear.Name = "SettingsGear"
-	gear.AnchorPoint = Vector2.new(0, 0)
-	gear.Position = UDim2.fromOffset(16, 16)
-	gear.Size = UDim2.fromOffset(Responsive.tapHeight(36), Responsive.tapHeight(36))
-	gear.BackgroundTransparency = 1
-	gear.AutoButtonColor = false
-	gear.Image = ""
-	gear:SetAttribute("AoWInputSink", true)
-	gear.Parent = layers.Hud
-	local gicon = Icons.create("Settings", 22, Colors.TextSecondary)
-	gicon.AnchorPoint = Vector2.new(0.5, 0.5)
-	gicon.Position = UDim2.fromScale(0.5, 0.5)
-	gicon.Parent = gear
-	gear.MouseEnter:Connect(function()
-		gicon.ImageColor3 = Colors.TextPrimary
-	end)
-	gear.MouseLeave:Connect(function()
-		gicon.ImageColor3 = Colors.TextSecondary
-	end)
-	gear.MouseButton1Click:Connect(function()
-		Hud.openSettings()
-	end)
-	widgets.gear = gear
+	-- Settings button now lives on the native Roblox topbar (TopbarPlus, left-aligned) instead of an on-screen
+	-- gear. oneClick makes it deselect immediately, so each click just toggles the Settings screen. Its enabled
+	-- state mirrors the HUD layer, so it hides during nation selection (when that layer is disabled) exactly
+	-- like the old gear did.
+	if TopbarIcon then
+		local ok, settingsIcon = pcall(function()
+			return TopbarIcon.new()
+				:setName("SettingsIcon")
+				:align("Left")
+				:setImage("rbxassetid://5912368763")
+				:setCaption("Settings")
+				:oneClick(true)
+				:bindEvent("selected", function()
+					Hud.openSettings()
+				end)
+		end)
+		if ok and settingsIcon then
+			local function syncTopbarVisible()
+				settingsIcon:setEnabled(layers.Hud.Enabled)
+			end
+			syncTopbarVisible()
+			layers.Hud:GetPropertyChangedSignal("Enabled"):Connect(syncTopbarVisible)
+			widgets.settingsIcon = settingsIcon
+		else
+			warn("[AoW Hud] TopbarPlus Icon creation failed: " .. tostring(settingsIcon))
+		end
+	end
 end
 
 local function bindHotkeys()

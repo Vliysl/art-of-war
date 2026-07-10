@@ -149,6 +149,15 @@ function MarketSystem.register(context)
 		end,
 		unlockGood = unlockGood,
 	}
+
+	-- Playtest perf: the market price sim is unused by any live screen (Trade UI was cut; exports price at a
+	-- static basePrice and the only priceOf consumer is the dead TradeSystem). Running it re-scanned every
+	-- province and re-replicated a churning `markets` table to all clients each economy tick -- pure mobile
+	-- waste. Skip the tick (and its seeding) so `markets` stays empty and never churns. Flag in WorldConstants.
+	if not ctx.WorldConstants.EnableMarketSim then
+		return
+	end
+
 	local function markSupplyDirty() supplyDirty = true end
 	ctx.EventBus.subscribe(ctx.Channels.ProvinceOwnershipChanged, markSupplyDirty)
 	ctx.EventBus.subscribe(ctx.Channels.ProvinceDevelopmentChanged, markSupplyDirty)

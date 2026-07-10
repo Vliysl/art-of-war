@@ -9,6 +9,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local aow = ReplicatedStorage:WaitForChild("ArtOfWar")
 local WorldConstants = require(aow:WaitForChild("Shared"):WaitForChild("WorldConstants"))
 local ClientStateCache = require(aow.Modules:WaitForChild("ClientStateCache"))
+local CountryColor = require(aow.Modules:WaitForChild("CountryColor"))
 local ProvinceInteraction = require(aow.Modules:WaitForChild("ProvinceInteraction"))
 local MapModeController = require(aow.Modules:WaitForChild("MapModeController"))
 local CameraController = require(aow.Modules:WaitForChild("CameraController"))
@@ -34,9 +35,9 @@ local TINT_BY_STATE = {
 local FACTION_FALLBACK = Color3.fromRGB(140, 140, 140)
 local POLE_COLOR = Color3.fromRGB(40, 40, 50)
 
--- Unit IDs that get the placeholder Musketeer model. Cavalry gets the horse
--- (CavalryModel) when EnableNewUnitModels is on. All other unit types (artillery)
--- use the generic Banner-Pin (disc + pole + flag) until their own models are added.
+-- Unit IDs that get the placeholder Musketeer model. Cavalry gets the horse (CavalryModel) and artillery
+-- gets the WW1 Artillery gun model when EnableNewUnitModels is on. Any remaining unit types fall back to
+-- the generic Banner-Pin (disc + pole + flag) until their own models are added.
 local INFANTRY_UNIT_IDS = {
 	line_infantry = true,
 	irregular_infantry = true,
@@ -46,11 +47,21 @@ local CAVALRY_UNIT_IDS = {
 	cavalry = true,
 }
 
+local ARTILLERY_UNIT_IDS = {
+	artillery = true,
+}
+
 local MUSKETEER_TEMPLATE = nil
 local MUSKETEER_TARGET_HEIGHT = 1.85  -- world studs, scaled for 2048 map (was 16.8 @ 18665; x0.110)
 
 local CAVALRY_TEMPLATE = nil
 local CAVALRY_TARGET_HEIGHT = 1.7  -- world studs; horses read slightly under the 1.85 musketeer
+
+local ARTILLERY_TEMPLATE = nil
+local ARTILLERY_TARGET_HEIGHT = 1.1  -- world studs; a low-profile gun reads under the musketeer/cavalry
+-- The WW1 Artillery asset ships in military green; parts wearing this default are recoloured to the owner
+-- colour (the dark 17,17,17 tyres/fittings are left as authored). Tolerance guards float drift on re-export.
+local ARTILLERY_GREEN = Color3.fromRGB(80, 111, 60)
 
 -- Sea transport (C9): any army standing on a sea node renders as a ship, regardless of
 -- composition. The Ship asset is ~212 MeshParts and 58.4 studs long, so ALL heavy prep
@@ -167,6 +178,7 @@ end
 local function modelTypeFor(unitTypeId)
 	if unitTypeId and INFANTRY_UNIT_IDS[unitTypeId] then return "musketeer" end
 	if WorldConstants.EnableNewUnitModels and unitTypeId and CAVALRY_UNIT_IDS[unitTypeId] then return "cavalry" end
+	if WorldConstants.EnableNewUnitModels and unitTypeId and ARTILLERY_UNIT_IDS[unitTypeId] then return "artillery" end
 	return "banner_pin"
 end
 
@@ -227,7 +239,8 @@ local armiesFolder = nil
 local mapFolder = nil
 local heartbeatConn = nil
 local renderConn = nil
-local stateSub, battleSub, countriesSub, snapshotSub, provinceSub
+local stateSub, battleSub, countriesSub, snapshotSub, provinceSub, hideColorConn
+local lastCountryColor = {} -- [tag] = last resolved display Color3; the countries sub reconciles armies only on a real colour change
 local cameraSub
 -- perf: coalesce machinery (gated by WorldConstants.UseArmyViewCoalesce).
 -- reconcileQueued collapses multiple same-frame snapshots into ONE deferred reconcileAll() pass.
@@ -299,9 +312,10 @@ local function compositionCount(army)
 end
 
 local function getOwnerColor(ownerTag)
-	local country = ClientStateCache.getCountry and ClientStateCache.getCountry(ownerTag)
-	if country and country.color then
-		return Color3.fromRGB(country.color[1], country.color[2], country.color[3])
+	-- Routed through CountryColor so the "Custom Country Colors" gamepass override + the viewer's hide toggle
+	-- apply to army tokens too. FACTION_FALLBACK is kept for a genuinely tag-less token.
+	if ownerTag then
+		return CountryColor.resolve(ownerTag)
 	end
 	return FACTION_FALLBACK
 end
@@ -458,6 +472,20 @@ end
 -- Men-per-regiment + the overhead count formatter: full numbers with a SPACE thousands-separator
 -- ("1 000", "250 000" -- no comma/dot, region-safe), switching to "M" only at >= 1,000,000.
 local REGIMENT_STRENGTH = 1000
+
+-- Displayed head-count: each regiment contributes its unit type's real manpower (Line/Irregular 1000,
+-- Cavalry 600, Artillery 400) instead of a flat 1000/regiment, so crew-served artillery reads as the small
+-- unit it is. Falls back to REGIMENT_STRENGTH when the unit def / recruitManpower isn't available yet.
+local function armyMen(army)
+	if not army or not army.composition then return 0 end
+	local total = 0
+	for unitId, count in pairs(army.composition) do
+		local def = bundleRef and bundleRef.unitTypes and bundleRef.unitTypes[unitId]
+		total += ((def and def.recruitManpower) or REGIMENT_STRENGTH) * count
+	end
+	return total
+end
+
 local function abbrevMen(n)
 	n = math.floor((n or 0) + 0.5)
 	if n >= 1e6 then
@@ -1046,6 +1074,104 @@ local function buildCavalryModel(armyId, factionColor)
 	return model
 end
 
+-- A part is owner-coloured iff it wears the asset's default green; the dark fittings stay as authored.
+local function isArtilleryGreen(c)
+	return math.abs(c.R - ARTILLERY_GREEN.R) < 0.03
+		and math.abs(c.G - ARTILLERY_GREEN.G) < 0.03
+		and math.abs(c.B - ARTILLERY_GREEN.B) < 0.03
+end
+
+-- One-time WW1 Artillery template prep (the asset is 49 MeshParts): clone, anchor/no-collide every part, TAG
+-- the default-green parts as owner-coloured, scale to target height, then add the invisible Anchor PrimaryPart
+-- at the post-scale bounding-box bottom. buildArtilleryModel then only clones + recolours the tagged parts per
+-- army -- mirroring the Ship builder, which bakes all the heavy prep (props/scale/anchor) once.
+local function getArtilleryTemplate()
+	if ARTILLERY_TEMPLATE then return ARTILLERY_TEMPLATE end
+	local models = ReplicatedStorage:FindFirstChild("Models")
+	local src = models and models:FindFirstChild("WW1 Artillery")
+	if not src then return nil end
+
+	local model = src:Clone()
+	for _, p in model:GetDescendants() do
+		if p:IsA("BasePart") then
+			p.Anchored = true
+			p.CanCollide = false
+			p.CanTouch = false
+			p.CanQuery = true
+			p.Massless = true
+			p.CastShadow = false
+			p.Locked = true
+			-- Tag owner-coloured parts so per-army build + later recolours touch only these (not the dark fittings).
+			if isArtilleryGreen(p.Color) then
+				p:SetAttribute("AoWOwnerColored", true)
+			end
+		end
+	end
+
+	if model.ScaleTo and model.GetScale then
+		local currentScale = model:GetScale()
+		local _, bbSize0 = model:GetBoundingBox()
+		if bbSize0.Y > 0 then
+			model:ScaleTo(currentScale * (ARTILLERY_TARGET_HEIGHT / bbSize0.Y))
+		end
+	end
+
+	local cf, bbSize = model:GetBoundingBox()
+	local anchor = Instance.new("Part")
+	anchor.Name = "Anchor"
+	anchor.Size = Vector3.new(0.1, 0.1, 0.1)
+	anchor.Transparency = 1
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanTouch = false
+	anchor.CanQuery = false
+	anchor.Massless = true
+	anchor.CFrame = CFrame.new(cf.Position.X, cf.Position.Y - bbSize.Y * 0.5, cf.Position.Z)
+	anchor.Parent = model
+	model.PrimaryPart = anchor
+
+	ARTILLERY_TEMPLATE = model
+	return ARTILLERY_TEMPLATE
+end
+
+-- WW1 Artillery gun: clone the prepped template (props/scale/anchor already baked) and only recolour the
+-- tagged owner-coloured parts + add the banner + selection highlight. Moves via PivotTo like the banner pin;
+-- no animTracks entry is created, so setAnimState no-ops for this kind.
+local function buildArtilleryModel(armyId, factionColor)
+	local template = getArtilleryTemplate()
+	if not template then
+		return buildBannerPinModel(armyId, factionColor)
+	end
+
+	local model = template:Clone()
+	model.Name = "army_" .. tostring(armyId)
+	model:SetAttribute("armyId", armyId)
+	model:SetAttribute("modelType", "artillery")
+
+	for _, p in model:GetDescendants() do
+		if p:IsA("BasePart") and p:GetAttribute("AoWOwnerColored") then
+			p.Color = factionColor
+		end
+	end
+
+	local bb = buildBannerGui(model.PrimaryPart, Vector3.new(0, ARTILLERY_TARGET_HEIGHT + 2.5, 0), factionColor)
+	bb.Parent = model.PrimaryPart
+
+	local hl = Instance.new("Highlight")
+	hl.Name = "Selection"
+	hl.FillColor = Color3.fromRGB(120, 220, 255)
+	hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+	hl.FillTransparency = 0.5
+	hl.OutlineTransparency = 0
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Adornee = model
+	hl.Enabled = false
+	hl.Parent = model
+
+	model.Parent = armiesFolder
+	return model
+end
+
 -- Ship (C9 sea transport): static mesh cloned from the prepped template -- part properties,
 -- scale and the Anchor PrimaryPart are already baked in, so the per-army work is only the
 -- sail/flag recolor + banner + highlight. Moves via PivotTo like the banner pin; no
@@ -1134,6 +1260,8 @@ local function buildModel(armyId, factionColor, modelType)
 		model = buildCavalryModel(armyId, factionColor)
 	elseif modelType == "ship" then
 		model = buildShipModel(armyId, factionColor)
+	elseif modelType == "artillery" then
+		model = buildArtilleryModel(armyId, factionColor)
 	else
 		model = buildBannerPinModel(armyId, factionColor)
 	end
@@ -1160,7 +1288,7 @@ local function applyTransparency(model, target)
 	end
 	-- Musketeer/cavalry/ship parts: tween every BasePart descendant (except invisible ones we own like Anchor)
 	local mt = model:GetAttribute("modelType")
-	if mt == "musketeer" or mt == "cavalry" or mt == "ship" then
+	if mt == "musketeer" or mt == "cavalry" or mt == "ship" or mt == "artillery" then
 		for _, p in model:GetDescendants() do
 			if p:IsA("BasePart") and p.Name ~= "Anchor" and p.Name ~= "HumanoidRootPart" then
 				TweenService:Create(p, TweenInfo.new(0.35, Enum.EasingStyle.Quad), { Transparency = target }):Play()
@@ -1194,7 +1322,7 @@ local function ensurePulse(armyId, model, on)
 			pulseTweens[armyId] = nil
 			local target = model:FindFirstChild("Base") or model:FindFirstChild("Shako") or model:FindFirstChild("Body")
 				or model:FindFirstChild("Cube", true) -- ship hull (nested in the mesh import, hence recursive)
-			if target then target.Transparency = cameraMode == "command" and 1 or 0 end
+			if target then target.Transparency = modeTransparency(cameraMode) end
 		end
 	end
 end
@@ -1323,7 +1451,7 @@ local function reconcileOne(armyId)
 	local bg = label and label:FindFirstChild("Bg")
 
 	-- Recolor on owner change or first build
-	if newlyCreated or last.ownerTag ~= army.ownerTag then
+	if newlyCreated or last.ownerTag ~= army.ownerTag or last.color ~= color then
 		local tint = TINT_BY_STATE[state]
 		local applied = tint and color:Lerp(tint, 0.4) or color
 		-- Banner-pin parts
@@ -1342,6 +1470,14 @@ local function reconcileOne(armyId)
 		-- pay the recursive lookup.
 		local hull = model:GetAttribute("modelType") == "ship" and model:FindFirstChild("Cube", true) or nil
 		if hull then hull.Color = tint and SHIP_HULL_COLOR:Lerp(tint, 0.4) or SHIP_HULL_COLOR end
+		-- Artillery: recolour the tagged owner-coloured MeshParts (the asset's default-green parts).
+		if model:GetAttribute("modelType") == "artillery" then
+			for _, ap in model:GetDescendants() do
+				if ap:IsA("BasePart") and ap:GetAttribute("AoWOwnerColored") then
+					ap.Color = applied
+				end
+			end
+		end
 		-- Crest (works for all model types since Label is parented to Pole, Head or Anchor): tint the plate
 		-- from the owner colour and stamp the 3-letter country tag.
 		local crest = bg and bg:FindFirstChild("Crest")
@@ -1361,8 +1497,9 @@ local function reconcileOne(armyId)
 		end
 	end
 
-	-- Banner content: unit type + count, and total stack count if multiple armies
+	-- Banner content: unit type + head-count, and total stack count if multiple armies
 	local count = compositionCount(army)
+	local men = armyMen(army)
 	local domUnitId = dominantUnit(army)
 	local nameText = unitDisplayName(domUnitId)
 	-- If this army represents a stack of multiple armies (strongest), append "(+N)" indicator
@@ -1370,10 +1507,10 @@ local function reconcileOne(armyId)
 	local stack = stackInfo[key]
 	local stackExtra = stack and #stack.armyIds > 1 and (" +" .. (#stack.armyIds - 1)) or ""
 
-	if newlyCreated or last.count ~= count or last.stackExtra ~= stackExtra then
+	if newlyCreated or last.men ~= men or last.stackExtra ~= stackExtra then
 		local countLbl = bg and bg:FindFirstChild("CountLabel")
 		if countLbl then
-			local menText = abbrevMen(count * REGIMENT_STRENGTH)
+			local menText = abbrevMen(men)
 			countLbl.Text = (stackExtra ~= "") and (menText .. stackExtra) or menText
 		end
 	end
@@ -1393,6 +1530,13 @@ local function reconcileOne(armyId)
 		-- Ship hull: state-tint over the wood colour (restores it when the tint clears).
 		local hull = model:GetAttribute("modelType") == "ship" and model:FindFirstChild("Cube", true) or nil
 		if hull then hull.Color = tint and SHIP_HULL_COLOR:Lerp(tint, 0.4) or SHIP_HULL_COLOR end
+		if model:GetAttribute("modelType") == "artillery" then
+			for _, ap in model:GetDescendants() do
+				if ap:IsA("BasePart") and ap:GetAttribute("AoWOwnerColored") then
+					ap.Color = applied
+				end
+			end
+		end
 		ensurePulse(armyId, model, state == "attacking")
 		setAnimState(armyId, state)
 	end
@@ -1489,7 +1633,7 @@ local function reconcileOne(armyId)
 			end
 		end
 		local mtAttr = model:GetAttribute("modelType")
-		if mtAttr == "musketeer" or mtAttr == "cavalry" or mtAttr == "ship" then
+		if mtAttr == "musketeer" or mtAttr == "cavalry" or mtAttr == "ship" or mtAttr == "artillery" then
 			for _, p in model:GetDescendants() do
 				if p:IsA("BasePart") and p.Name ~= "Anchor" and p.Name ~= "HumanoidRootPart" then
 					p.Transparency = target
@@ -1503,7 +1647,9 @@ local function reconcileOne(armyId)
 		state = state,
 		provinceId = army.provinceId,
 		ownerTag = army.ownerTag,
+		color = color,
 		count = count,
+		men = men,
 		unitName = nameText,
 		stackExtra = stackExtra,
 		originProvinceId = army.originProvinceId,
@@ -1827,11 +1973,36 @@ function ArmyView.init()
 			if battle.attackerArmyIds then for _, aid in ipairs(battle.attackerArmyIds) do dirtyArmies[aid] = true end end
 			if battle.defenderArmyIds then for _, aid in ipairs(battle.defenderArmyIds) do dirtyArmies[aid] = true end end
 		end)
-		-- C3: removed the "countries" subscription that marked EVERY rendered army dirty on ANY
-		-- country change (treasury/PP/faction churn every tick). Army rendering reads only static
-		-- country fields (color, display name) -- read fresh on (re)build / owner change -- and the
-		-- snapshot sub below covers initial load, so country churn no longer forces a full army
-		-- reconcile each replication tick.
+		-- Custom Country Colors: a country's DISPLAY colour (customColor / the viewer's hide toggle) can
+		-- change with NO army delta. Re-mark that country's armies dirty ONLY when its resolved colour
+		-- actually changed -- so ordinary treasury/PP/faction churn every tick still does NOT force a full
+		-- army reconcile (the old blanket "countries" sub was removed for exactly that reason).
+		countriesSub = ClientStateCache.onChangePrefix("countries", function(_, path)
+			local tag = path and path:match("^countries%.([^%.]+)")
+			if not tag then
+				return
+			end
+			local newColor = CountryColor.resolve(tag)
+			if newColor == lastCountryColor[tag] then
+				return
+			end
+			lastCountryColor[tag] = newColor
+			for aid, army in pairs(ClientStateCache.allArmies()) do
+				if army.ownerTag == tag then
+					dirtyArmies[aid] = true
+				end
+			end
+		end)
+		-- Flipping "hide other players' custom colours" changes every other nation's token colour at once.
+		local hidePlayer = Players.LocalPlayer
+		if hidePlayer then
+			hideColorConn = hidePlayer:GetAttributeChangedSignal("HideOtherCustomColors"):Connect(function()
+				table.clear(lastCountryColor)
+				for aid in pairs(ClientStateCache.allArmies()) do
+					dirtyArmies[aid] = true
+				end
+			end)
+		end
 
 		-- Province changes (e.g. siege occupation progress) live on the PROVINCE record, not the
 		-- army, so without this the overhead capture bar would go stale. Mark the armies standing on
@@ -1989,6 +2160,7 @@ function ArmyView.destroy()
 	if stateSub then stateSub() end
 	if battleSub then battleSub() end
 	if countriesSub then countriesSub() end
+	if hideColorConn then hideColorConn:Disconnect(); hideColorConn = nil end
 	if snapshotSub then snapshotSub() end
 	if provinceSub then provinceSub() end
 	if cameraSub then cameraSub() end
@@ -2007,6 +2179,7 @@ function ArmyView.destroy()
 	lastLabelCamCF = nil
 	lastKnownState = {}
 	dirtyArmies = {}
+	table.clear(lastCountryColor)
 	hopState = {}
 	lastFacing = {}
 	provinceCenterCache = {}

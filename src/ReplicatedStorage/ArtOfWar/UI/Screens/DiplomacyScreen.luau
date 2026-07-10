@@ -10,6 +10,7 @@ local Typography = DesignSystem.Typography
 local ScreenKit = require(script.Parent.ScreenKit)
 local Components = script.Parent.Parent.Components
 local Button = require(Components.Button)
+local CountryColor = require(script.Parent.Parent.Parent.Modules.CountryColor)
 local Modal = require(Components.Modal)
 local CountryBadge = require(Components.CountryBadge)
 local VirtualList = require(Components.VirtualList)
@@ -44,12 +45,9 @@ local function nameOf(cache, tag)
 	return (c and (c.displayName or c.name)) or tag or "?"
 end
 
-local function countryColor(c)
-	local col = c and c.color
-	if type(col) == "table" and col[1] then
-		return Color3.fromRGB(col[1], col[2], col[3])
-	end
-	return nil
+-- Resolve a country's DISPLAY colour BY TAG (custom-colour override + the viewer's hide toggle).
+local function countryColor(tag)
+	return (tag and CountryColor.resolve(tag)) or nil
 end
 
 local function prettify(id)
@@ -385,7 +383,7 @@ local function build(ctx, embedContainer)
 
 		local badge = CountryBadge.create({
 			code = tag,
-			countryColor = countryColor(cache.getCountry(tag)),
+			countryColor = countryColor(tag),
 			size = "sm",
 			parent = row,
 		})
@@ -612,7 +610,7 @@ local function build(ctx, embedContainer)
 			return
 		end
 		local rel = relationStatus(cache, mineTag, tag)
-		local col = countryColor(country)
+		local col = countryColor(tag)
 
 		-- Header: flag/crest + name + relation pill + controller avatar.
 		local header = Instance.new("Frame")

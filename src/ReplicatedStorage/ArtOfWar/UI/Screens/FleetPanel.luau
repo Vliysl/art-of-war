@@ -4,6 +4,7 @@ local Button = require(Components.Button)
 local Modal = require(Components.Modal)
 local Tooltip = require(Components.Tooltip)
 local CountryBadge = require(Components.CountryBadge)
+local CountryColor = require(script.Parent.Parent.Parent.Modules.CountryColor)
 
 local FleetPanel = {}
 
@@ -254,13 +255,12 @@ function FleetPanel.create(ctx)
 			ScreenKit.note(body, "This fleet no longer exists.", 1)
 			return
 		end
-		local country = fleet.ownerTag and ctx.cache.getCountry(fleet.ownerTag)
 		local counts, hull = shipCounts(fleet)
 		local isOwn = fleet.ownerTag == ctx.tag
 
 		local badge = CountryBadge.create({
 			code = fleet.ownerTag or "\u{2014}",
-			countryColor = country and colorOf(country.color),
+			countryColor = fleet.ownerTag and CountryColor.resolve(fleet.ownerTag) or nil,
 			size = "md",
 			layoutOrder = 1,
 			parent = body,

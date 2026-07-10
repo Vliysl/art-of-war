@@ -86,6 +86,9 @@ WorldConstants.InstantCaptureCasualtyFrac = 0.02
 WorldConstants.InstantCaptureCasualtyPerFortTier = 0.01
 WorldConstants.InstantCaptureOrgLoss = 6.0 -- massive org hit: org max is 10, so a walk-in leaves the army spent + vulnerable to a counter-attack
 WorldConstants.OccupiedToastWindowSec = 10
+-- Coalescing window for high-volume combat toasts (Under Attack / Victory / Defeat): first fires immediately,
+-- the rest within the window collapse into one "N more ..." summary so a war doesn't flood the feed.
+WorldConstants.CombatToastWindowSec = 12
 
 -- C3: a beaten attacker stands down at home instead of retreating; AutoCapture waits this many
 -- sim-seconds before re-attacking after such a loss.
@@ -332,7 +335,13 @@ WorldConstants.DevTierMax = 10
 WorldConstants.InfraTierMax = 10
 WorldConstants.FortTierMax = 10
 WorldConstants.DaysPerMonth = 30 -- monthly /mo projection scale
-WorldConstants.UnrestTaxPenaltyPerPoint = 0.005 -- tax penalty per unrest point: -0.5% each (-50% at max unrest, caps at -100%)
+-- Playtest neutralization: unrest has NO player-facing meter and the Estates/Reforms UI to manage loyalty was
+-- cut, so an unrest->tax bite would be an invisible penalty a tester cannot respond to. Set to 0 (unrest still
+-- simulates, but is purely internal/cosmetic). Restore to 0.005 when the politics UI returns.
+WorldConstants.UnrestTaxPenaltyPerPoint = 0 -- was 0.005 (-0.5% tax per unrest point); neutralized for the public playtest
+-- Playtest perf: the market price simulation is unused by any live screen (Trade UI was cut). Off = MarketSystem
+-- skips its per-tick province scan / price rebalance and the `markets` table stops replicating. See MarketSystem.
+WorldConstants.EnableMarketSim = false
 WorldConstants.AutonomyAffectsTax = true -- multiplies (1 - autonomy)
 WorldConstants.ManufactoryInfraScalePerTier = 0.05 -- +5pct manufactory throughput per infra tier above min
 WorldConstants.ArmyUpkeepBaseMultiplier = 0.1 -- daily upkeep cost multiplier on unit upkeep stat
@@ -447,10 +456,10 @@ WorldConstants.ProfessionalRegenPerMonthPct = 0 -- HOOK: pro regen (laws/barrack
 WorldConstants.ManpowerRegenTickInterval = 6 -- scheduler cadence (effective s); regen is continuous per in-game day
 
 -- Unified population-based manpower (replaces the levy/professional split above, now dormant).
--- Each owned+controlled province contributes max(floor(population * ManpowerPopFraction),
--- ManpowerProvinceFloor) to country.manpowerCap; country.manpower regens continuously toward it.
-WorldConstants.ManpowerPopFraction = 0.15 -- manpower cap contribution = 15% of province population
-WorldConstants.ManpowerProvinceFloor = 5000 -- ...but at least 5K per owned+controlled province
+-- Each owned+controlled province contributes floor(population * ManpowerPopFraction) to country.manpowerCap;
+-- a nation that holds any territory is then floored at ManpowerNationFloor. country.manpower regens toward it.
+WorldConstants.ManpowerPopFraction = 0.02 -- manpower cap contribution = 2% of province population (was 0.15)
+WorldConstants.ManpowerNationFloor = 5000 -- a nation with any owned+controlled land has a total cap of at least 5K
 WorldConstants.ManpowerRegenPerDay = 0.003 -- fraction of cap regenerated per in-game day (~11 months to full)
 WorldConstants.AttritionTickInterval = 6
 

@@ -14,6 +14,7 @@ local PeaceInfo = require(UI.PeaceInfo)
 local WorldConstants = require(ArtOfWar.Shared.WorldConstants)
 local SeaNodes = require(ArtOfWar.Shared.SeaNodes)
 local Technologies = require(ArtOfWar.Data.Technologies)
+local CountryColor = require(ArtOfWar.Modules.CountryColor)
 
 -- Sea targeting (C9): a hovered water point snaps to the nearest baked sea node within this
 -- many studs (mirrors ProvinceInteraction's click-side SEA_TARGET_MAX_DIST).
@@ -209,7 +210,7 @@ function HudWiring.start(modules)
 		return {
 			code = tag,
 			name = c.displayName or tag,
-			color = colorOf(c.color),
+			color = CountryColor.resolve(tag),
 			government = prettify(c.governmentForm),
 			culture = prettify(c.primaryCulture),
 			resources = {
@@ -299,7 +300,7 @@ function HudWiring.start(modules)
 			name = p.displayCityName or p.name or (id and ("Province #" .. tostring(id))) or "Province",
 			ownerTag = p.ownerTag,
 			ownerName = ownerCountry and ownerCountry.displayName or p.ownerTag,
-			ownerColor = ownerCountry and colorOf(ownerCountry.color) or nil,
+			ownerColor = p.ownerTag and CountryColor.resolve(p.ownerTag) or nil,
 			terrain = prettify(p.terrain),
 			devTotal = (p.baseTax or 0) + (p.baseProduction or 0) + (p.baseManpower or 0),
 			devAdm = p.baseTax,
@@ -340,7 +341,7 @@ function HudWiring.start(modules)
 				nations[#nations + 1] = {
 					tag = tag,
 					name = c.displayName or tag,
-					color = colorOf(c.color),
+					color = CountryColor.resolve(tag),
 					government = prettify(c.governmentForm),
 					treasury = money(c.treasury),
 					manpower = abbreviate(c.manpower),
@@ -522,8 +523,14 @@ function HudWiring.start(modules)
 		local c = tag and ClientStateCache.getCountry(tag)
 		return (c and c.displayName) or tag or "?"
 	end
+	-- Friendly label for a pact record's `type`, used in the outgoing-pact result toasts below.
+	local PACT_LABELS = { alliance = "Alliance", nap = "Non-Aggression Pact", call_to_arms = "Call to Arms", guarantee = "Guarantee" }
+	local function pactLabel(t)
+		return PACT_LABELS[t] or "Pact"
+	end
 	local seenProposals = {}
 	local myProposalStatus = {}
+	local myPactStatus = {}
 	local seenWarStatus = {}
 	local peaceTrackedTag = nil
 	-- On a country switch, clear per-nation tracking so pending offers re-pop and notifications re-arm
@@ -532,6 +539,7 @@ function HudWiring.start(modules)
 		if claimedTag ~= peaceTrackedTag then
 			seenProposals = {}
 			myProposalStatus = {}
+			myPactStatus = {}
 			seenWarStatus = {}
 			peaceTrackedTag = claimedTag
 		end
@@ -625,34 +633,46 @@ function HudWiring.start(modules)
 		end
 	end)
 
-	-- Pop the TradeOffer modal once when a pending trade order is directed at the player (the
-	-- counterparty who must accept). Mirrors the peace-proposal hook above.
-	local seenOrders = {}
-	ClientStateCache.onChangePrefix("tradeOrders", function()
-		for id, o in pairs(ClientStateCache.allTradeOrders() or {}) do
-			o.id = o.id or id
-			local mine = o.counterpartyTag == claimedTag and o.state == "Pending"
-			if mine and not seenOrders[o.id] then
-				seenOrders[o.id] = true
-				Hud.openTradeOffer(o)
-			elseif not mine then
-				seenOrders[o.id] = nil
-			end
-		end
-	end)
+	-- Trade was cut for the public playtest: no player or AI creates trade orders, so the incoming-TradeOffer
+	-- modal hook is removed -- a stray/exploit PlaceTradeOrder can no longer pop an unanswerable accept/reject
+	-- modal at a player with no Trade UI. (Re-add this subscription alongside Hud.openTradeOffer when a trade
+	-- entry point returns.)
 
-	-- Pop the DiplomaticOffer modal once when a pending NAP offer is directed at the player.
-	-- Mirrors the trade-order hook above (active NAPs live on the country record, not here).
+	-- (1) Pop the DiplomaticOffer modal once when a pending pact offer (alliance / NAP / call-to-arms) is
+	-- directed at the player; (2) toast the PROPOSER when their outgoing pact is accepted / rejected / expired.
+	-- Pact proposals were fire-and-forget, so a below-opinion-threshold alliance/NAP that the AI instantly
+	-- rejects gave zero feedback and read as a broken button. Mirrors the peace-proposal hook above.
 	local seenPacts = {}
 	ClientStateCache.onChangePrefix("pacts", function()
+		syncPeaceTag()
 		for id, p in pairs(ClientStateCache.allPacts() or {}) do
 			p.id = p.id or id
-			local mine = p.toTag == claimedTag and p.status == "pending"
-			if mine and not seenPacts[p.id] then
-				seenPacts[p.id] = true
-				Hud.openDiplomaticOffer(p)
-			elseif not mine then
+			-- Incoming offer -> modal (once).
+			if p.toTag == claimedTag and p.status == "pending" then
+				if not seenPacts[p.id] then
+					seenPacts[p.id] = true
+					Hud.openDiplomaticOffer(p)
+				end
+			else
 				seenPacts[p.id] = nil
+			end
+			-- Outgoing proposal -> result toast on any status transition (incl. first sight already-rejected).
+			if p.fromTag == claimedTag then
+				local prev = myPactStatus[p.id]
+				if prev ~= p.status then
+					myPactStatus[p.id] = p.status
+					local who = countryName(p.toTag)
+					local what = pactLabel(p.type)
+					if p.status == "pending" and prev == nil then
+						Hud.notify({ kind = "info", title = what .. " proposed", body = "Awaiting " .. who .. "'s response.", ttl = 5 })
+					elseif p.status == "accepted" then
+						Hud.notify({ kind = "success", title = what .. " accepted", body = who .. " accepted your " .. what .. ".", ttl = 6 })
+					elseif p.status == "rejected" then
+						Hud.notify({ kind = "warning", title = what .. " rejected", body = who .. " rejected your " .. what .. ".", ttl = 6 })
+					elseif p.status == "expired" then
+						Hud.notify({ kind = "warning", title = what .. " expired", body = who .. " did not respond in time.", ttl = 6 })
+					end
+				end
 			end
 		end
 	end)

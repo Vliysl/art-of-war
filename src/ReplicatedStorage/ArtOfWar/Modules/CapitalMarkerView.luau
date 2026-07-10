@@ -11,6 +11,7 @@ local aow = ReplicatedStorage:WaitForChild("ArtOfWar")
 local ClientStateCache = require(aow:WaitForChild("Modules"):WaitForChild("ClientStateCache"))
 local ProvincePositions = require(aow:WaitForChild("Modules"):WaitForChild("ProvincePositions"))
 local Countries = require(aow:WaitForChild("Data"):WaitForChild("Countries"))
+local CountryColor = require(aow:WaitForChild("Modules"):WaitForChild("CountryColor"))
 
 local FALLBACK = Color3.fromRGB(150, 150, 150)
 local INNER_WHITE = Color3.new(1, 1, 1)
@@ -38,15 +39,8 @@ local function getTemplate()
 end
 
 local function ownerColor(tag)
-	local c = ClientStateCache.getCountry and ClientStateCache.getCountry(tag)
-	if c and c.color then
-		return Color3.fromRGB(c.color[1] or 150, c.color[2] or 150, c.color[3] or 150)
-	end
-	local s = tag and Countries[tag]
-	if s and s.color then
-		return Color3.fromRGB(s.color[1] or 150, s.color[2] or 150, s.color[3] or 150)
-	end
-	return FALLBACK
+	-- Routed through CountryColor (custom-colour override + viewer hide toggle); FALLBACK for a nil/unknown tag.
+	return (tag and CountryColor.resolve(tag)) or FALLBACK
 end
 
 local function ensureFolder()
@@ -120,7 +114,10 @@ local function reconcile()
 			-- Signature folds everything the colors derive from, so per-tick province deltas
 			-- that don't move the capital's controller skip the recolor writes.
 			local oc = ownerColor(tag)
-			local sig = tostring(occTag) .. "|" .. oc:ToHex() .. "|" .. tostring(capId)
+			-- Include the OCCUPIER's resolved colour too, so an occupier changing its custom colour repaints the
+			-- inner star (not only the outer star on an owner-colour change).
+			local occHex = occTag and ownerColor(occTag):ToHex() or ""
+			local sig = tostring(occTag) .. "|" .. oc:ToHex() .. "|" .. occHex .. "|" .. tostring(capId)
 			if m.sig ~= sig then
 				m.sig = sig
 				if m.outline then

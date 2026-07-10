@@ -428,11 +428,8 @@ function ProvinceInteraction.addScreenSelector(fn)
 	end
 end
 
--- B3: a callback (registered by ArmyView) returning how many stacks fall inside a viewport rect, for the
--- live "N selected" marquee count.
-function ProvinceInteraction.setDragCountProvider(fn)
-	dragCountProvider = (type(fn) == "function") and fn or nil
-end
+-- (The marquee "N selected" count label was removed; setDragCountProvider is gone. ArmyView's registration
+-- call is nil-guarded, so it simply no-ops.)
 
 function ProvinceInteraction.addRaycastFolder(folder, classifierFn)
 	if not folder or type(classifierFn) ~= "function" then
@@ -462,8 +459,7 @@ end
 -- Drag-select rectangle. A small 2D box drawn while the player left-drags over the map. The GUI uses
 -- IgnoreGuiInset so its (0,0) matches GetMouseLocation / WorldToViewportPoint space, keeping the box
 -- aligned with the cursor and consistent with the army hit-test (ArmyView.selectArmiesInScreenRect).
-local dragGui, dragFrame, dragCountLabel
-local dragCountProvider = nil
+local dragGui, dragFrame
 local function ensureDragGui()
 	if dragFrame and dragFrame.Parent then
 		return dragFrame
@@ -493,31 +489,7 @@ local function ensureDragGui()
 	stroke.Transparency = 0.1
 	stroke.Parent = dragFrame
 	dragFrame.Parent = dragGui
-	dragCountLabel = Instance.new("TextLabel")
-	dragCountLabel.Name = "Count"
-	dragCountLabel.BackgroundColor3 = SELECT_OUTLINE
-	dragCountLabel.BackgroundTransparency = 0.15
-	dragCountLabel.TextColor3 = Color3.new(0, 0, 0)
-	dragCountLabel.Font = Enum.Font.GothamBold
-	dragCountLabel.TextSize = 14
-	dragCountLabel.AnchorPoint = Vector2.new(0.5, 1)
-	dragCountLabel.Size = UDim2.fromOffset(130, 22)
-	dragCountLabel.Visible = false
-	dragCountLabel.ZIndex = 12
-	local lc = Instance.new("UICorner")
-	lc.CornerRadius = UDim.new(0, 6)
-	lc.Parent = dragCountLabel
-	dragCountLabel.Parent = dragGui
 	return dragFrame
-end
-
--- B3: which thing the current drag will box-select (drives the live count label + is set by Alt on PC /
--- the on-screen target toggle on touch).
-local function currentDragTargetIsProvinces()
-	if Platform.isTouch then
-		return dragSelectTarget == "provinces"
-	end
-	return UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) or UserInputService:IsKeyDown(Enum.KeyCode.RightAlt)
 end
 
 local function updateDragRect(a, b)
@@ -529,31 +501,11 @@ local function updateDragRect(a, b)
 	frame.Position = UDim2.fromOffset(minX, minY)
 	frame.Size = UDim2.fromOffset(math.abs(a.X - b.X), math.abs(a.Y - b.Y))
 	frame.Visible = true
-	if dragCountLabel then
-		-- B3: live count above the current finger/cursor (b) so the box target is legible under the finger.
-		local off = Platform.isTouch and 46 or 20
-		dragCountLabel.Position = UDim2.fromOffset(b.X, b.Y - off)
-		if currentDragTargetIsProvinces() then
-			dragCountLabel.Text = "Provinces"
-		elseif dragCountProvider then
-			local mnX, mnY = math.min(a.X, b.X), math.min(a.Y, b.Y)
-			local mxX, mxY = math.max(a.X, b.X), math.max(a.Y, b.Y)
-			local ok, cnt = pcall(dragCountProvider, Vector2.new(mnX, mnY), Vector2.new(mxX, mxY))
-			local n2 = (ok and cnt) or 0
-			dragCountLabel.Text = n2 .. (n2 == 1 and " army" or " armies")
-		else
-			dragCountLabel.Text = ""
-		end
-		dragCountLabel.Visible = true
-	end
 end
 
 local function hideDragRect()
 	if dragFrame then
 		dragFrame.Visible = false
-	end
-	if dragCountLabel then
-		dragCountLabel.Visible = false
 	end
 end
 

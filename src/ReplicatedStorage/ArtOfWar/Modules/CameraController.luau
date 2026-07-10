@@ -97,6 +97,38 @@ task.spawn(function()
 	lp:GetAttributeChangedSignal("InvertDrag"):Connect(refresh)
 end)
 
+-- Zoom-out ceiling by rank. Regular players are capped at a lower ceiling (300 vs the authored 700); properly
+-- ranked developers/historians keep the full pull-back for map inspection. Gated on the server-stamped
+-- LocalPlayer attribute "MapEditorAuthorized" (true for the editor tiers = devs + historians; may resolve a
+-- moment after join and can change live). Defaults to the restricted ceiling until confirmed ranked.
+local RANKED_MAX_ZOOM = Config.MAX_ZOOM -- the authored ceiling (full pull-back, 700)
+local REGULAR_MAX_ZOOM = 300 -- regular-player ceiling
+Config.MAX_ZOOM = REGULAR_MAX_ZOOM
+task.spawn(function()
+	local lp = Players.LocalPlayer
+	while not lp do
+		task.wait()
+		lp = Players.LocalPlayer
+	end
+	local function refresh()
+		local ranked = lp:GetAttribute("MapEditorAuthorized") == true
+		local oldCap = Config.MAX_ZOOM
+		local newCap = ranked and RANKED_MAX_ZOOM or REGULAR_MAX_ZOOM
+		Config.MAX_ZOOM = newCap
+		if targetZoom > newCap then
+			-- Ceiling lowered past the current view: ease the target back in.
+			targetZoom = newCap
+		elseif newCap > oldCap and targetZoom >= oldCap - 0.5 then
+			-- Ceiling RAISED while pinned at the old (lower) cap -- e.g. a ranked player whose rank resolved
+			-- only AFTER the intro setZoom(DEFAULT_ZOOM) got clamped to the restricted ceiling. Expand back
+			-- toward the intended default view instead of staying stuck at the old cap.
+			targetZoom = math.min(Config.DEFAULT_ZOOM, newCap)
+		end
+	end
+	refresh()
+	lp:GetAttributeChangedSignal("MapEditorAuthorized"):Connect(refresh)
+end)
+
 local function wrapX(x)
 	local halfW = Config.MAP_WIDTH / 2
 	local cx = Config.MAP_CENTER_X
@@ -116,8 +148,11 @@ local function speedScale()
 end
 
 local function updateCamera(dt)
-	local panLerp = isDragging and 1 or math.min(1, dt * Config.PAN_SMOOTHING)
-	local zoomLerp = math.min(1, dt * Config.ZOOM_SMOOTHING)
+	-- Frame-rate-independent exponential smoothing (was min(1, dt*k), whose effective time-constant drifted
+	-- with FPS): the camera converges to its target at the same rate on a 30fps phone and a 144fps PC, and
+	-- never overshoots. isDragging still follows the cursor 1:1 for zero-latency panning.
+	local panLerp = isDragging and 1 or (1 - math.exp(-Config.PAN_SMOOTHING * dt))
+	local zoomLerp = 1 - math.exp(-Config.ZOOM_SMOOTHING * dt)
 	local dx = targetPos.X - currentPos.X
 	local halfW = Config.MAP_WIDTH / 2
 	if dx > halfW then dx -= Config.MAP_WIDTH
@@ -182,6 +217,24 @@ end
 -- travels past a small threshold -- matching ProvinceInteraction's click/drag split.
 local MB2_DRAG_THRESHOLD = 6
 local mb2PanPending = nil
+local lastMousePos = nil -- latest cursor position (InputObject frame), for zoom-to-cursor drag re-anchoring
+
+-- World point on the map plane (Y = MAP_Y) directly under the mouse cursor, via a viewport ray. Used to zoom
+-- toward the cursor instead of the screen centre. Returns nil if the ray is parallel to / behind the plane.
+local function cursorGroundPoint()
+	local mp = UserInputService:GetMouseLocation()
+	local inset = GuiService:GetGuiInset()
+	local ray = camera:ViewportPointToRay(mp.X, mp.Y - inset.Y)
+	local dirY = ray.Direction.Y
+	if math.abs(dirY) < 1e-6 then
+		return nil
+	end
+	local t = (Config.MAP_Y - ray.Origin.Y) / dirY
+	if t <= 0 then
+		return nil
+	end
+	return ray.Origin + ray.Direction * t
+end
 
 local function wireConnections()
 	connections[#connections + 1] = UserInputService.InputBegan:Connect(function(input, processed)
@@ -217,6 +270,9 @@ local function wireConnections()
 
 	connections[#connections + 1] = UserInputService.InputChanged:Connect(function(input)
 		if not active then return end
+		if input.UserInputType == Enum.UserInputType.MouseMovement then
+			lastMousePos = Vector2.new(input.Position.X, input.Position.Y)
+		end
 		if mb2PanPending and input.UserInputType == Enum.UserInputType.MouseMovement and not isDragging then
 			local p = Vector2.new(input.Position.X, input.Position.Y)
 			if math.abs(p.X - mb2PanPending.X) > MB2_DRAG_THRESHOLD
@@ -242,7 +298,32 @@ local function wireConnections()
 			if inputBlocked() then return end
 			local scrollDir = -input.Position.Z
 			local factor = 1 + scrollDir * Config.ZOOM_SPEED
+			local oldTargetZoom = targetZoom
 			targetZoom = math.clamp(targetZoom * factor, Config.MIN_ZOOM, Config.MAX_ZOOM)
+			-- Zoom toward the CURSOR (map-app style) instead of always the screen centre: pivot the target
+			-- centre toward the ground point under the cursor by the fraction of zoom applied. Also fixes
+			-- zooming while holding a right/middle-button drag, which previously snapped to centre.
+			local ground = cursorGroundPoint()
+			if ground and oldTargetZoom > 0 then
+				local k = 1 - targetZoom / oldTargetZoom -- 0 = no change; ->1 as we zoom fully in (centre -> cursor)
+				local dxg = ground.X - targetPos.X
+				local halfW = Config.MAP_WIDTH / 2 -- take the shorter way around the X seam
+				if dxg > halfW then
+					dxg -= Config.MAP_WIDTH
+				elseif dxg < -halfW then
+					dxg += Config.MAP_WIDTH
+				end
+				targetPos = Vector3.new(
+					wrapX(targetPos.X + dxg * k),
+					Config.MAP_Y,
+					clampZ(targetPos.Z + (ground.Z - targetPos.Z) * k)
+				)
+				-- Re-anchor an in-progress drag to the new centre so it keeps tracking the cursor smoothly.
+				if isDragging and lastMousePos then
+					dragStart = lastMousePos
+					dragCamStart = targetPos
+				end
+			end
 		end
 	end)
 

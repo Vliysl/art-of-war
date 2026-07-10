@@ -20,10 +20,11 @@ local DISTRICT_ABSORBED = {
 
 local EconomyScreen = {}
 
+-- Trade was CUT ahead of the public playtest (undercooked); the Trade tab, its renderer, and the tradeOrders
+-- subscription below are removed. TradeOrderSystem still runs server-side but has no client entry point now.
 local TABS = {
 	{ key = "budget", label = "Budget" },
 	{ key = "production", label = "Production" },
-	{ key = "trade", label = "Trade" },
 	{ key = "buildings", label = "Buildings" },
 }
 
@@ -237,131 +238,6 @@ function EconomyScreen.create(ctx)
 				deltaNum = net,
 				layoutOrder = 1 + i,
 			})
-		end
-	end
-
-	local function renderTrade(body)
-		local proposeRow = ScreenKit.buttonRow(body, 0)
-		Button.create({
-			parent = proposeRow,
-			variant = "primary",
-			text = "Propose Trade",
-			onClick = function()
-				require(script.Parent.TradeProposal).create(ctx)
-			end,
-		})
-		local mine = ctx.tag
-		local incoming, active = {}, {}
-		for id, ord in ctx.cache.allTradeOrders() do
-			ord.id = ord.id or id
-			if ord.state == "Pending" and ord.counterpartyTag == mine then
-				incoming[#incoming + 1] = ord
-			elseif
-				(ord.state == "Active" and (ord.initiatorTag == mine or ord.counterpartyTag == mine))
-				or (ord.state == "Pending" and ord.initiatorTag == mine)
-			then
-				active[#active + 1] = ord
-			end
-		end
-		table.sort(incoming, function(a, b)
-			return (a.id or 0) < (b.id or 0)
-		end)
-		table.sort(active, function(a, b)
-			return (a.id or 0) < (b.id or 0)
-		end)
-
-		if #incoming == 0 and #active == 0 then
-			ScreenKit.note(body, "No active trades. Use \u{201C}Propose Trade\u{201D} to start one.", 1)
-			return
-		end
-
-		local function nationName(tag)
-			local c = ctx.cache.getCountry(tag)
-			return (c and c.displayName) or tag or "\u{2014}"
-		end
-		local function linesText(ord)
-			local parts = {}
-			for _, line in ipairs(ord.lines or {}) do
-				parts[#parts + 1] =
-					string.format("%s\u{00D7}%s", tostring(line.amount), goodName(registries, line.goodId))
-			end
-			if #parts == 0 then
-				return "\u{2014}"
-			end
-			return table.concat(parts, ", ")
-		end
-
-		if #incoming > 0 then
-			ScreenKit.section(body, "Incoming Offers", 1)
-			local order = 2
-			for _, ord in ipairs(incoming) do
-				local iAmBuyer = ord.buyerTag == mine
-				ScreenKit.stat(body, {
-					icon = "Trade",
-					label = nationName(ord.initiatorTag),
-					value = iAmBuyer and "offers to sell" or "offers to buy",
-					layoutOrder = order,
-				})
-				ScreenKit.note(body, linesText(ord), order + 1)
-				ScreenKit.stat(body, {
-					label = iAmBuyer and "You pay" or "You receive",
-					value = money(ord.totalCost),
-					valueColor = iAmBuyer and "negative" or "positive",
-					mono = true,
-					layoutOrder = order + 2,
-				})
-				local row = ScreenKit.buttonRow(body, order + 3)
-				Button.create({
-					parent = row,
-					variant = "success",
-					text = "Accept",
-					onClick = function()
-						ctx.fire("AcceptTradeOrder", ord.id)
-					end,
-				})
-				Button.create({
-					parent = row,
-					variant = "ghost",
-					text = "Reject",
-					onClick = function()
-						ctx.fire("RejectTradeOrder", ord.id)
-					end,
-				})
-				order += 5
-			end
-		end
-
-		if #active > 0 then
-			ScreenKit.section(body, "Active Orders", 30)
-			local order = 31
-			for _, ord in ipairs(active) do
-				local otherTag = ord.initiatorTag == mine and ord.counterpartyTag or ord.initiatorTag
-				local verb = ord.buyerTag == mine and "Buying from" or "Selling to"
-				ScreenKit.stat(body, {
-					icon = "Trade",
-					label = string.format("%s %s", verb, nationName(otherTag)),
-					value = ord.recurring and "Recurring" or "One-time",
-					layoutOrder = order,
-				})
-				ScreenKit.note(
-					body,
-					linesText(ord)
-						.. "  \u{00B7}  "
-						.. money(ord.totalCost)
-						.. (ord.state == "Pending" and "  (awaiting reply)" or ""),
-					order + 1
-				)
-				local row = ScreenKit.buttonRow(body, order + 2)
-				Button.create({
-					parent = row,
-					variant = "danger",
-					text = "Cancel",
-					onClick = function()
-						ctx.fire("CancelTradeOrder", ord.id)
-					end,
-				})
-				order += 4
-			end
 		end
 	end
 
@@ -601,10 +477,6 @@ function EconomyScreen.create(ctx)
 			ScreenKit.note(handle.body, "No realm claimed.", 1)
 			return
 		end
-		if tab == "trade" then
-			renderTrade(handle.body)
-			return
-		end
 		local fn = renderers[tab] or renderBudget
 		fn(handle.body, c)
 	end
@@ -623,7 +495,6 @@ function EconomyScreen.create(ctx)
 	--   expense lines   -> provider + floor(amount/10)  (sorted; £10 steps)
 	--   economyPolicy   -> exact (drives Current + active button state)
 	-- Production tab: per-good stockpile (floor(stock/10)) + net prod-cons (floor(net/10)), sorted by id.
-	-- Trade tab: sorted active+incoming trade order ids + state + totalCost bucket (floor/10).
 	-- Buildings tab: sorted build-queue ids + completion-progress bucket (5% steps); the catalog is
 	--   static (registry) so it is omitted. The buildable-province lists live only inside the modal,
 	--   not in the body, so they do not feed the body signature.
@@ -703,25 +574,6 @@ function EconomyScreen.create(ctx)
 				)
 			end
 			parts[#parts + 1] = "prod:" .. table.concat(rows, ",")
-		elseif tabKey == "trade" then
-			local mine = ctx.tag
-			local orders = {}
-			for id, ord in ctx.cache.allTradeOrders() do
-				local oid = ord.id or id
-				local relevant = (ord.state == "Pending" and ord.counterpartyTag == mine)
-					or (ord.state == "Active" and (ord.initiatorTag == mine or ord.counterpartyTag == mine))
-					or (ord.state == "Pending" and ord.initiatorTag == mine)
-				if relevant then
-					orders[#orders + 1] = string.format(
-						"%s:%s:%d",
-						tostring(oid),
-						tostring(ord.state),
-						math.floor((ord.totalCost or 0) / 10)
-					)
-				end
-			end
-			table.sort(orders)
-			parts[#parts + 1] = "trade:" .. table.concat(orders, ",")
 		elseif tabKey == "buildings" then
 			local now = SimClock.now()
 			local queue = {}
@@ -789,7 +641,6 @@ function EconomyScreen.create(ctx)
 	})
 
 	table.insert(conns, ctx.cache.onChangePrefix("countries", scheduleRefresh))
-	table.insert(conns, ctx.cache.onChangePrefix("tradeOrders", scheduleRefresh))
 	table.insert(conns, ctx.cache.onChangePrefix("provinces", scheduleRefresh))
 
 	render(activeTab)

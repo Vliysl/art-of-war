@@ -119,25 +119,56 @@ local function onRecruitCancelled(data)
 		"self", data.tag, "recruit.cancelled.occupied", { ttl = 8 }))
 end
 
+-- Combat runs many battles in parallel during a war and each start/resolve fired its own per-side toast, so
+-- the feed flooded. Coalesce high-volume combat notifications per (recipient, bucket): the FIRST in a burst
+-- toasts immediately; further ones within the window are counted and flushed as one "N more ..." summary.
+local combatBuffers = {}
+local function coalesceToast(kind, tag, bucket, title, firstBody, moreBody, eventType)
+	if not tag then return end
+	local key = tostring(tag) .. "|" .. bucket
+	local entry = combatBuffers[key]
+	if entry then
+		entry.count += 1
+		return
+	end
+	broadcast(makePayload(kind, title, firstBody, "self", tag, eventType))
+	combatBuffers[key] = { count = 0 }
+	task.delay(ctx.WorldConstants.CombatToastWindowSec or 12, function()
+		local e = combatBuffers[key]
+		combatBuffers[key] = nil
+		if e and e.count > 0 then
+			broadcast(makePayload(kind, title, moreBody(e.count), "self", tag, eventType))
+		end
+	end)
+end
+
 local function onBattleStarted(data)
-	broadcast(makePayload("warn", "Battle Joined",
-		string.format("Forces engaged against %s in province %s.", displayName(data.defenderTag), tostring(data.provinceId)),
-		"self", data.attackerTag, "battle.started"))
-	broadcast(makePayload("bad", "Under Attack",
-		string.format("%s has engaged our army in province %s.", displayName(data.attackerTag), tostring(data.provinceId)),
-		"self", data.defenderTag, "battle.started.defender"))
+	-- Attacker-side "Battle Joined" removed (you launched the attack, so you already know). The defender still
+	-- gets a coalesced "Under Attack" so a surprise assault surfaces -- without one toast per engagement.
+	coalesceToast("bad", data.defenderTag, "attacked|" .. tostring(data.attackerTag), "Under Attack",
+		string.format("%s has engaged our forces in province %s.", displayName(data.attackerTag), tostring(data.provinceId)),
+		function(n)
+			return string.format("%s is attacking on %d more front%s.", displayName(data.attackerTag), n, n == 1 and "" or "s")
+		end,
+		"battle.started.defender")
 end
 
 local function onBattleResolved(data)
 	if data.winnerTag then
-		broadcast(makePayload("good", "Victory",
-			string.format("Our forces have prevailed over %s in province %s.", displayName(data.loserTag or "?"), tostring(data.provinceId)),
-			"self", data.winnerTag, "battle.won"))
+		coalesceToast("good", data.winnerTag, "victory|" .. tostring(data.loserTag), "Victory",
+			string.format("Our forces prevailed over %s in province %s.", displayName(data.loserTag), tostring(data.provinceId)),
+			function(n)
+				return string.format("%d more victor%s over %s.", n, n == 1 and "y" or "ies", displayName(data.loserTag))
+			end,
+			"battle.won")
 	end
 	if data.loserTag then
-		broadcast(makePayload("bad", "Defeat",
-			string.format("Our army was beaten by %s in province %s.", displayName(data.winnerTag or "?"), tostring(data.provinceId)),
-			"self", data.loserTag, "battle.lost"))
+		coalesceToast("bad", data.loserTag, "defeat|" .. tostring(data.winnerTag), "Defeat",
+			string.format("Our army was beaten by %s in province %s.", displayName(data.winnerTag), tostring(data.provinceId)),
+			function(n)
+				return string.format("%d more defeat%s by %s.", n, n == 1 and "" or "s", displayName(data.winnerTag))
+			end,
+			"battle.lost")
 	end
 end
 

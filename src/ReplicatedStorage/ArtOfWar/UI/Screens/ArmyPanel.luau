@@ -10,6 +10,7 @@ local Icons = DesignSystem.Icons
 local WorldConstants = require(script.Parent.Parent.Parent.Shared.WorldConstants)
 local LeaderTraits = require(script.Parent.Parent.Parent.Data.LeaderTraits)
 local Terrains = require(script.Parent.Parent.Parent.Data.Terrains)
+local CountryColor = require(script.Parent.Parent.Parent.Modules.CountryColor)
 local RecruitGate = require(script.Parent.Parent.Parent.Modules.RecruitGate)
 
 local ArmyPanel = {}
@@ -1500,7 +1501,12 @@ function ArmyPanel.create(ctx)
 			})
 		end
 
-		ScreenKit.note(body, "Right-click a tile to move all \u{00B7} an adjacent enemy to attack.", 39)
+		ScreenKit.note(
+			body,
+			(DesignSystem.Responsive.isTouch() and "Tap" or "Right-click")
+				.. " a tile to move all \u{00B7} an adjacent enemy to attack.",
+			39
+		)
 		buildCommandBar(body, 40)
 
 		liveUpdate = function()
@@ -1695,7 +1701,12 @@ function ArmyPanel.create(ctx)
 			ScreenKit.note(body, "No regiments in this army.", 21)
 		end
 
-		ScreenKit.note(body, "Right-click a tile to move \u{00B7} an adjacent enemy to attack.", 39)
+		ScreenKit.note(
+			body,
+			(DesignSystem.Responsive.isTouch() and "Tap" or "Right-click")
+				.. " a tile to move \u{00B7} an adjacent enemy to attack.",
+			39
+		)
 		buildCommandBar(body, 40)
 
 		liveUpdate = function()
@@ -1772,7 +1783,7 @@ function ArmyPanel.create(ctx)
 		if primary and handle.header then
 			local crest = CountryBadge.create({
 				code = primary.ownerTag or "\u{2014}",
-				countryColor = oc and oc.color,
+				countryColor = primary.ownerTag and CountryColor.resolve(primary.ownerTag) or nil,
 				size = "sm",
 				parent = handle.header,
 			})

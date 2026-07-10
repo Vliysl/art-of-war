@@ -10,6 +10,7 @@ local Icons = DesignSystem.Icons
 local Responsive = DesignSystem.Responsive
 local Modal = require(Components.Modal)
 local SimClock = require(script.Parent.Parent.Parent.Modules.SimClock)
+local CountryColor = require(script.Parent.Parent.Parent.Modules.CountryColor)
 local WorldConstants = require(script.Parent.Parent.Parent.Shared.WorldConstants)
 local Terrains = require(script.Parent.Parent.Parent.Data.Terrains)
 local DistrictTypes = require(script.Parent.Parent.Parent.Data.DistrictTypes)
@@ -1116,10 +1117,9 @@ function ProvinceOverview.create(ctx)
 			end
 
 			for i, tag in ipairs(cores) do
-				local cc = ctx.cache and ctx.cache.getCountry and ctx.cache.getCountry(tag)
 				local flagBadge = CountryBadge.create({
 					code = tag,
-					countryColor = cc and cc.color,
+					countryColor = tag and CountryColor.resolve(tag) or nil,
 					px = 24,
 					size = "sm",
 					layoutOrder = i,
@@ -1213,14 +1213,11 @@ function ProvinceOverview.create(ctx)
 			layoutOrder = 15,
 		})
 		-- This province's manpower CONTRIBUTION to its owner's national pool -- NOT the whole national pool
-		-- (which is identical on every province). Mirrors RecruitSystem.provinceManpowerContribution exactly:
-		-- max(floor(population * ManpowerPopFraction), ManpowerProvinceFloor).
+		-- (which is identical on every province). Mirrors RecruitSystem.provinceManpowerContribution:
+		-- floor(population * ManpowerPopFraction). (The 5K floor is now per-NATION, applied to the pooled cap.)
 		local mpLive = liveProvince()
 		local mpPop = (mpLive and mpLive.population) or 0
-		local mpContribution = math.max(
-			math.floor(mpPop * (WorldConstants.ManpowerPopFraction or 0.15)),
-			WorldConstants.ManpowerProvinceFloor or 5000
-		)
+		local mpContribution = math.floor(mpPop * (WorldConstants.ManpowerPopFraction or 0.02))
 		local function fmtMP(n)
 			n = math.floor(tonumber(n) or 0)
 			return (n >= 1000) and string.format("%.1fK", n / 1000) or tostring(n)

@@ -24,6 +24,10 @@ return {
 	-- ── Estate demand (the core loop driver) ─────────────────────────────────
 	estate_demands_privilege = {
 		id = "estate_demands_privilege",
+		-- Playtest: the Estates UI was cut, so this orphaned estate-demand card fires about factions the player
+		-- can no longer see, with effects (loyalty/authority) that have no visible readout. EventSystem skips
+		-- defs flagged `disabled`. Re-enable when the Estates screen returns.
+		disabled = true,
 		title = "A Demand from the %ESTATE%",
 		body = "The %ESTATE% grow restless and press the %LEADER% to confirm their ancient privileges. Concede, and they will be loyal but emboldened; refuse, and resentment will simmer.",
 		category = "estate_demand",
@@ -71,6 +75,8 @@ return {
 	-- ── Enlightenment opportunity (teaching: reform pleases some, angers others) ──
 	enlightenment_salon = {
 		id = "enlightenment_salon",
+		-- Playtest: references the cut Estates (clergy/philosophes) with no visible feedback -> disabled.
+		disabled = true,
 		title = "The Spirit of the Age",
 		body = "Fashionable salons buzz with the new philosophy. The %LEADER% may patronise the philosophes and ride the tide of reason — at the cost of clerical goodwill.",
 		category = "enlightenment",

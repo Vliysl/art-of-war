@@ -15,6 +15,7 @@ local Modal = require(UI.Components.Modal)
 local ScreenKit = require(UI.Screens.ScreenKit)
 local WorldConstants = require(ArtOfWar.Shared.WorldConstants)
 local LeaderTraits = require(ArtOfWar.Data.LeaderTraits)
+local CountryColor = require(ArtOfWar.Modules.CountryColor)
 
 local ArmyGroupStrip = {}
 
@@ -467,10 +468,7 @@ local function createCard(groupId)
 	-- Portrait layout: a nation-tinted army icon on top, then the group name and unit count stacked and
 	-- centered. (No crest -- every card is the player's own nation, so it would be redundant.)
 	local ownerTag = getTag()
-	local ownerCountry = ownerTag and deps.cache.getCountry(ownerTag) or nil
-	local ownerColor = (ownerCountry and type(ownerCountry.color) == "table")
-			and Color3.fromRGB(ownerCountry.color[1] or 200, ownerCountry.color[2] or 200, ownerCountry.color[3] or 200)
-		or Colors.TextSecondary
+	local ownerColor = ownerTag and CountryColor.resolve(ownerTag) or Colors.TextSecondary
 
 	local content = Instance.new("Frame")
 	content.Name = "Content"

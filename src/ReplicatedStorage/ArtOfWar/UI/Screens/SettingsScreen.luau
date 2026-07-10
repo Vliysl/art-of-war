@@ -11,6 +11,9 @@ local Button = require(Components.Button)
 local Slider = require(Components.Slider)
 local WorldConstants = require(script.Parent.Parent.Parent.Shared.WorldConstants)
 local ClientSignals = require(script.Parent.Parent.Parent.Modules.ClientSignals)
+local ColorPicker = require(Components.ColorPicker)
+local MarketplaceService = game:GetService("MarketplaceService")
+local CUSTOM_COLORS_GAMEPASS = 1907046397
 
 local SettingsScreen = {}
 
@@ -19,16 +22,18 @@ local testCounter = 0
 local TABS = {
 	{ key = "general", label = "General" },
 	{ key = "controls", label = "Controls" },
-	{ key = "test", label = "Test Mode" },
 }
 
+-- Test Mode is a DEV-ONLY harness (spawns fake political-event popups, incl. the cut Estates content) that
+-- does nothing for a normal player. Admin-gated so public testers never see it; appended in create() for admins.
+local TEST_TAB = { key = "test", label = "Test Mode" }
+
 local MENU_KEYS = {
-	{ "Politics", "1" },
+	-- Mirrors Hud.luau's live MENU_KEYS. Politics (1) and Missions (6) were cut ahead of the playtest.
 	{ "Economy", "2" },
 	{ "Military", "3" },
 	{ "Diplomacy", "4" },
 	{ "Research", "5" },
-	{ "Missions", "6" },
 	{ "Settings", "7" },
 }
 
@@ -129,9 +134,61 @@ local function sliderRow(parent, label, getValue, setValue, minV, maxV, order, f
 	})
 end
 
+-- Rainbow-gradient action button (sharp corners, matching the procedural button style). The UIGradient tints
+-- the button's own white background only -- the child label stays dark for contrast. Used for the eye-catching
+-- "Change Color" cosmetic action.
+local function rainbowButton(parent, text, layoutOrder, onClick)
+	local btn = Instance.new("TextButton")
+	btn.Name = "RainbowButton"
+	btn.AutomaticSize = Enum.AutomaticSize.X
+	btn.Size = UDim2.new(0, 0, 0, Responsive.tapHeight(38))
+	btn.AutoButtonColor = false
+	btn.Text = ""
+	btn.BackgroundColor3 = Color3.new(1, 1, 1)
+	btn.BorderSizePixel = 0
+	btn.LayoutOrder = layoutOrder or 0
+	local grad = Instance.new("UIGradient")
+	grad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255, 92, 92)),
+		ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 176, 84)),
+		ColorSequenceKeypoint.new(0.34, Color3.fromRGB(247, 231, 96)),
+		ColorSequenceKeypoint.new(0.51, Color3.fromRGB(120, 214, 138)),
+		ColorSequenceKeypoint.new(0.68, Color3.fromRGB(96, 173, 255)),
+		ColorSequenceKeypoint.new(0.85, Color3.fromRGB(163, 130, 255)),
+		ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255, 128, 214)),
+	})
+	grad.Parent = btn
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(255, 255, 255)
+	stroke.Thickness = 1
+	stroke.Transparency = 0.35
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = btn
+	local label = Instance.new("TextLabel")
+	label.Name = "Label"
+	label.AutomaticSize = Enum.AutomaticSize.X
+	label.Size = UDim2.new(0, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.Text = text
+	label.TextColor3 = Color3.fromRGB(20, 20, 24) -- dark text for contrast on the bright gradient
+	Typography.apply(label, "label")
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 18)
+	pad.PaddingRight = UDim.new(0, 18)
+	pad.Parent = label
+	label.Parent = btn
+	if onClick then
+		btn.MouseButton1Click:Connect(onClick)
+	end
+	btn.Parent = parent
+	return btn
+end
+
 function SettingsScreen.create(ctx)
 	local lp = Players.LocalPlayer
 	local handle
+	local pickerClose = nil -- close() of an open ColorPicker, so destroy() tears down a lingering full-screen scrim
+	local purchaseConn = nil -- single in-flight PromptGamePassPurchaseFinished listener (no stacking / leak)
 
 	local renderers = {
 		general = function(body)
@@ -197,6 +254,94 @@ function SettingsScreen.create(ctx)
 					end
 				end,
 			})
+
+			-- Custom Country Colors (gamepass cosmetic) -- pinned to the very TOP of Settings (negative layout
+			-- orders), with "Change Color" ABOVE the per-viewer hide toggle. ANYONE can open the picker and pick a
+			-- colour; on Done, an owner applies it immediately, a non-owner gets the purchase prompt and the picked
+			-- colour is applied automatically once bought. The toggle hides OTHER players' custom colours (originals).
+			-- Apply the picked colour if the player owns the gamepass; otherwise prompt the purchase and apply it
+			-- once bought. The server re-validates ownership + the 60s cooldown authoritatively.
+			local function applyOrPromptColor(rgb)
+				local owns = false
+				if lp then
+					local ok, res = pcall(function()
+						return MarketplaceService:UserOwnsGamePassAsync(lp.UserId, CUSTOM_COLORS_GAMEPASS)
+					end)
+					owns = (ok and res) or false
+				end
+				if owns then
+					if ctx.fire then
+						ctx.fire("SetCustomCountryColor", rgb[1], rgb[2], rgb[3])
+					end
+					return
+				end
+				if not lp then
+					return
+				end
+				-- Single-connection: replace any prior in-flight listener so repeated Done clicks can't stack.
+				if purchaseConn then
+					purchaseConn:Disconnect()
+					purchaseConn = nil
+				end
+				purchaseConn = MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(plr, gpId, purchased)
+					if plr ~= lp or gpId ~= CUSTOM_COLORS_GAMEPASS then
+						return -- a different prompt; keep waiting for ours
+					end
+					if purchaseConn then
+						purchaseConn:Disconnect()
+						purchaseConn = nil
+					end
+					if purchased and ctx.fire then
+						ctx.fire("SetCustomCountryColor", rgb[1], rgb[2], rgb[3])
+					end
+				end)
+				local promptOk = pcall(function()
+					MarketplaceService:PromptGamePassPurchase(lp, CUSTOM_COLORS_GAMEPASS)
+				end)
+				if not promptOk and purchaseConn then
+					-- The prompt never opened -> PromptGamePassPurchaseFinished won't fire; don't leak the listener.
+					purchaseConn:Disconnect()
+					purchaseConn = nil
+				end
+			end
+
+			ScreenKit.section(body, "Country Color", -20)
+			ScreenKit.note(
+				body,
+				"Recolor your own nation (requires the Custom Country Colors gamepass). 60s cooldown between changes.",
+				-19
+			)
+			local colorRow = ScreenKit.buttonRow(body, -18)
+			rainbowButton(colorRow, "Change Color", 1, function()
+				local c = ctx.tag and ctx.cache and ctx.cache.getCountry(ctx.tag)
+				local initial = (c and type(c.customColor) == "table" and c.customColor)
+					or (c and c.color)
+					or { 150, 150, 150 }
+				pickerClose = ColorPicker.open(ctx.modalLayer or ctx.parent, initial, nil, function(rgb)
+					-- task.spawn so the picker's Done handler closes immediately (the ownership check yields).
+					task.spawn(function()
+						applyOrPromptColor(rgb)
+					end)
+				end)
+			end)
+			Button.create({
+				parent = colorRow,
+				variant = "ghost",
+				text = "Reset",
+				layoutOrder = 2,
+				onClick = function()
+					if ctx.fire then
+						ctx.fire("ResetCustomCountryColor")
+					end
+				end,
+			})
+			toggleRow(body, "Show Others' Custom Colors", function()
+				return not (lp and lp:GetAttribute("HideOtherCustomColors") == true)
+			end, function(on)
+				if lp then
+					lp:SetAttribute("HideOtherCustomColors", not on)
+				end
+			end, -17)
 
 			ScreenKit.section(body, "Map Mode", 4)
 			ScreenKit.note(body, "Switch between commanding the map and walking your ruler across it.", 5)
@@ -350,10 +495,16 @@ function SettingsScreen.create(ctx)
 		fn(handle.body)
 	end
 
+	-- Public testers see only General + Controls; admins additionally get the Test Mode dev harness.
+	local tabs = table.clone(TABS)
+	if lp and lp:GetAttribute("IsAdmin") == true then
+		tabs[#tabs + 1] = TEST_TAB
+	end
+
 	handle = ScreenKit.open(ctx, {
 		name = "SettingsScreen",
 		title = "Settings",
-		tabs = TABS,
+		tabs = tabs,
 		activeTab = "general",
 		onTab = function(key)
 			render(key)
@@ -380,6 +531,12 @@ function SettingsScreen.create(ctx)
 		destroy = function()
 			for _, c in ipairs(attrConns) do
 				c:Disconnect()
+			end
+			if pickerClose then
+				pcall(pickerClose) -- close a colour picker left open when Settings is dismissed (Esc / topbar)
+			end
+			if purchaseConn then
+				purchaseConn:Disconnect()
 			end
 			handle.destroy()
 		end,

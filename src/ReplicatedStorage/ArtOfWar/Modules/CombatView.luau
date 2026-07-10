@@ -16,6 +16,7 @@ local aow = ReplicatedStorage:WaitForChild("ArtOfWar")
 local ClientStateCache = require(aow:WaitForChild("Modules"):WaitForChild("ClientStateCache"))
 local WorldConstants = require(aow:WaitForChild("Shared"):WaitForChild("WorldConstants"))
 local Countries = require(aow:WaitForChild("Data"):WaitForChild("Countries"))
+local CountryColor = require(aow:WaitForChild("Modules"):WaitForChild("CountryColor"))
 local ProvincePositions = require(aow:WaitForChild("Modules"):WaitForChild("ProvincePositions"))
 
 local PLATE_BG  = Color3.fromRGB(18, 12, 8)
@@ -86,11 +87,8 @@ local function foldX(v)
 end
 
 local function ownerColor(tag)
-	local c = ClientStateCache.getCountry and ClientStateCache.getCountry(tag)
-	if c and c.color then return Color3.fromRGB(c.color[1] or 150, c.color[2] or 150, c.color[3] or 150) end
-	local s = tag and Countries[tag]
-	if s and s.color then return Color3.fromRGB(s.color[1] or 150, s.color[2] or 150, s.color[3] or 150) end
-	return FALLBACK
+	-- Routed through CountryColor (custom-colour override + viewer hide toggle); FALLBACK for a nil/unknown tag.
+	return (tag and CountryColor.resolve(tag)) or FALLBACK
 end
 
 local function ownerName(tag)
