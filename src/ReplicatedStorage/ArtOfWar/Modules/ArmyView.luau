@@ -34,20 +34,16 @@ local TINT_BY_STATE = {
 local FACTION_FALLBACK = Color3.fromRGB(140, 140, 140)
 local POLE_COLOR = Color3.fromRGB(40, 40, 50)
 
--- Unit IDs that get the placeholder Musketeer model. Cavalry/dragoons get the horse
+-- Unit IDs that get the placeholder Musketeer model. Cavalry gets the horse
 -- (CavalryModel) when EnableNewUnitModels is on. All other unit types (artillery)
 -- use the generic Banner-Pin (disc + pole + flag) until their own models are added.
 local INFANTRY_UNIT_IDS = {
 	line_infantry = true,
-	light_infantry = true,
-	militia_forces = true,
-	irregular_forces = true,
-	professional_infantry = true,
+	irregular_infantry = true,
 }
 
 local CAVALRY_UNIT_IDS = {
 	cavalry = true,
-	dragoons = true,
 }
 
 local MUSKETEER_TEMPLATE = nil
