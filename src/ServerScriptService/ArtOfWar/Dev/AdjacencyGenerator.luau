@@ -321,6 +321,55 @@ function AdjacencyGenerator.generate(opts)
 		end
 	end
 
+	-- ---- Phase 4.6: coastal rescue for thin provinces the coarse cell grid missed ----
+	-- A province thinner than a grid cell in either dimension can have NO cell center land on
+	-- it, so it never records a shore edge even when it borders sea (e.g. Puerto Rico, 16x4).
+	-- For each shore-less thin province, sample a ring just outside its bounds; a sample that
+	-- hits no province part is water -> classify its zone and add the shore edge. Runs BEFORE
+	-- the gap-rescue so a rescued coastal island is no longer "stranded" and never land-bridged.
+	local coastalRescued = 0
+	for pid, part in partById do
+		if
+			not (provinceShore[pid] and next(provinceShore[pid]))
+			and math.min(part.Size.X, part.Size.Z) < cell
+		then
+			local px, pz = part.Position.X, part.Position.Z
+			local hx, hz = part.Size.X * 0.5, part.Size.Z * 0.5
+			local sx = math.max(4, part.Size.X / 4)
+			local sz = math.max(4, part.Size.Z / 4)
+			local found = false
+			for _, margin in ipairs({ 6, 16 }) do
+				local pts = {}
+				for dx = -hx, hx, sx do
+					pts[#pts + 1] = Vector3.new(px + dx, 2000, pz - hz - margin)
+					pts[#pts + 1] = Vector3.new(px + dx, 2000, pz + hz + margin)
+				end
+				for dz = -hz, hz, sz do
+					pts[#pts + 1] = Vector3.new(px - hx - margin, 2000, pz + dz)
+					pts[#pts + 1] = Vector3.new(px + hx + margin, 2000, pz + dz)
+				end
+				for _, o in ipairs(pts) do
+					if not Workspace:Raycast(o, Vector3.new(0, -4000, 0), rcParams) then
+						local name, kind = WaterBodies.getWaterBodyAt(o.X, o.Z)
+						local key = name and slug(name) or "open_sea"
+						if not zoneName[key] then
+							recordZoneCell(key, name or "Open Sea", name and string.lower(kind or "sea") or "open_sea", o.X, o.Z)
+						end
+						addShore(pid, key)
+						found = true
+					end
+				end
+				if found then
+					break
+				end
+			end
+			if found then
+				coastalRescued += 1
+			end
+		end
+	end
+	print(string.format("[AdjGen] coastal rescue: %d thin shore-less provinces recovered as coastal", coastalRescued))
+
 	-- ---- Phase 4.5: gap-rescue for stranded provinces ----
 	-- A province that is NON-coastal AND has 0 land neighbors is unreachable. It's
 	-- separated from its true neighbors by a gap wider than the raw overlap caught
@@ -683,6 +732,59 @@ function AdjacencyGenerator.generateSea(opts)
 			if hasAnyEdge(n) then rescued += 1 end
 		end
 	end
+	-- ---- Sea phase 4.6: province shore rescue for provinces the grid missed ----
+	-- A province thinner than a sea cell (Puerto Rico is 4 studs across) gets no cell center,
+	-- so no sea tile records it as shore and it is unreachable by sea. For each stamped, thin,
+	-- shore-less province, escalate an inflated province proxy and GetPartsInPart against the
+	-- sea proxies (real contact geometry) to add the missing sea<->province shore edges.
+	local provWithShore = {}
+	for _, sset in pairs(shoreSet) do
+		for pid in pairs(sset) do
+			provWithShore[pid] = true
+		end
+	end
+	local provOverlap = OverlapParams.new()
+	provOverlap.FilterType = Enum.RaycastFilterType.Include
+	provOverlap.FilterDescendantsInstances = { proxyFolder }
+	provOverlap.MaxParts = 0
+	local provRescued = 0
+	for _, part in provFolder:GetChildren() do
+		if part:IsA("BasePart") then
+			local pid = part:GetAttribute("province_id")
+			if pid and not provWithShore[pid] and math.min(part.Size.X, part.Size.Z) < cell then
+				for _, m in ipairs({ 4, 10, 20 }) do
+					local ok, probe = pcall(function()
+						return part:Clone()
+					end)
+					if ok and probe then
+						probe:ClearAllChildren()
+						probe.Anchored = true
+						probe.CanCollide = false
+						probe.CanQuery = true
+						-- tall in Y so it overlaps the sea proxies vertical band regardless of land/sea height
+						probe.Size = Vector3.new(part.Size.X + m, 200, part.Size.Z + m)
+						probe.CFrame = CFrame.new(part.Position.X, part.Position.Y, part.Position.Z)
+						probe.Parent = proxyFolder
+						local found = false
+						for _, hit in Workspace:GetPartsInPart(probe, provOverlap) do
+							local hitN = hit:GetAttribute("sea_part_number")
+							if hitN then
+								addShoreEdge(hitN, pid)
+								found = true
+							end
+						end
+						probe:Destroy()
+						if found then
+							provRescued += 1
+							break
+						end
+					end
+				end
+			end
+		end
+	end
+	print(string.format("[AdjGen:sea] province shore rescue: %d thin shore-less provinces recovered", provRescued))
+
 	proxyFolder:Destroy()
 
 	-- ---- Sea phase 5: assemble + diagnostics ----

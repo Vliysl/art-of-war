@@ -22,19 +22,25 @@ local positions = {}
 local neighbors = {}
 local coastalSet = {}
 local shoreByProvince = {}
-local bakedIds = {}       -- set of province ids present in the baked table (whatever its land set)
-local mode = "auto"       -- "auto" | "baked" | "legacy"
+local bakedIds = {} -- set of province ids present in the baked table (whatever its land set)
+local mode = "auto" -- "auto" | "baked" | "legacy"
 local activeSource = "none"
 
 -- Minimum fraction of baked province ids that must match the stamped id-set for
 -- the baked table to be trusted in "auto" mode; below this we treat it as stale.
 local BAKED_MATCH_MIN = 0.5
 
+-- Fallback land<->sea transition cost for findPath when WorldConstants.SeaPathEmbarkPenalty is
+-- absent. Keep in sync with that default. See WorldConstants for the land-preference rationale.
+local DEFAULT_EMBARK_PENALTY = 10
+
 local function scanPositions()
 	positions = {}
 	local map = workspace:FindFirstChild("ArtOfWarMap")
 	local folder = map and map:FindFirstChild("Provinces")
-	if not folder then return end
+	if not folder then
+		return
+	end
 	for _, part in folder:GetChildren() do
 		if part:IsA("BasePart") then
 			local provinceId = part:GetAttribute("province_id")
@@ -47,7 +53,9 @@ end
 
 local function registeredCount()
 	local n = 0
-	for _ in positions do n += 1 end
+	for _ in positions do
+		n += 1
+	end
 	return n
 end
 
@@ -60,7 +68,9 @@ local function computeNeighborsLegacy()
 		neighbors[idA] = {}
 	end
 	local ids = {}
-	for id in positions do table.insert(ids, id) end
+	for id in positions do
+		table.insert(ids, id)
+	end
 	for i = 1, #ids do
 		local idA = ids[i]
 		local posA = positions[idA]
@@ -93,16 +103,26 @@ local function tryLoadBaked()
 	local dataFolder = ReplicatedStorage:FindFirstChild("ArtOfWar")
 	dataFolder = dataFolder and dataFolder:FindFirstChild("Data")
 	local moduleScript = dataFolder and dataFolder:FindFirstChild("ProvinceAdjacency")
-	if not moduleScript then return false, 0, 0 end
+	if not moduleScript then
+		return false, 0, 0
+	end
 	local ok, baked = pcall(require, moduleScript)
-	if not ok or type(baked) ~= "table" then return false, 0, 0 end
+	if not ok or type(baked) ~= "table" then
+		return false, 0, 0
+	end
 
 	local bakedCount, matchedCount = 0, 0
-	for _ in baked do bakedCount += 1 end
-	if bakedCount == 0 then return false, 0, 0 end
+	for _ in baked do
+		bakedCount += 1
+	end
+	if bakedCount == 0 then
+		return false, 0, 0
+	end
 
 	local nbrs, coastal, shore, ids = {}, {}, {}, {}
-	for id in positions do nbrs[id] = {} end
+	for id in positions do
+		nbrs[id] = {}
+	end
 	for id, entry in baked do
 		ids[id] = true
 		if positions[id] ~= nil and type(entry) == "table" then
@@ -110,10 +130,16 @@ local function tryLoadBaked()
 			local list = nbrs[id]
 			for _, n in ipairs(entry.land or {}) do
 				-- Keep only neighbors that are actually registered this boot.
-				if positions[n] ~= nil then table.insert(list, n) end
+				if positions[n] ~= nil then
+					table.insert(list, n)
+				end
 			end
-			if entry.coastal == true then coastal[id] = true end
-			if entry.shore then shore[id] = entry.shore end
+			if entry.coastal == true then
+				coastal[id] = true
+			end
+			if entry.shore then
+				shore[id] = entry.shore
+			end
 		end
 	end
 	-- Stage into module state only after a successful parse.
@@ -205,13 +231,19 @@ end
 -- would let the linker geometry-bridge open water to random coastal provinces. Flag OFF (or
 -- an empty bake) leaves the graph byte-identical to land-only.
 local function loadSeaTiles()
-	if not ctx.WorldConstants.EnableSeaTransport then return 0, 0 end
+	if not ctx.WorldConstants.EnableSeaTransport then
+		return 0, 0
+	end
 	local dataFolder = ReplicatedStorage:FindFirstChild("ArtOfWar")
 	dataFolder = dataFolder and dataFolder:FindFirstChild("Data")
 	local moduleScript = dataFolder and dataFolder:FindFirstChild("SeaTileAdjacency")
-	if not moduleScript then return 0, 0 end
+	if not moduleScript then
+		return 0, 0
+	end
 	local ok, baked = pcall(require, moduleScript)
-	if not ok or type(baked) ~= "table" then return 0, 0 end
+	if not ok or type(baked) ~= "table" then
+		return 0, 0
+	end
 	local tiles, edges = 0, 0
 	for n, entry in baked do
 		if type(n) == "number" and type(entry) == "table" then
@@ -259,21 +291,39 @@ function AdjacencyGraph.build()
 				useBaked = true
 				activeSource = "baked"
 				if ratio < BAKED_MATCH_MIN then
-					warn(string.format(
-						"[AdjacencyGraph] baked table matches only %d/%d stamped provinces (%.0f%%) but mode=baked; using it anyway -- REGENERATE Data/ProvinceAdjacency",
-						matchedCount, total, ratio * 100))
+					warn(
+						string.format(
+							"[AdjacencyGraph] baked table matches only %d/%d stamped provinces (%.0f%%) but mode=baked; using it anyway -- REGENERATE Data/ProvinceAdjacency",
+							matchedCount,
+							total,
+							ratio * 100
+						)
+					)
 				elseif matchedCount < bakedCount then
-					warn(string.format(
-						"[AdjacencyGraph] baked table has %d entries, %d matched stamped provinces; %d unmatched (map may have changed)",
-						bakedCount, matchedCount, bakedCount - matchedCount))
+					warn(
+						string.format(
+							"[AdjacencyGraph] baked table has %d entries, %d matched stamped provinces; %d unmatched (map may have changed)",
+							bakedCount,
+							matchedCount,
+							bakedCount - matchedCount
+						)
+					)
 				end
 			else
-				warn(string.format(
-					"[AdjacencyGraph] baked table matches only %d/%d stamped provinces (%.0f%% < %.0f%%) -- treating as STALE, falling back to legacy 300-stud graph. Regenerate Data/ProvinceAdjacency.",
-					matchedCount, total, ratio * 100, BAKED_MATCH_MIN * 100))
+				warn(
+					string.format(
+						"[AdjacencyGraph] baked table matches only %d/%d stamped provinces (%.0f%% < %.0f%%) -- treating as STALE, falling back to legacy 300-stud graph. Regenerate Data/ProvinceAdjacency.",
+						matchedCount,
+						total,
+						ratio * 100,
+						BAKED_MATCH_MIN * 100
+					)
+				)
 			end
 		elseif mode == "baked" then
-			warn("[AdjacencyGraph] mode=baked but Data/ProvinceAdjacency is missing/empty -- falling back to legacy graph.")
+			warn(
+				"[AdjacencyGraph] mode=baked but Data/ProvinceAdjacency is missing/empty -- falling back to legacy graph."
+			)
 		end
 	end
 
@@ -289,15 +339,30 @@ function AdjacencyGraph.build()
 	local seaTiles, seaEdges = loadSeaTiles()
 
 	local edgeCount = 0
-	for _, list in neighbors do edgeCount += #list end
+	for _, list in neighbors do
+		edgeCount += #list
+	end
 	local coastalCount = 0
-	for _ in coastalSet do coastalCount += 1 end
-	print(string.format("[ArtOfWar] adjacency graph: %d provinces, %d directed edges, %d coastal, %d sea tiles (%d sea edges) (source=%s)",
-		total, edgeCount, coastalCount, seaTiles, seaEdges, activeSource))
+	for _ in coastalSet do
+		coastalCount += 1
+	end
+	print(
+		string.format(
+			"[ArtOfWar] adjacency graph: %d provinces, %d directed edges, %d coastal, %d sea tiles (%d sea edges) (source=%s)",
+			total,
+			edgeCount,
+			coastalCount,
+			seaTiles,
+			seaEdges,
+			activeSource
+		)
+	)
 end
 
 function AdjacencyGraph.setMode(m)
-	if m == "auto" or m == "baked" or m == "legacy" then mode = m end
+	if m == "auto" or m == "baked" or m == "legacy" then
+		mode = m
+	end
 end
 
 function AdjacencyGraph.getSource()
@@ -310,9 +375,13 @@ end
 
 function AdjacencyGraph.areNeighbors(a, b)
 	local list = neighbors[a]
-	if not list then return false end
+	if not list then
+		return false
+	end
 	for _, id in list do
-		if id == b then return true end
+		if id == b then
+			return true
+		end
 	end
 	return false
 end
@@ -320,7 +389,9 @@ end
 function AdjacencyGraph.distance(a, b)
 	local pa = positions[a]
 	local pb = positions[b]
-	if not pa or not pb then return math.huge end
+	if not pa or not pb then
+		return math.huge
+	end
 	return (pa - pb).Magnitude
 end
 
@@ -344,32 +415,98 @@ function AdjacencyGraph.getShore(provinceId)
 	return shoreByProvince[provinceId] or {}
 end
 
--- BFS shortest path from start to goal through `passable(provinceId, prevProvinceId) -> boolean`.
--- If passable is nil, treat all provinces as passable. Returns { startId, ..., goalId } or nil.
+-- Weighted shortest path from start to goal through `passable(provinceId, prevProvinceId) -> boolean`.
+-- If passable is nil, every province is passable. Returns { startId, ..., goalId } or nil.
+--
+-- Cost model -- this is what makes troops prefer LAND over needless sea crossings: every step costs 1,
+-- EXCEPT a land<->sea transition (embark or disembark) which costs `embarkPenalty`. A sea crossing thus
+-- carries a ~2*penalty surcharge (embark + disembark), so a land route up to that many tiles longer than
+-- a sea shortcut still wins -- an army marches around a bay or along a peninsula instead of embarking to
+-- cut the corner. Sea is still chosen when it is the ONLY route (an island has no land path, so the sea
+-- path is the sole finite-cost one) or when the land alternative is dramatically longer. Uniform-cost
+-- (Dijkstra) search with a binary min-heap; BFS's hop-count objective was what sent armies across water
+-- to save a hop even when a contiguous land route existed.
 function AdjacencyGraph.findPath(startId, goalId, passable)
-	if startId == goalId then return { startId } end
-	if not neighbors[startId] or not neighbors[goalId] then return nil end
-	local cameFrom = { [startId] = startId }  -- self-reference marks visited start
-	local frontier = { startId }
-	local found = false
-	while #frontier > 0 do
-		local nextFrontier = {}
-		for _, current in ipairs(frontier) do
+	if startId == goalId then
+		return { startId }
+	end
+	if not neighbors[startId] or not neighbors[goalId] then
+		return nil
+	end
+
+	local C = ctx and ctx.WorldConstants
+	local embarkPenalty = (C and C.SeaPathEmbarkPenalty) or DEFAULT_EMBARK_PENALTY
+	local function stepCost(fromId, toId)
+		-- id < 0 is a sea node (Shared/SeaNodes); a land<->sea edge is the costly embark/disembark leg.
+		if (fromId < 0) ~= (toId < 0) then
+			return embarkPenalty
+		end
+		return 1
+	end
+
+	local dist = { [startId] = 0 }
+	local cameFrom = { [startId] = startId } -- self-reference marks the start
+	local heap = {} -- binary min-heap of { cost, provinceId }
+	local function heapPush(cost, id)
+		local i = #heap + 1
+		heap[i] = { cost, id }
+		while i > 1 do
+			local parent = i // 2
+			if heap[parent][1] <= heap[i][1] then
+				break
+			end
+			heap[parent], heap[i] = heap[i], heap[parent]
+			i = parent
+		end
+	end
+	local function heapPop()
+		local top = heap[1]
+		local n = #heap
+		heap[1] = heap[n]
+		heap[n] = nil
+		n -= 1
+		local i = 1
+		while true do
+			local l, r, smallest = i * 2, i * 2 + 1, i
+			if l <= n and heap[l][1] < heap[smallest][1] then
+				smallest = l
+			end
+			if r <= n and heap[r][1] < heap[smallest][1] then
+				smallest = r
+			end
+			if smallest == i then
+				break
+			end
+			heap[i], heap[smallest] = heap[smallest], heap[i]
+			i = smallest
+		end
+		return top
+	end
+
+	heapPush(0, startId)
+	while #heap > 0 do
+		local node = heapPop()
+		local cost, current = node[1], node[2]
+		if current == goalId then
+			break
+		end
+		if cost <= (dist[current] or math.huge) then -- skip stale heap entries
 			for _, neigh in ipairs(neighbors[current]) do
-				if not cameFrom[neigh] then
-					if not passable or passable(neigh, current) then
+				if not passable or passable(neigh, current) then
+					local nc = cost + stepCost(current, neigh)
+					if nc < (dist[neigh] or math.huge) then
+						dist[neigh] = nc
 						cameFrom[neigh] = current
-						if neigh == goalId then found = true; break end
-						table.insert(nextFrontier, neigh)
+						heapPush(nc, neigh)
 					end
 				end
 			end
-			if found then break end
 		end
-		if found then break end
-		frontier = nextFrontier
 	end
-	if not found then return nil end
+
+	if not cameFrom[goalId] then
+		return nil
+	end
 	local path = { goalId }
 	local cur = goalId
 	while cur ~= startId do

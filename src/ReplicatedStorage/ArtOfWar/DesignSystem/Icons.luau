@@ -64,6 +64,10 @@ Icons.Ids = {
 	TabPolicies = "rbxassetid://131787029529275",
 	TabLaws = "rbxassetid://120363756760345",
 	TabDoctrines = "rbxassetid://72499876526924",
+	-- CountryBar economy / manpower / research buttons (dedicated 1:1 square icons).
+	BarEconomy = "rbxassetid://102838857191936",
+	BarManpower = "rbxassetid://95003359351366",
+	BarResearch = "rbxassetid://123336824010030",
 }
 
 local warnedIcons = {}

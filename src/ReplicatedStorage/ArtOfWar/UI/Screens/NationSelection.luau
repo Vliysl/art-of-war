@@ -42,7 +42,7 @@ local PANEL_W = 360
 local INNER = PANEL_W - Spacing.space4 * 2
 local ROW_H = 64
 local ROW_GAP = Spacing.space2
-local LIST_TOP = 144
+local LIST_TOP = 204
 local BOTTOM_H = 92
 local OVERLAP_MIN_W = 760
 
@@ -138,6 +138,10 @@ function NationSelection.create(ctx)
 	local selectedTag, hoveredTag = nil, nil
 	local filterBucket = nil
 	local searchText = ""
+	local pageSize = 25
+	local pageIndex = 0
+	local sortMode = "rank" -- "rank" (biggest realms first) or "name" (A-Z)
+	local pageLabel -- "Page x / y" label, built with the pager; updated by rebuildList
 	local viewModels = {}
 	local rowByTag = {}
 	local partsByOwner = {}
@@ -557,7 +561,18 @@ function NationSelection.create(ctx)
 			end
 		end
 		table.sort(tags, function(a, b)
-			return viewModels[a].name < viewModels[b].name
+			local va, vb = viewModels[a], viewModels[b]
+			if sortMode == "rank" then
+				-- Rank = biggest realm first: territory (provinces), then manpower, then name.
+				if va.provinces ~= vb.provinces then
+					return va.provinces > vb.provinces
+				end
+				local ma, mb = va.manpower or 0, vb.manpower or 0
+				if ma ~= mb then
+					return ma > mb
+				end
+			end
+			return va.name < vb.name
 		end)
 		return tags
 	end
@@ -678,14 +693,25 @@ function NationSelection.create(ctx)
 
 	function rebuildList()
 		local tags = filteredSortedTags()
+		local total = #tags
+		local pages = math.max(1, math.ceil(total / pageSize))
+		pageIndex = math.clamp(pageIndex, 0, pages - 1)
+		if pageLabel then
+			pageLabel.Text = string.format("Page %d / %d", pageIndex + 1, pages)
+		end
 		for _, child in listFrame:GetChildren() do
 			if child:IsA("GuiObject") then
 				child:Destroy()
 			end
 		end
 		rowByTag = {}
-		for i, tag in ipairs(tags) do
-			local row = makeRow(viewModels[tag], i)
+		-- Only the current page of rows is built, so a 700+-nation list never freezes the screen.
+		local startIdx = pageIndex * pageSize
+		local rowN = 0
+		for i = startIdx + 1, math.min(startIdx + pageSize, total) do
+			rowN += 1
+			local tag = tags[i]
+			local row = makeRow(viewModels[tag], rowN)
 			row.btn.Parent = listFrame
 			rowByTag[tag] = row
 			if tag == selectedTag then
@@ -710,6 +736,23 @@ function NationSelection.create(ctx)
 			emptyState.Visible = #tags == 0
 			subCount.Text = string.format("%d available  \u{00B7}  %d taken", available, taken)
 		end
+	end
+
+	-- If `tag` is in the current filtered list but not on the visible page, jump to its page (rebuilds).
+	-- Returns true once a row for `tag` exists on the current page (false if it is filtered out entirely).
+	local function ensureTagOnPage(tag)
+		if rowByTag[tag] then
+			return true
+		end
+		local ordered = filteredSortedTags()
+		for i, t in ipairs(ordered) do
+			if t == tag then
+				pageIndex = math.floor((i - 1) / pageSize)
+				rebuildList()
+				return true
+			end
+		end
+		return false
 	end
 
 	function renderDetail(vm)
@@ -885,10 +928,20 @@ function NationSelection.create(ctx)
 		end
 		selectedTag = tag
 		local row = rowByTag[tag]
+		if not row and source ~= "list" then
+			-- On another page (map/random/search): jump to its page if it is in the filtered list.
+			ensureTagOnPage(tag)
+			row = rowByTag[tag]
+		end
 		if row then
 			row.setSelected(true)
 			if source ~= "list" then
-				ensureRowVisible(row.index)
+				local rowIndex = row.index
+				task.defer(function()
+					if not destroyed then
+						ensureRowVisible(rowIndex)
+					end
+				end)
 			end
 		end
 		renderDetail(vm)
@@ -899,6 +952,7 @@ function NationSelection.create(ctx)
 
 	local function setFilter(bucket)
 		filterBucket = bucket
+		pageIndex = 0
 		for _, chip in ipairs(chips) do
 			chip.setSelected(chip.key == bucket)
 		end
@@ -970,9 +1024,13 @@ function NationSelection.create(ctx)
 			end
 		end)
 		btn.MouseButton1Click:Connect(function()
-			setFilter(spec.key)
+			if spec.onClick then
+				spec.onClick()
+			else
+				setFilter(spec.key)
+			end
 		end)
-		btn.Parent = filterRow
+		btn.Parent = spec.parent or filterRow
 		return handle
 	end
 
@@ -982,6 +1040,116 @@ function NationSelection.create(ctx)
 	end
 	if chips[1] then
 		chips[1].setSelected(true)
+	end
+
+	-- Sort chips (Rank / A-Z) + page-size chips (10/25/50) + a page nav, so the 700+-nation list renders one
+	-- page at a time. Default sort = Rank, so the biggest realms show first.
+	local sortSizeRow = Instance.new("Frame")
+	sortSizeRow.Name = "SortSize"
+	sortSizeRow.Position = UDim2.fromOffset(0, 140)
+	sortSizeRow.Size = UDim2.new(1, 0, 0, 28)
+	sortSizeRow.BackgroundTransparency = 1
+	sortSizeRow.ZIndex = 3
+	sortSizeRow.Parent = leftPanel
+	local sortSizeLayout = Instance.new("UIListLayout")
+	sortSizeLayout.FillDirection = Enum.FillDirection.Horizontal
+	sortSizeLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	sortSizeLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	sortSizeLayout.Padding = UDim.new(0, Spacing.space1)
+	sortSizeLayout.Parent = sortSizeRow
+
+	local sortChips = {}
+	local function setSort(mode)
+		sortMode = mode
+		pageIndex = 0
+		for _, chip in ipairs(sortChips) do
+			chip.setSelected(chip.key == mode)
+		end
+		rebuildList()
+		if selectedTag and rowByTag[selectedTag] then
+			rowByTag[selectedTag].setSelected(true)
+		end
+	end
+	for i, spec in ipairs({ { key = "rank", label = "Rank" }, { key = "name", label = "A-Z" } }) do
+		sortChips[#sortChips + 1] = makeChip({
+			key = spec.key,
+			label = spec.label,
+			order = i,
+			parent = sortSizeRow,
+			onClick = function()
+				setSort(spec.key)
+			end,
+		})
+	end
+
+	local sizeChips = {}
+	local function setPageSize(n)
+		pageSize = n
+		pageIndex = 0
+		for _, chip in ipairs(sizeChips) do
+			chip.setSelected(chip.key == n)
+		end
+		rebuildList()
+		if selectedTag and rowByTag[selectedTag] then
+			rowByTag[selectedTag].setSelected(true)
+		end
+	end
+	for i, n in ipairs({ 10, 25, 50 }) do
+		sizeChips[#sizeChips + 1] = makeChip({
+			key = n,
+			label = tostring(n),
+			order = 10 + i,
+			parent = sortSizeRow,
+			onClick = function()
+				setPageSize(n)
+			end,
+		})
+	end
+
+	local pagerRow = Instance.new("Frame")
+	pagerRow.Name = "Pager"
+	pagerRow.Position = UDim2.fromOffset(0, 172)
+	pagerRow.Size = UDim2.new(1, 0, 0, 26)
+	pagerRow.BackgroundTransparency = 1
+	pagerRow.ZIndex = 3
+	pagerRow.Parent = leftPanel
+	local pagerLayout = Instance.new("UIListLayout")
+	pagerLayout.FillDirection = Enum.FillDirection.Horizontal
+	pagerLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	pagerLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	pagerLayout.Padding = UDim.new(0, Spacing.space2)
+	pagerLayout.Parent = pagerRow
+
+	local function goPage(delta)
+		pageIndex = pageIndex + delta -- clamped in rebuildList
+		rebuildList()
+		if selectedTag and rowByTag[selectedTag] then
+			rowByTag[selectedTag].setSelected(true)
+		end
+	end
+	makeChip({ key = "prev", label = "\u{2039}", order = 1, parent = pagerRow, onClick = function()
+		goPage(-1)
+	end })
+	pageLabel = Instance.new("TextLabel")
+	pageLabel.Name = "PageInfo"
+	pageLabel.AutomaticSize = Enum.AutomaticSize.X
+	pageLabel.Size = UDim2.fromOffset(0, 26)
+	pageLabel.BackgroundTransparency = 1
+	pageLabel.Text = "Page 1 / 1"
+	pageLabel.TextColor3 = Colors.TextSecondary
+	pageLabel.LayoutOrder = 2
+	pageLabel.ZIndex = 3
+	Typography.apply(pageLabel, "caption")
+	pageLabel.Parent = pagerRow
+	makeChip({ key = "next", label = "\u{203A}", order = 3, parent = pagerRow, onClick = function()
+		goPage(1)
+	end })
+
+	for _, chip in ipairs(sortChips) do
+		chip.setSelected(chip.key == sortMode)
+	end
+	for _, chip in ipairs(sizeChips) do
+		chip.setSelected(chip.key == pageSize)
 	end
 
 	randomBtn.MouseButton1Click:Connect(function()
@@ -1036,6 +1204,7 @@ function NationSelection.create(ctx)
 		end
 		searchDebounce = task.delay(0.12, function()
 			searchDebounce = nil
+			pageIndex = 0
 			rebuildList()
 			if selectedTag and rowByTag[selectedTag] then
 				rowByTag[selectedTag].setSelected(true)

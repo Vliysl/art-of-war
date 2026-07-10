@@ -262,7 +262,7 @@ function CountryBar.create(config)
 		zIndex = z + 2,
 		layoutOrder = 1,
 		size = UDim2.new(0, ECON_W, 1, 0),
-		icon = "Treasury",
+		icon = "BarEconomy",
 		iconPosition = "left",
 		value = r.treasury or "0",
 		delta = "",
@@ -287,7 +287,7 @@ function CountryBar.create(config)
 		zIndex = z + 2,
 		layoutOrder = 2,
 		size = UDim2.new(0, MANPOWER_W, 1, 0),
-		icon = "Army",
+		icon = "BarManpower",
 		iconPosition = "left",
 		value = r.manpower or "0",
 		caption = "Manpower",
@@ -308,7 +308,7 @@ function CountryBar.create(config)
 		zIndex = z + 2,
 		layoutOrder = 3,
 		size = UDim2.new(0, RESEARCH_W, 1, 0),
-		icon = "Research",
+		icon = "BarResearch",
 		caption = "Research",
 		onClick = function()
 			openMenu("Research")

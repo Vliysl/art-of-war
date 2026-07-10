@@ -99,6 +99,14 @@ WorldConstants.BattleDiscDiameter = 2
 -- Transports fight poorly at sea; amphibious assaults attack ashore weakened.
 WorldConstants.SeaMoveTicksPerStep = 4
 WorldConstants.EmbarkMoveTicks = 10
+-- Pathfinding-only land-preference lever (troop auto-path). A land<->sea transition (embark or
+-- disembark) costs this many "steps" in AdjacencyGraph.findPath while every land/sea step costs 1,
+-- so a sea crossing carries a ~2x surcharge and a land route up to ~2*this-many tiles longer than
+-- a sea shortcut is still preferred: armies march around bays/peninsulas instead of embarking to
+-- cut a corner. Sea is used only when it is the sole route (islands) or the land alternative is far
+-- longer. Does NOT change actual travel time (that stays SeaMoveTicksPerStep / EmbarkMoveTicks);
+-- tune UP for stronger land preference, DOWN to let armies embark more readily.
+WorldConstants.SeaPathEmbarkPenalty = 10
 WorldConstants.SeaTransportCombatPenalty = 0.35
 WorldConstants.SeaInvasionAttackPenalty = 0.5
 
