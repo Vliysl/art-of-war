@@ -13,6 +13,7 @@ local function province(id, data)
 	data.climate = data.climate or "temperate"
 	data.districts = data.districts or {} -- economy rework: slot-indexed districts (index == slot; nil == empty)
 	data.claims = data.claims or {} -- nations with a claim on this province (editor-painted; parallels cores)
+	data.releasableCores = data.releasableCores or {} -- nations releasable here as breakaways (editor-painted)
 	return data
 end
 return {

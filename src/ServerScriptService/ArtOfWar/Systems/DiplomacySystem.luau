@@ -1596,79 +1596,100 @@ local function releaseSubject(overlordTag, subjectTag)
 	return true
 end
 
--- Phase 4: voluntarily release a formable nation from your cores (independent, or as a puppet). Creates
--- the nation (NationFactory), transfers + cores its homeland provinces, and optionally subjugates it.
-local function releaseNation(holderTag, formableTag, asPuppet)
+-- Province ids owned by `holderTag` on which `releaseTag` is a releasable core (the land a release hands over).
+local function releasableProvinceIds(holderTag, releaseTag)
+	local ids = {}
+	if not (ctx.ProvinceRegistry and ctx.ProvinceRegistry.byOwner) then
+		return ids
+	end
+	for _, id in ipairs(ctx.ProvinceRegistry.byOwner(holderTag)) do
+		local p = ctx.WorldState.getProvince(id)
+		if p and p.releasableCores and table.find(p.releasableCores, releaseTag) then
+			ids[#ids + 1] = id
+		end
+	end
+	return ids
+end
+
+-- Phase 4 (UPD 1: cores-driven): voluntarily release a breakaway nation from your RELEASABLE CORES, either
+-- independent or as a puppet. `releaseTag` is a country tag (authored via the Data Editor's Releasable Cores
+-- paint, or stamped on annexed provinces). Revives the nation's dormant identity (NationFactory), transfers
+-- every province you own that lists it as a releasable core, cores them to it, and sets an anti-exploit truce.
+local function releaseNation(holderTag, releaseTag, asPuppet)
 	if not ctx.WorldConstants.EnableFormables then
 		return false, "disabled"
 	end
-	if not ctx.FormableSystem or not ctx.NationFactory then
+	if not ctx.NationFactory then
 		return false, "unavailable"
 	end
-	local def = ctx.FormableSystem.getDefinition(formableTag)
-	if not def or def.canRelease == false then
-		return false, "not_releasable"
+	if not releaseTag or releaseTag == holderTag or releaseTag == "NONE" then
+		return false, "invalid"
 	end
-	if not def.requiredProvinceIds or #def.requiredProvinceIds == 0 then
-		return false, "no_provinces"
-	end
-	if ctx.WorldState.getCountry(formableTag) then
+	-- A nation that already owns land is alive and cannot be released (a dormant, landless record is fine to revive).
+	if ctx.ProvinceRegistry and ctx.ProvinceRegistry.byOwner and #ctx.ProvinceRegistry.byOwner(releaseTag) > 0 then
 		return false, "already_exists"
 	end
-	for _, id in ipairs(def.requiredProvinceIds) do
-		local p = ctx.WorldState.getProvince(id)
-		if not p or p.ownerTag ~= holderTag then
-			return false, "must_own_all"
-		end
+	local ids = releasableProvinceIds(holderTag, releaseTag)
+	if #ids == 0 then
+		return false, "no_releasable_cores"
 	end
+	-- Identity source: a dormant country record first (authored releasables), then an annex-stored formable
+	-- def, then the capital province's culture/religion. Forming keeps identity; releasing revives it.
+	local rec = ctx.WorldState.getCountry(releaseTag)
+	local def = (ctx.FormableSystem and ctx.FormableSystem.getDefinition)
+			and ctx.FormableSystem.getDefinition(releaseTag)
+		or nil
 	local holder = ctx.WorldState.getCountry(holderTag)
-	local capProv = ctx.WorldState.getProvince(def.requiredProvinceIds[1])
-	ctx.NationFactory.create(formableTag, {
-		displayName = def.displayName,
-		color = def.color,
-		flag = def.flag,
-		capitalProvinceId = def.requiredProvinceIds[1],
-		primaryCulture = capProv and capProv.culture,
-		stateReligion = capProv and capProv.religion,
-		governmentForm = holder and holder.governmentForm,
-		ideology = holder and holder.ideology,
+	local capProv = ctx.WorldState.getProvince(ids[1])
+	ctx.NationFactory.create(releaseTag, {
+		displayName = (rec and rec.displayName) or (def and def.displayName) or releaseTag,
+		color = (rec and rec.color) or (def and def.color),
+		flag = (rec and rec.flagAssetId) or (def and def.flag),
+		capitalProvinceId = ids[1],
+		primaryCulture = (rec and rec.primaryCulture) or (capProv and capProv.culture),
+		stateReligion = (rec and rec.stateReligion) or (capProv and capProv.religion),
+		governmentForm = (rec and rec.governmentForm) or (holder and holder.governmentForm),
+		ideology = (rec and rec.ideology) or (holder and holder.ideology),
 	})
-	for _, id in ipairs(def.requiredProvinceIds) do
+	for _, id in ipairs(ids) do
 		local p = ctx.WorldState.getProvince(id)
 		if p and p.ownerTag == holderTag then
-			-- Add the formable's core on the record first so it rides the same dirty mark as the ownership flip.
+			-- Add the released nation's core on the record first so it rides the same dirty mark as the flip.
 			p.cores = p.cores or {}
-			if not table.find(p.cores, formableTag) then
-				table.insert(p.cores, formableTag)
+			if not table.find(p.cores, releaseTag) then
+				table.insert(p.cores, releaseTag)
 			end
 			-- Only hand over the controller if the holder still occupies it; an enemy-occupied core stays
 			-- occupied (mirrors annexCountry) rather than being silently freed to the new nation.
 			if ctx.WorldConstants.RecordOwnershipChokepoint then
-				local controller = (p.controllerTag == holderTag) and formableTag or nil
+				local controller = (p.controllerTag == holderTag) and releaseTag or nil
 				ctx.WorldState.setProvinceOwnership(
 					id,
-					{ owner = formableTag, controller = controller, reason = "formable" }
+					{ owner = releaseTag, controller = controller, reason = "formable" }
 				)
 			else
-				p.ownerTag = formableTag
+				p.ownerTag = releaseTag
 				if p.controllerTag == holderTag then
-					p.controllerTag = formableTag
+					p.controllerTag = releaseTag
 				end
 				ctx.WorldState.setProvince(id, p)
 				ctx.EventBus.publish(ctx.Channels.ProvinceOwnershipChanged, {
 					provinceId = id,
 					oldOwner = holderTag,
-					newOwner = formableTag,
+					newOwner = releaseTag,
 				})
 			end
 		end
 	end
 	if asPuppet then
-		setSubject(holderTag, formableTag)
+		setSubject(holderTag, releaseTag)
 	end
+	-- Anti-exploit truce: release -> immediate re-annex would otherwise be free expansion laundering.
+	local truceSeconds = dayToSeconds(ctx.WorldConstants.ReleaseTruceDays or ctx.WorldConstants.TrucePeriodDays or 1825)
+	setTruce(holderTag, releaseTag, truceSeconds)
 	ctx.EventBus.publish(ctx.Channels.SubjectReleased, {
 		overlordTag = holderTag,
-		subjectTag = formableTag,
+		subjectTag = releaseTag,
 	})
 	return true
 end
@@ -1774,6 +1795,19 @@ function annexCountry(winnerTag, loserTag, exceptWarId)
 				canRelease = true,
 				annexedBy = winnerTag,
 			})
+		end
+		-- Cores-driven release (UPD 1): stamp the loser's tag into the releasableCores of the provinces we
+		-- took, so a future holder can free it as a breakaway. The def above survives as an identity source
+		-- once the loser's country record is deleted.
+		for _, id in ipairs(ids) do
+			local rp = ctx.WorldState.getProvince(id)
+			if rp then
+				rp.releasableCores = rp.releasableCores or {}
+				if not table.find(rp.releasableCores, loserTag) then
+					table.insert(rp.releasableCores, loserTag)
+					ctx.WorldState.setProvince(id, rp)
+				end
+			end
 		end
 	end
 	-- Disband the annexed nation's military. Without this its armies/fleets orphan under a dead

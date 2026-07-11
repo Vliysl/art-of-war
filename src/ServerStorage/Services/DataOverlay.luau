@@ -1369,7 +1369,8 @@ local COUNTRY_REF_FIELDS = {
 	ideology = "ideologies",
 }
 
-local PROVINCE_REF_ARRAY_FIELDS = { cores = "countries", defaultCores = "countries", claims = "countries" }
+local PROVINCE_REF_ARRAY_FIELDS =
+	{ cores = "countries", defaultCores = "countries", releasableCores = "countries", claims = "countries" }
 -- acceptedCultures dropped in v4 (dormant field); no longer validated/self-healed.
 local COUNTRY_REF_ARRAY_FIELDS = {
 	historicalRivals = "countries",
@@ -1634,7 +1635,7 @@ function DataOverlay.applyTo(bundle)
 				local incoming = rec
 				if type(rec) == "table" then
 					local owner = rec.ownerTag
-					if rec.controllerTag == nil or rec.cores == nil or rec.claims == nil or rec.defaultCores == nil then
+					if rec.controllerTag == nil or rec.cores == nil or rec.claims == nil or rec.defaultCores == nil or rec.releasableCores == nil then
 						incoming = table.clone(rec)
 						if incoming.controllerTag == nil then
 							incoming.controllerTag = owner
@@ -1647,6 +1648,9 @@ function DataOverlay.applyTo(bundle)
 						end
 						if incoming.defaultCores == nil then
 							incoming.defaultCores = table.clone(incoming.cores) -- homeland cores default to seed cores
+						end
+						if incoming.releasableCores == nil then
+							incoming.releasableCores = {} -- breakaway cores default empty (distinct from homeland)
 						end
 					end
 				end
@@ -2044,6 +2048,9 @@ local function normalizeProvinceV4(rec)
 	end
 	if type(out.claims) ~= "table" then
 		out.claims = {}
+	end
+	if type(out.releasableCores) ~= "table" then
+		out.releasableCores = {} -- breakaway cores default empty (distinct from homeland defaultCores)
 	end
 	return out
 end

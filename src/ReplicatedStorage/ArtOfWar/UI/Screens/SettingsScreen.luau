@@ -29,11 +29,12 @@ local TABS = {
 local TEST_TAB = { key = "test", label = "Test Mode" }
 
 local MENU_KEYS = {
-	-- Mirrors Hud.luau's live MENU_KEYS. Politics (1) and Missions (6) were cut ahead of the playtest.
+	-- Mirrors Hud.luau's live MENU_KEYS. Politics (1) was cut ahead of the playtest.
 	{ "Economy", "2" },
 	{ "Military", "3" },
 	{ "Diplomacy", "4" },
 	{ "Research", "5" },
+	{ "Formables", "6" },
 	{ "Settings", "7" },
 }
 

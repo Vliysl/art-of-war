@@ -45,6 +45,9 @@ local function syncProvinceToWorld(id)
 		if type(rec.defaultCores) == "table" then
 			existing.defaultCores = table.clone(rec.defaultCores)
 		end
+		if type(rec.releasableCores) == "table" then
+			existing.releasableCores = table.clone(rec.releasableCores)
+		end
 		if type(rec.claims) == "table" then
 			existing.claims = table.clone(rec.claims)
 		end
@@ -59,6 +62,9 @@ local function syncProvinceToWorld(id)
 		end
 		if type(rec.defaultCores) == "table" then
 			clone.defaultCores = table.clone(rec.defaultCores)
+		end
+		if type(rec.releasableCores) == "table" then
+			clone.releasableCores = table.clone(rec.releasableCores)
 		end
 		if type(rec.claims) == "table" then
 			clone.claims = table.clone(rec.claims)

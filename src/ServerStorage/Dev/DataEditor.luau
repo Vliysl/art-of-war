@@ -676,7 +676,7 @@ function DataEditor.removeCountry(tag)
 	-- Strip the deleted tag from ownership AND all three membership arrays. cores/defaultCores/claims are the
 	-- v4 list fields the unified paint tool writes; leaving the tag in defaultCores/claims would persist a
 	-- dangling reference to a country that no longer exists (through Save -> DataStore).
-	local TAG_ARRAY_FIELDS = { "cores", "defaultCores", "claims" }
+	local TAG_ARRAY_FIELDS = { "cores", "defaultCores", "releasableCores", "claims" }
 	for _, p in pairs(provinces) do
 		if p.ownerTag == tag then
 			p.ownerTag = "NONE"
@@ -767,6 +767,7 @@ function DataEditor.addProvince(id, opts)
 		ownerTag = ownerTag,
 		controllerTag = opts.controllerTag or ownerTag,
 		cores = opts.cores or ((ownerTag ~= "NONE") and { ownerTag } or {}),
+		releasableCores = opts.releasableCores or {},
 		isCity = opts.isCity ~= false,
 		centerOfTrade = opts.centerOfTrade,
 		devTier = opts.devTier or 1,
@@ -800,7 +801,7 @@ function DataEditor.updateProvince(id, opts)
 	return provinces[id]
 end
 
-local PAINT_TAG_FIELDS = { core = "cores", defaultCore = "defaultCores", claim = "claims" }
+local PAINT_TAG_FIELDS = { defaultCore = "defaultCores", releasableCore = "releasableCores", claim = "claims" }
 
 -- Add/remove a single country tag on a province's cores / defaultCores / claims ARRAY. Idempotent: adding an
 -- existing tag or removing an absent one is a no-op (no history entry). Parallels assignProvince but for the
@@ -1032,6 +1033,7 @@ function DataEditor.promoteTile(opts)
 		ownerTag = ownerTag,
 		controllerTag = ownerTag,
 		cores = (ownerTag ~= "NONE") and { ownerTag } or {},
+		releasableCores = {},
 		isCity = true,
 		devTier = 1,
 		infraTier = 1,
@@ -1501,6 +1503,7 @@ local function buildProvincesSource()
 		end
 		emitTagArray("cores")
 		emitTagArray("defaultCores")
+		emitTagArray("releasableCores")
 		emitTagArray("claims")
 		if p.isCity ~= false then
 			table.insert(parts, "isCity = true")

@@ -33,28 +33,23 @@ local function pickRevoltProvince(parentTag)
 	return bestId or ids[1]
 end
 
--- A releasable definition (not yet existing) whose homeland the parent FULLY holds and which includes
--- `provinceId`, so a rebellion can restore a real historical nation. Returns formableTag or nil.
+-- A nation releasable at `provinceId` (UPD 1: cores-driven -- listed in the province's releasableCores) that
+-- is not currently alive, so a rebellion can restore a real historical nation. Returns its tag or nil.
 local function matchingReleasable(parentTag, provinceId)
-	if not ctx.FormableSystem then
+	local p = ctx.WorldState.getProvince(provinceId)
+	if not p or type(p.releasableCores) ~= "table" then
 		return nil
 	end
-	for tag, def in pairs(ctx.FormableSystem.allDefinitions()) do
-		if
-			def.canRelease ~= false
-			and def.requiredProvinceIds
-			and table.find(def.requiredProvinceIds, provinceId)
-			and not ctx.WorldState.getCountry(tag)
-		then
-			local ownsAll = true
-			for _, pid in ipairs(def.requiredProvinceIds) do
-				local p = ctx.WorldState.getProvince(pid)
-				if not p or p.ownerTag ~= parentTag then
-					ownsAll = false
-					break
-				end
+	for _, tag in ipairs(p.releasableCores) do
+		if tag ~= parentTag and tag ~= "NONE" then
+			-- "Not alive" = owns no land (a dormant, landless record is still revivable).
+			local alive
+			if ctx.ProvinceRegistry and ctx.ProvinceRegistry.byOwner then
+				alive = #ctx.ProvinceRegistry.byOwner(tag) > 0
+			else
+				alive = ctx.WorldState.getCountry(tag) ~= nil
 			end
-			if ownsAll then
+			if not alive then
 				return tag
 			end
 		end

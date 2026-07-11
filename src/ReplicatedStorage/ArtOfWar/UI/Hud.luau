@@ -47,17 +47,19 @@ local MENU_KEYS = {
 	[Enum.KeyCode.Three] = "Military",
 	[Enum.KeyCode.Four] = "Diplomacy",
 	[Enum.KeyCode.Five] = "Research",
+	[Enum.KeyCode.Six] = "Formables",
 	[Enum.KeyCode.Seven] = "Settings",
 }
--- Missions (key 6) was hidden ahead of the public playtest: mission trees are an unpopulated placeholder and
--- the only real content (form Iberia) is gated behind ~152 provinces, so the screen reads as empty/broken.
--- FormableSystem stays intact server-side for a future reachable entry point.
+-- Key 6 opens the Formables ("Nation") screen: form a new national identity by holding a goal's territory.
+-- (Also reachable on touch via the crest -> Realm -> "Nation" tab, which mounts FormablesScreen.) Restored in
+-- UPD 1 "Raise the Banner" now that formables are populated and gated by a min-count/% requirement.
 local SCREEN_MODULES = {
 	Realm = "RealmScreen",
 	Economy = "EconomyScreen",
 	Military = "MilitaryScreen",
 	Diplomacy = "DiplomacyScreen",
 	Research = "ResearchScreen",
+	Formables = "FormablesScreen",
 	Settings = "SettingsScreen",
 }
 
@@ -318,6 +320,8 @@ function Hud.notify(payload)
 		error = "danger",
 		danger = "danger",
 		success = "success",
+		good = "success", -- server toasts use "good"/"bad"; map them so they render green/red, not fallback blue
+		bad = "danger",
 		info = "info",
 	}
 	local card = NotificationCard.create({

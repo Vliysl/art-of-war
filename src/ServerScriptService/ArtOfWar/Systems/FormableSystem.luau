@@ -8,6 +8,8 @@
 -- Definitions come from Data/Formables (static seed) merged with runtime/custom ones (Phase 6 owner suite
 -- via addDefinition); a custom definition overrides a static one with the same tag.
 
+local FormableRules = require(game:GetService("ReplicatedStorage").ArtOfWar.Shared.FormableRules)
+
 local FormableSystem = {}
 
 local ctx
@@ -30,13 +32,22 @@ local function eachDef(fn)
 	end
 end
 
-local function ownsAll(tag, ids)
-	if not ids or #ids == 0 then return false end
-	for _, id in ipairs(ids) do
+-- How many of `ids` does `tag` currently own?
+local function heldCount(tag, ids)
+	local held = 0
+	for _, id in ipairs(ids or {}) do
 		local p = ctx.WorldState.getProvince(id)
-		if not p or p.ownerTag ~= tag then return false end
+		if p and p.ownerTag == tag then
+			held += 1
+		end
 	end
-	return true
+	return held
+end
+
+-- Does `tag` hold enough of the def's required provinces to form it? Threshold is min-count / percent /
+-- exact-all per FormableRules (shared with the client so progress bars and eligibility never disagree).
+local function ownsEnough(tag, def)
+	return FormableRules.ready(heldCount(tag, def.requiredProvinceIds), def)
 end
 
 local function canForm(tag, formableTag)
@@ -52,7 +63,7 @@ local function canForm(tag, formableTag)
 	if type(def.formerTags) == "table" and #def.formerTags > 0 and not table.find(def.formerTags, tag) then
 		return false
 	end
-	return ownsAll(tag, def.requiredProvinceIds)
+	return ownsEnough(tag, def)
 end
 
 -- Tags of every formable `tag` currently qualifies to form. O(defs x required) -- definitions are few.

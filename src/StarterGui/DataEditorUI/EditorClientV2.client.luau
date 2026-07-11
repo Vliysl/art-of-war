@@ -443,6 +443,27 @@ local function textbox(parent, placeholder)
 	return tb
 end
 
+-- Client mirror of server DataEditor.normalizeFlag, for LIVE PREVIEW + dirty-gate parity only (the server
+-- normalizeFlag stays authoritative on save). Accepts rbxassetid://N, rbxthumb://…, http…, a bare numeric id,
+-- or a string with an embedded id; returns a canonical rbxassetid:// string, or nil for empty/unparseable.
+local function normalizeAssetId(value)
+	if value == nil then
+		return nil
+	end
+	local s = tostring(value):match("^%s*(.-)%s*$")
+	if s == "" then
+		return nil
+	end
+	if s:match("^rbxassetid://%d+$") or s:match("^rbxthumb://") or s:match("^http") then
+		return s
+	end
+	local digits = s:match("^(%d+)$") or s:match("(%d+)")
+	if digits then
+		return "rbxassetid://" .. digits
+	end
+	return nil
+end
+
 -- ─────────────────────────── window shell ───────────────────────────
 local gui = Instance.new("ScreenGui")
 gui.Name = "AoWDataEditorV2"
@@ -587,10 +608,11 @@ local paintInteraction -- ProvinceInteraction ref (map-click select/paint + bulk
 local bulkApplyBtn -- Provinces-tab Apply-selected button, kept live (label + enabled) by the multi-select listener
 local paintUpdate -- Provinces-tab paint-status refresher (updates the live hint + membership count from the map-click handler)
 
--- Map cores/defaultCores/claims paint targets to their province-record array field ("owner" -> nil = single value).
+-- Map defaultCores/releasableCores/claims paint targets to their province-record array field ("owner" ->
+-- nil = single value). The runtime `cores` set is not paintable (seeded + grown at runtime, not authored).
 local function paintFieldForTarget(target)
-	return (target == "core" and "cores")
-		or (target == "defaultCore" and "defaultCores")
+	return (target == "defaultCore" and "defaultCores")
+		or (target == "releasableCore" and "releasableCores")
 		or (target == "claim" and "claims")
 		or nil
 end
@@ -1468,6 +1490,29 @@ local function renderCountries()
 			b:GetPropertyChangedSignal("Text"):Connect(refreshSwatch)
 		end
 
+		-- Crest (coat of arms) decal. Server DataEditor.normalizeFlag is authoritative on save; we normalize
+		-- here too so the live thumbnail matches and the dirty-gate sees the same value the server will store.
+		-- Empty box => "" in opts (not nil) so a cleared crest actually reaches the server through the patch loop.
+		local flagRow = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 28) })
+		label(flagRow, "Crest", "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 90, 1, 0)
+		local flagBox = textbox(flagRow, "rbxassetid://\u{2026} or numeric id")
+		flagBox.Size = UDim2.new(1, -96 - 34, 1, 0)
+		flagBox.Position = UDim2.fromOffset(96, 0)
+		flagBox.Text = (c and c.flagAssetId) or ""
+		local flagPreview = Instance.new("ImageLabel")
+		flagPreview.Size = UDim2.fromOffset(28, 28)
+		flagPreview.AnchorPoint = Vector2.new(1, 0.5)
+		flagPreview.Position = UDim2.fromScale(1, 0.5)
+		flagPreview.BackgroundColor3 = Colors.SurfaceSunken or Colors.SurfaceBase
+		flagPreview.BorderSizePixel = 0
+		flagPreview.ScaleType = Enum.ScaleType.Crop -- match the in-game badge so the preview is faithful
+		flagPreview.Parent = flagRow
+		local function refreshFlagPreview()
+			flagPreview.Image = normalizeAssetId(flagBox.Text) or ""
+		end
+		refreshFlagPreview()
+		flagBox:GetPropertyChangedSignal("Text"):Connect(refreshFlagPreview)
+
 		-- editable definition fields via dropdowns (options from the snapshot); derived/runtime fields
 		-- (manpower, treasury, ...) are intentionally omitted -- they're recomputed, not definition data.
 		local function ddRow(name, options, value)
@@ -1566,6 +1611,7 @@ local function renderCountries()
 				local opts = {
 					displayName = nameBox.Text,
 					color = newColor,
+					flagAssetId = normalizeAssetId(flagBox.Text) or "",
 					primaryCulture = cultureDD.get(),
 					stateReligion = religionDD.get(),
 					governmentForm = govDD.get(),
@@ -1730,8 +1776,10 @@ local function renderProvinces()
 	-- Owner is single-valued (SET); cores/defaultCores/claims are lists, so the Add/Remove toggle drives them.
 	state.paintTarget = state.paintTarget or "owner"
 	state.paintMode = state.paintMode or "add"
-	local TARGET_TO_LABEL = { owner = "Owner", core = "Core", defaultCore = "Default Core", claim = "Claim" }
-	local LABEL_TO_TARGET = { Owner = "owner", Core = "core", ["Default Core"] = "defaultCore", Claim = "claim" }
+	local TARGET_TO_LABEL =
+		{ owner = "Owner", defaultCore = "Default Core", releasableCore = "Releasable Core", claim = "Claim" }
+	local LABEL_TO_TARGET =
+		{ Owner = "owner", ["Default Core"] = "defaultCore", ["Releasable Core"] = "releasableCore", Claim = "claim" }
 
 	local HEADER_H = 84
 	local provHeader = frame({ parent = body, transparent = true, size = UDim2.new(1, 0, 0, HEADER_H) })
@@ -1837,7 +1885,7 @@ local function renderProvinces()
 		parent = paintRow,
 		size = UDim2.fromOffset(120, 26),
 		position = UDim2.new(),
-		options = { "Owner", "Core", "Default Core", "Claim" },
+		options = { "Owner", "Default Core", "Releasable Core", "Claim" },
 		value = TARGET_TO_LABEL[state.paintTarget],
 		onChange = function(lbl)
 			state.paintTarget = LABEL_TO_TARGET[lbl] or "owner"
@@ -2091,12 +2139,14 @@ local function renderProvinces()
 		readonlyRow(detail, "Culture", p.culture)
 		readonlyRow(detail, "Religion", p.religion)
 
-		-- Cores / default cores / claims -- edited as chip lists (single source of truth: the province).
-		-- Default cores = homeland cores shown GOLD-outlined in the province panel; other cores show plain.
-		label(detail, "Cores", "bodySm", Colors.TextSecondary).Size = UDim2.new(1, 0, 0, 18)
-		local coresEd = tagListEditor(detail, p.cores, countryTags)
-		label(detail, "Default cores (gold)", "bodySm", Colors.TextSecondary).Size = UDim2.new(1, 0, 0, 18)
+		-- Default Cores (homeland; gold-outlined in the province panel), Releasable Cores (breakaway nations
+		-- that can be released here -- drives the release feature), and Claims -- all edited as chip lists
+		-- (single source of truth: the province). The runtime `cores` set is NOT authored here: it is seeded
+		-- from the owner and grows via forming/conquest.
+		label(detail, "Default Cores", "bodySm", Colors.TextSecondary).Size = UDim2.new(1, 0, 0, 18)
 		local defaultCoresEd = tagListEditor(detail, p.defaultCores, countryTags)
+		label(detail, "Releasable Cores", "bodySm", Colors.TextSecondary).Size = UDim2.new(1, 0, 0, 18)
+		local releasableCoresEd = tagListEditor(detail, p.releasableCores, countryTags)
 		label(detail, "Claims", "bodySm", Colors.TextSecondary).Size = UDim2.new(1, 0, 0, 18)
 		local claimsEd = tagListEditor(detail, p.claims, countryTags)
 
@@ -2107,14 +2157,15 @@ local function renderProvinces()
 			width = 120,
 			onClick = function()
 				-- Send a tag array ONLY if the user edited it here. Otherwise a blind full-array send would
-				-- clobber cores/claims painted onto this same province via the map tool since the pane opened
-				-- (the chip editors are a stale snapshot captured at pane-open). Owner is independent.
+				-- clobber defaultCores/releasableCores/claims painted onto this same province via the map tool
+				-- since the pane opened (the chip editors are a stale snapshot captured at pane-open). Owner is
+				-- independent.
 				local opts = {}
-				if coresEd.dirty() then
-					opts.cores = coresEd.get()
-				end
 				if defaultCoresEd.dirty() then
 					opts.defaultCores = defaultCoresEd.get()
+				end
+				if releasableCoresEd.dirty() then
+					opts.releasableCores = releasableCoresEd.get()
 				end
 				if claimsEd.dirty() then
 					opts.claims = claimsEd.get()
@@ -2126,11 +2177,11 @@ local function renderProvinces()
 				end
 				local res, err = editorCall("updateProvince", { id = id, opts = opts })
 				if res then
-					if opts.cores then
-						p.cores = opts.cores
-					end
 					if opts.defaultCores then
 						p.defaultCores = opts.defaultCores
+					end
+					if opts.releasableCores then
+						p.releasableCores = opts.releasableCores
 					end
 					if opts.claims then
 						p.claims = opts.claims
@@ -2219,12 +2270,23 @@ local function renderFormables()
 
 		label(detail, tag and ("Edit " .. tag) or "New Formable", "displayLg").Size = UDim2.new(1, 0, 0, 26)
 
-		local function field(name, value)
-			local r = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 26) })
-			label(r, name, "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 120, 1, 0)
-			local tb = textbox(r, "")
-			tb.Size = UDim2.new(1, -126, 1, 0)
-			tb.Position = UDim2.fromOffset(126, 0)
+		-- STACKED rows: each field's label sits on its OWN line above a full-width control. No shared label
+		-- column, so long names never crowd or overlap the box, and the value gets the whole editor width --
+		-- editor-friendly on narrow/mobile windows. LBLH = label line height, GAP = label->control spacing.
+		local LBLH, GAP = 16, 2
+		local function rowLabel(r, name)
+			local lb = label(r, name, "bodySm", Colors.TextSecondary)
+			lb.Position = UDim2.fromOffset(0, 0)
+			lb.Size = UDim2.new(1, 0, 0, LBLH)
+			lb.TextTruncate = Enum.TextTruncate.AtEnd
+			return lb
+		end
+		local function field(name, value, placeholder)
+			local r = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, LBLH + GAP + 26) })
+			rowLabel(r, name)
+			local tb = textbox(r, placeholder or "")
+			tb.Size = UDim2.new(1, 0, 0, 26)
+			tb.Position = UDim2.fromOffset(0, LBLH + GAP)
 			tb.Text = value or ""
 			return tb
 		end
@@ -2232,11 +2294,11 @@ local function renderFormables()
 		-- the box instead of overflowing the window; it scrolls to the cursor while editing.
 		local function bigField(name, value, h)
 			h = h or 92
-			local r = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, h) })
-			label(r, name, "bodySm", Colors.TextSecondary).Size = UDim2.fromOffset(120, 26)
+			local r = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, LBLH + GAP + h) })
+			rowLabel(r, name)
 			local tb = textbox(r, "")
-			tb.Size = UDim2.new(1, -126, 1, 0)
-			tb.Position = UDim2.fromOffset(126, 0)
+			tb.Size = UDim2.new(1, 0, 0, h)
+			tb.Position = UDim2.fromOffset(0, LBLH + GAP)
 			tb.Text = value or ""
 			tb.MultiLine = true
 			tb.TextWrapped = true
@@ -2246,12 +2308,12 @@ local function renderFormables()
 			return tb
 		end
 		local function ddYesNo(name, isYes)
-			local r = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 26) })
-			label(r, name, "bodySm", Colors.TextSecondary).Size = UDim2.new(0, 120, 1, 0)
+			local r = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, LBLH + GAP + 26) })
+			rowLabel(r, name)
 			return dropdown({
 				parent = r,
-				size = UDim2.new(0, 90, 1, 0),
-				position = UDim2.fromOffset(126, 0),
+				size = UDim2.new(0, 120, 0, 26),
+				position = UDim2.fromOffset(0, LBLH + GAP),
 				options = YESNO,
 				value = isYes and "Yes" or "No",
 			})
@@ -2310,7 +2372,7 @@ local function renderFormables()
 					)
 				end,
 			})
-			addSel.Position = UDim2.fromOffset(126, 0)
+			addSel.Position = UDim2.fromOffset(0, 0)
 			local clearBtn = Button.create({
 				parent = reqTools,
 				variant = "ghost",
@@ -2322,12 +2384,29 @@ local function renderFormables()
 					setStatus("Cleared required provinces", Colors.TextSecondary)
 				end,
 			})
-			clearBtn.Position = UDim2.fromOffset(304, 0)
+			clearBtn.Position = UDim2.fromOffset(178, 0)
 			local hint = label(reqTools, "shift-select map tiles \u{2192} Add", "bodySm", Colors.TextSecondary)
-			hint.Position = UDim2.fromOffset(390, 0)
-			hint.Size = UDim2.new(1, -390, 1, 0)
+			hint.Position = UDim2.fromOffset(262, 0)
+			hint.Size = UDim2.new(1, -262, 1, 0)
 			hint.TextTruncate = Enum.TextTruncate.AtEnd
 		end
+		-- Live province-count + difficulty-tier readout (updates as ids are typed or added from the map). The
+		-- tiers mirror the Formables screen bands (Early <=15, Major <=40, Grand >40) so authors can balance
+		-- the slate toward many achievable early goals and only a few grand ones.
+		local countRow = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, 16) })
+		local countLabel = label(countRow, "", "bodySm", Colors.TextSecondary)
+		countLabel.Position = UDim2.fromOffset(0, 0)
+		countLabel.Size = UDim2.new(1, 0, 1, 0)
+		local function refreshCount()
+			local n = 0
+			for _ in string.gmatch(reqBox.Text or "", "%d+") do
+				n += 1
+			end
+			local tier = (n == 0 and "empty") or (n <= 15 and "Early goal") or (n <= 40 and "Major goal") or "Grand ambition"
+			countLabel.Text = string.format("%d provinces  \u{00B7}  %s", n, tier)
+		end
+		refreshCount()
+		reqBox:GetPropertyChangedSignal("Text"):Connect(refreshCount)
 		local colorBox = field("Colour (r,g,b)", string.format("%d, %d, %d", col3[1] or 0, col3[2] or 0, col3[3] or 0))
 		do
 			local pick = Instance.new("TextButton")
@@ -2353,6 +2432,28 @@ local function renderFormables()
 			end)
 		end
 		local flagBox = field("Flag (rbxassetid)", (def and def.flag) or "")
+		do
+			-- Live crest preview at the right edge of the field (mirrors the country editor's crest preview).
+			local flagPrev = Instance.new("ImageLabel")
+			flagPrev.Size = UDim2.fromOffset(22, 22)
+			flagPrev.AnchorPoint = Vector2.new(1, 0.5)
+			flagPrev.Position = UDim2.new(1, -2, 0.5, 0)
+			flagPrev.BackgroundTransparency = 1
+			flagPrev.ScaleType = Enum.ScaleType.Crop
+			flagPrev.ZIndex = 3
+			flagPrev.Parent = flagBox
+			local function refresh()
+				flagPrev.Image = normalizeAssetId(flagBox.Text) or ""
+			end
+			refresh()
+			flagBox:GetPropertyChangedSignal("Text"):Connect(refresh)
+		end
+		-- Territory requirement (blank = must own ALL required provinces). "Min provinces" needs holding N of
+		-- them; "Percent required" needs that % of them. These cure the "own everything before you qualify" and
+		-- "blocked by one obscure province" problems and let big-territory formables stay achievable.
+		local minBox = field("Min provinces", def and def.minProvinces and tostring(def.minProvinces) or "", "blank = all")
+		local percentBox =
+			field("Percent required", def and def.percentRequired and tostring(def.percentRequired) or "", "blank = all")
 		local bonusBox =
 			field("Form bonus: stability", def and def.formBonuses and tostring(def.formBonuses.stability or "") or "")
 		local canFormDD = ddYesNo("Can form", def == nil or def.canForm ~= false)
@@ -2403,7 +2504,17 @@ local function renderFormables()
 					secret = (secretDD.get() == "Yes") or nil,
 				}
 				if flagBox.Text ~= "" then
-					newDef.flag = flagBox.Text
+					newDef.flag = normalizeAssetId(flagBox.Text) or flagBox.Text
+				end
+				-- Territory threshold (blank = all). minProvinces wins over percentRequired if both are set
+				-- (FormableRules checks minProvinces first). Only whole positive numbers are meaningful.
+				local minN = tonumber(minBox.Text)
+				if minN and minN > 0 then
+					newDef.minProvinces = math.floor(minN)
+				end
+				local pct = tonumber(percentBox.Text)
+				if pct and pct > 0 then
+					newDef.percentRequired = math.clamp(pct, 1, 100)
 				end
 				local stab = tonumber(bonusBox.Text)
 				if stab then

@@ -1,7 +1,7 @@
 local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
 local Colors = DesignSystem.Colors
 local Typography = DesignSystem.Typography
-local CountriesData = require(script.Parent.Parent.Parent.Data.Countries)
+local CountryColor = require(script.Parent.Parent.Parent.Modules.CountryColor)
 
 local CountryBadge = {}
 
@@ -53,12 +53,12 @@ function CountryBadge.create(config)
 	crestImg.Name = "CrestImage"
 	crestImg.Size = UDim2.fromScale(1, 1)
 	crestImg.BackgroundTransparency = 1
-	-- Decal: explicit config.flag wins; otherwise pull the country's flagAssetId from replicated state
-	-- (set in Data/Countries.luau). Empty -> the colour + tag show through.
+	-- Decal: explicit config.flag wins; otherwise resolve the country's crest from LIVE replicated state
+	-- (CountryColor.resolveFlag: authored/formed/released crests), falling back to the static Data table.
+	-- Empty -> the colour + tag show through (the intended state for uncrested/tribal nations).
 	local flag = config.flag
 	if (not flag or flag == "") and config.code then
-		local cd = CountriesData[config.code]
-		flag = (cd and cd.flagAssetId) or nil
+		flag = CountryColor.resolveFlag(config.code)
 	end
 	crestImg.Image = flag or ""
 	crestImg.ScaleType = Enum.ScaleType.Crop

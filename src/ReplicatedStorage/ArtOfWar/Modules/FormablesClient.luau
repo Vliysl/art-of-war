@@ -10,6 +10,7 @@ local HttpService = game:GetService("HttpService")
 
 local aow = ReplicatedStorage:WaitForChild("ArtOfWar")
 local STATIC = require(aow:WaitForChild("Data"):WaitForChild("Formables"))
+local FormableRules = require(aow:WaitForChild("Shared"):WaitForChild("FormableRules"))
 
 local function runtimeValue()
 	local sv = aow:FindFirstChild("FormablesRuntime")
@@ -29,6 +30,24 @@ function FormablesClient.getAll()
 		merged[tag] = def
 	end
 	return merged
+end
+
+-- Territory progress for a formable/releasable def, computed from the replicated cache. Returns
+-- (held, total, need, ready): how many required provinces `tag` owns, how many exist, how many are needed
+-- (min-count / percent / all -- shared with the server via FormableRules), and whether the threshold is met.
+function FormablesClient.progress(cache, tag, def)
+	local total = FormableRules.total(def)
+	if not cache or not tag or total == 0 then
+		return 0, total, FormableRules.threshold(def), false
+	end
+	local held = 0
+	for _, id in ipairs(def.requiredProvinceIds) do
+		local p = cache.getProvince(id)
+		if p and p.ownerTag == tag then
+			held += 1
+		end
+	end
+	return held, total, FormableRules.threshold(def), FormableRules.ready(held, def)
 end
 
 -- Fire `fn` whenever the replicated custom set changes (formable authored/removed mid-session).

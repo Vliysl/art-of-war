@@ -320,10 +320,9 @@ local function getOwnerColor(ownerTag)
 	return FACTION_FALLBACK
 end
 
-local CountriesData = require(script.Parent.Parent.Data.Countries)
 local function getOwnerFlag(ownerTag)
-	local cd = CountriesData[ownerTag]
-	return (cd and cd.flagAssetId) or ""
+	-- Live crest resolution (authored/formed/released nations), static Data as fallback. "" => tag shows.
+	return CountryColor.resolveFlag(ownerTag) or ""
 end
 
 local function dominantUnit(army)

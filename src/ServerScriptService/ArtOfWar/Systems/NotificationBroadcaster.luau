@@ -233,6 +233,28 @@ local function onCountryClaimed(data)
 		"self", data.tag, "country.claimed"))
 end
 
+-- Forming a nation (adopting a formable identity). data = { tag, formableTag }; the country's displayName is
+-- already the formable's name by publish time, so displayName(tag) returns the new identity. Green success
+-- toast + a rare global announcement (forming is one-time, so it is not spammy).
+local function onNationFormed(data)
+	if not data or not data.tag then return end
+	broadcast(makePayload("success", "Nation Formed",
+		string.format("You have forged %s!", displayName(data.tag)),
+		"self", data.tag, "nation.formed", { ttl = 12 }))
+	broadcast(makePayload("info", "A New Power Rises",
+		string.format("The nation of %s has been forged.", displayName(data.tag)),
+		"global", nil, "nation.formed.global", { ttl = 8 }))
+end
+
+-- Releasing a breakaway nation from your releasable cores. data = { overlordTag, subjectTag }. Notifies the
+-- overlord (the releaser); the freed nation is AI today.
+local function onSubjectReleased(data)
+	if not data or not data.overlordTag then return end
+	broadcast(makePayload("success", "Nation Released",
+		string.format("%s has risen as a nation.", displayName(data.subjectTag)),
+		"self", data.overlordTag, "subject.released", { ttl = 10 }))
+end
+
 local function fleetOwnerOf(fleetId)
 	if not fleetId then return nil end
 	local fleet = ctx.WorldState.getFleet and ctx.WorldState.getFleet(fleetId)
@@ -367,6 +389,8 @@ local SUBSCRIPTIONS = {
 	CountryTransitionCompleted = onTransitionCompleted,
 	FactionTierChanged      = onFactionTierChanged,
 	CountryClaimed          = onCountryClaimed,
+	NationFormed            = onNationFormed,
+	SubjectReleased         = onSubjectReleased,
 	FleetMoveCompleted      = onFleetMoveCompleted,
 	ShipRecruited           = onShipRecruited,
 	NavalBattleStarted      = onNavalBattleStarted,

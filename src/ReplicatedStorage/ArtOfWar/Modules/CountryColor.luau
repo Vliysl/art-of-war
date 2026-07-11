@@ -79,4 +79,20 @@ function CountryColor.resolve(tag)
 	return toColor3(CountryColor.resolveArray(tag)) or DEFAULT
 end
 
+-- The image-decal crest a country should render, resolved from LIVE replicated state first (so editor-
+-- authored crests and runtime formed/released nations show), then the static Data fallback (covers the
+-- crest-bearing majors before live data arrives). Returns nil when the nation has no crest -- an intended
+-- state for tribal/uncrested nations, whose callers fall back to the colour+tag badge. Mirrors resolveArray.
+function CountryColor.resolveFlag(tag)
+	if not tag then
+		return nil
+	end
+	local rec = ClientStateCache.getCountry(tag) or CountriesData[tag]
+	local flag = rec and rec.flagAssetId
+	if flag == "" then
+		return nil
+	end
+	return flag
+end
+
 return CountryColor

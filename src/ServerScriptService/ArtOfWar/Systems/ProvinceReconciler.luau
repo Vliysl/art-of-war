@@ -64,6 +64,7 @@ local function buildRecord(part, newId, owner, nearest)
 		controllerTag = controller,
 		cores = { owner },
 		defaultCores = { owner },
+		releasableCores = {},
 		isCity = true,
 		devTier = 1,
 		infraTier = 1,

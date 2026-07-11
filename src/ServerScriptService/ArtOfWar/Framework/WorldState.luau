@@ -68,7 +68,7 @@ end
 -- stripMembership: when true (EDITOR delete -- the country ceases to exist) also purge the tag from every
 -- province's cores/defaultCores/claims arrays. Combat annexation leaves it nil so historical cores/claims
 -- persist through conquest (they drive reconquest desire / unrest, EU4-style).
-local MEMBERSHIP_FIELDS = { "cores", "defaultCores", "claims" }
+local MEMBERSHIP_FIELDS = { "cores", "defaultCores", "releasableCores", "claims" }
 function WorldState.deleteCountry(tag, reassignTo, stripMembership)
 	local successor = reassignTo or "NONE"
 	for id, province in store.provinces do

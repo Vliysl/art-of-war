@@ -154,6 +154,7 @@ local function registerProvince(id, record)
 	local clone = table.clone(record)
 	clone.cores = table.clone(record.cores or {})
 	clone.defaultCores = table.clone(record.defaultCores or record.cores or {})
+	clone.releasableCores = table.clone(record.releasableCores or {})
 	clone.claims = table.clone(record.claims or {})
 	if clone.goods == nil then
 		local g = {}
@@ -249,6 +250,7 @@ function ProvinceRegistry.hydrate(provinces)
 		local clone = table.clone(record)
 		clone.cores = table.clone(record.cores)
 		clone.defaultCores = table.clone(record.defaultCores or record.cores or {})
+		clone.releasableCores = table.clone(record.releasableCores or {})
 		clone.claims = table.clone(record.claims or {})
 		-- Multi-resource migration: synthesize province.goods from tradeGood + baseProduction
 		-- when not explicitly set on the data row. Provinces with tradeGood "none" / nil get an

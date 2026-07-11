@@ -706,6 +706,18 @@ function DataLoader.healBundle(bundle)
 				end
 				province.defaultCores = keptDefault
 			end
+
+			-- Releasable cores (breakaway nations, editor-painted): default EMPTY (distinct from homeland
+			-- cores); prune tags for countries that no longer exist.
+			if type(province.releasableCores) ~= "table" then
+				province.releasableCores = {}
+			else
+				local keptReleasable = {}
+				for _, relTag in ipairs(province.releasableCores) do
+					if countries[relTag] then table.insert(keptReleasable, relTag) end
+				end
+				province.releasableCores = keptReleasable
+			end
 		end
 	end
 
