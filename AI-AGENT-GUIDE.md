@@ -54,6 +54,15 @@ Editing a script in Studio now accomplishes nothing lasting: Rojo overwrites it 
 4. **You commit + push:** `git add -A && git commit -m "..." && git push`. The clone is already configured to credit the right developer (see *Commit identity*). `git pull --rebase` first if the push is rejected.
 5. The developer publishes to players from Studio (Ctrl+S → File → Publish to Roblox As → "Art of War Playtesting"). Agents don't publish.
 
+## The obfuscation pipeline (release-time only — dev loop is unchanged)
+
+Player releases ship with obfuscated client code (`tools/obfuscate.luau` stages `src/` into `build/obf-src`, renames all locals/params in the four client subtrees via darklua, and emits `build/release.project.json`). This is a **release-time transform of a throwaway copy** — it never touches `src/`, so day-to-day work is exactly as described above. What agents must know:
+
+1. **Never edit anything under `build/`.** It's generated, gitignored, and overwritten on every release run. If a search turns up hits in `build/obf-src`, those are renamed duplicates — the real code is the matching file under `src/`.
+2. **Releases use `serve-aow-obfuscated.bat`** (or `lune run tools/publish -- <base.rbxl> --obfuscate`) instead of `serve-aow.bat`. Agents still don't publish.
+3. **"stale canary" failure:** the release build fails loudly if a name in the `CANARIES` list of `tools/obfuscate.luau` (e.g. `RecruitUnit`, `StateSync`, `Hud`) no longer appears quoted in client code. If you renamed or removed that remote/module on purpose, update the `CANARIES` list in the same commit.
+4. **Safe-for-rename code only** (the whole codebase already complies — keep it that way): no `getfenv`/`setfenv`/`loadstring`, no `_G` keyed by variable names, no parsing identifier names out of error messages in client code. Normal Luau, string-based `WaitForChild`/`FindFirstChild` lookups, and table-field APIs are all untouched by the rename and completely safe.
+
 ## The two universes and the relay (don't fear breaking data)
 
 Two published games run the same code:
