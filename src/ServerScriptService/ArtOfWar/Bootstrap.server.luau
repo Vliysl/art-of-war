@@ -11,6 +11,14 @@ local Framework = ArtOfWarServer:WaitForChild("Framework")
 local Systems = ArtOfWarServer:WaitForChild("Systems")
 
 local WorldConstants = require(ReplicatedStorage.ArtOfWar.Shared.WorldConstants)
+-- Server-only WorldConstants (AI decision thresholds, political/law/combat tuning,
+-- OfficerRngSeed) live in a ServerScriptService module so they never replicate to clients.
+-- Merge them into the shared table here -- before any Framework/System require reads them --
+-- by mutating the require-cached instance, so ctx.WorldConstants and every later require see
+-- the full set at runtime.
+for key, value in require(ArtOfWarServer.WorldConstantsServer) do
+	WorldConstants[key] = value
+end
 local Channels = require(ArtOfWarServer.Events.Channels)
 
 local EventBus = require(Framework.EventBus)

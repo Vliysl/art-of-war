@@ -1,5 +1,10 @@
 local WorldConstants = {}
 
+-- NOTE: server-only fields (AI decision thresholds, law/ruler/faction/estate/unrest
+-- tuning, war-score/siege/attrition costs, OfficerRngSeed) live in
+-- ServerScriptService/ArtOfWar/WorldConstantsServer and are merged into this table by
+-- Bootstrap at startup, so they never replicate to clients. Do NOT re-add them here.
+
 -- Map scale: migrated 2026-06 from the 18665-wide map to the 2048-wide raw-coastline map (measured extents, centered on origin).
 WorldConstants.MapWidth = 2048
 WorldConstants.MapDepth = 837.82
@@ -135,15 +140,6 @@ WorldConstants.SecondsPerEconomyUpdate = 3
 WorldConstants.SecondsPerMilitaryUpdate = 1.5
 WorldConstants.SecondsPerDiplomacyUpdate = 6
 
-WorldConstants.MultiplierCapEconomy = 10
-WorldConstants.MultiplierCapCombatStat = 2
-WorldConstants.MultiplierCapTechPerBranch = 3
-WorldConstants.MultiplierCapArtillerySubStat = 2
-
-WorldConstants.EntrenchedDefense = 1.5
-WorldConstants.TrainingTierStep = 1.1
-WorldConstants.TerrainSpecializationFlat = 1.2
-WorldConstants.ArtillerySplashPerTick = 0.02
 
 WorldConstants.PriceBandLow = 0.25
 WorldConstants.PriceBandHigh = 1.75
@@ -159,41 +155,9 @@ WorldConstants.CapitalManpowerMultiplier = 1.15
 WorldConstants.CapitalUnrestReduction = 0.10
 WorldConstants.CapitalFortBonus = 1
 
-WorldConstants.PoliticalPowerCap = 200
-WorldConstants.PoliticalPowerTickInterval = 6
-WorldConstants.PoliticalPowerBasePerTick = 1.0
-
-WorldConstants.TransitionStabilityPenalty = -0.10
-WorldConstants.TransitionUnrestPenalty = 0.05
-WorldConstants.TransitionPpGenerationPenalty = 0.5
-WorldConstants.TransitionLegitimacyHit = 25
-WorldConstants.TransitionLegitimacyRecoveryYears = 2
-WorldConstants.TransitionCancelRefund = 0.5
-WorldConstants.TransitionPolicyRepealStabilityHit = 0.05
-WorldConstants.TransitionPolicyRepealStabilityCap = 0.20
-WorldConstants.TransitionLawCancelRefund = 0.5
-
-WorldConstants.RevolutionLegitimacyFloor = 30
-WorldConstants.RevolutionTreasuryHit = 0.30
-WorldConstants.RevolutionManpowerHit = 0.20
-
-WorldConstants.LegitimacyMin = 0
-WorldConstants.LegitimacyMax = 100
-WorldConstants.StabilityMin = -3
-WorldConstants.StabilityMax = 3
 
 WorldConstants.YearsPerRealSecond = 0.05
 
-WorldConstants.LawPhaseDurationDays = 100
-WorldConstants.LawPhases = 3
-WorldConstants.LawSetbackLimit = 3
-WorldConstants.LawCooldownDays = 730
-WorldConstants.LawCancelRefund = 0.40
-WorldConstants.LawBaseSuccessChance = 0.50
-WorldConstants.LawBaseStallChance = 0.30
-WorldConstants.LawBaseSetbackChance = 0.20
-WorldConstants.LawIdeologyPowerShiftMax = 0.20
-WorldConstants.LawFactionInfluenceMax = 0.20
 
 WorldConstants.LeaderAppointmentCost = 40
 WorldConstants.LeaderDismissalCost = 30
@@ -202,67 +166,6 @@ WorldConstants.LeaderTraitMinimum = 2
 WorldConstants.LeaderTraitMaximum = 4
 WorldConstants.LeaderPortraitPoolSize = 100
 
-WorldConstants.FactionCloutMin = 0.01
-WorldConstants.FactionCloutMax = 0.90
-WorldConstants.FactionTierMarginalized = 0.04
-WorldConstants.FactionTierInfluential = 0.20
-WorldConstants.FactionDriftPerTick = 0.004
-WorldConstants.FactionTickInterval = 6
-WorldConstants.LegitimacyBase = 50
-WorldConstants.LegitimacyAlignmentScale = 100
-
--- Politics overhaul ("Authority & the Estates")
-WorldConstants.CrownAuthorityBase = 50 -- starting Authority for seeded countries
-WorldConstants.CrownAuthorityCapBase = 100 -- max Authority before privileges lower it
-WorldConstants.CrownAuthorityCapMin = 20 -- floor for the cap no matter how many privileges
-WorldConstants.CrownAuthorityMin = 0
-WorldConstants.CrownAuthorityRegenPerTick = 0.5 -- passive drift toward the cap
-WorldConstants.EstateLoyaltyBase = 50
-WorldConstants.EstateLoyaltyMin = 0
-WorldConstants.EstateLoyaltyMax = 100
-WorldConstants.EstateLoyaltyDriftPerTick = 0.4 -- drift toward target loyalty
-WorldConstants.EstateSeizeAuthorityGain = 12 -- Authority gained by seizing power from an estate
-WorldConstants.EstateSeizeLoyaltyHit = 15 -- loyalty lost by the seized-from estate
-WorldConstants.EstateSeizeInfluenceShift = 0.03 -- clout removed from the seized-from estate
-WorldConstants.EstateDemandLoyaltyThreshold = 40 -- below this an estate may issue a demand event
-WorldConstants.UnrestMin = 0
-WorldConstants.UnrestMax = 100
--- Unrest model (UnrestSystem): unrest drifts toward target = pressure - relief
-WorldConstants.UnrestTickInterval = 6
-WorldConstants.UnrestDriftPerTick = 0.15
-WorldConstants.UnrestEstateLoyaltyPivot = 50 -- estate loyalty below this adds pressure
-WorldConstants.UnrestEstateCloutWeight = 120 -- disloyalty(0..1) * clout(share) * weight
-WorldConstants.UnrestLegitimacyPivot = 50
-WorldConstants.UnrestLegitimacyWeight = 20 -- * max(0,(pivot-legit)/pivot)
-WorldConstants.UnrestStabilityWeight = 6 -- * stability points below 0
-WorldConstants.UnrestWarExhaustionWeight = 15 -- * war exhaustion (0..1)
-WorldConstants.UnrestActiveTransitionFlat = 8 -- flat pressure while mid-transition (over-reform)
-WorldConstants.UnrestBaseDecay = 10 -- baseline relief; a content realm trends to 0
-WorldConstants.UnrestGoodGovReliefWeight = 15 -- * max(0,(legit-pivot)/pivot)
-WorldConstants.UnrestStabilityReliefWeight = 5 -- * stability points above 0
-WorldConstants.UnrestAuthorityReliefWeight = 12 -- * Crown Authority (0..1 of cap)
-WorldConstants.UnrestRebellionThreshold = 70 -- crossing up publishes RebellionTriggered
-WorldConstants.RebellionCooldownDays = 365 -- after a rebellion ends, no new trigger for a year
-WorldConstants.EventTickInterval = 5 -- seconds between EventSystem ticks
-WorldConstants.EventAmbientCheckDays = 120 -- min in-game days between ambient event checks per country
-WorldConstants.EventAmbientChance = 0.35 -- chance an ambient check fires a random opportunity
--- Leadership & Succession (RulerSystem)
-WorldConstants.SuccessionTickInterval = 6 -- scheduler cadence (s); aging is year-gated inside
-WorldConstants.RulerStartAgeMin = 28
-WorldConstants.RulerStartAgeMax = 55
-WorldConstants.RulerDeathFloorAge = 45 -- below this, only the base death chance
-WorldConstants.RulerDeathBaseChance = 0.01 -- per-year baseline
-WorldConstants.RulerDeathChancePerYear = 0.012 -- +1.2%/yr over the floor age
-WorldConstants.RulerDeathMaxChance = 0.55 -- cap at extreme age
-WorldConstants.RulerOldAgeExtraChance = 0.10 -- surcharge if ruler has the "old_age" trait
-WorldConstants.RulerRegencyAge = 16 -- heir below this rules under a regent
-WorldConstants.RulerTermLengthDays = 360 * 6 -- republican_term length (~6 years)
-WorldConstants.SuccessionCandidates = 3 -- elective/term/tribal candidate pool size
-WorldConstants.HeirClaimLegitimacyDivisor = 5 -- legitimacy swing on accession = (claim-50)/this
-WorldConstants.SuccessionDisputeLegitimacyFloor = 35
-WorldConstants.SuccessionDisputeClaimFloor = 40
-WorldConstants.SuccessionDisputeLegitimacyHit = 10
-WorldConstants.SuccessionDisputeStabilityHit = 1
 
 WorldConstants.AdjacencyThreshold = 33 -- scaled for 2048 map (was 300 @ 18665); baked adjacency is primary, this only gates the legacy/synth fallback
 WorldConstants.ArmyRecruitInfraRequirement = 2 -- DEPRECATED: no longer enforced (recruitment unlocked for all owned provinces)
@@ -426,8 +329,6 @@ WorldConstants.FortCannonDebuff = 0.75 -- hook: cannon-tech fort debuff (gated o
 WorldConstants.BattleVictorMoraleBonus = 0.10
 WorldConstants.BattleLoserMoralePenalty = 0.20
 WorldConstants.BattleMoraleModifierMonths = 6
--- Deterministic seed base for officer generation / trait picks.
-WorldConstants.OfficerRngSeed = 13337
 -- Naval role-matched rounds (Phase 3).
 WorldConstants.NavalCombatWidth = 40
 WorldConstants.NavalDamageScale = 2 -- per-round naval casualty scale (lower than land; hull pools are large)
@@ -463,102 +364,12 @@ WorldConstants.ManpowerNationFloor = 5000 -- a nation with any owned+controlled 
 WorldConstants.ManpowerRegenPerDay = 0.003 -- fraction of cap regenerated per in-game day (~11 months to full)
 WorldConstants.AttritionTickInterval = 6
 
--- Diplomacy
-WorldConstants.TrucePeriodDays = 1825
-WorldConstants.PeaceProposalLifetimeSeconds = 600
-WorldConstants.DiplomacyTickInterval = 6
 
--- Opinion / relations (Phase 1). Per-direction value on country.opinion[otherTag].
-WorldConstants.OpinionMin = -200
-WorldConstants.OpinionMax = 200
-WorldConstants.OpinionImproveStep = 25 -- both-ways bump per Improve Relations
-WorldConstants.OpinionImproveCost = 25 -- political power spent per Improve Relations
-WorldConstants.OpinionImproveCooldownDays = 30 -- per-target cooldown
-WorldConstants.OpinionWarPenalty = 50 -- both-ways drop on a war declaration
-WorldConstants.OpinionFriendBase = 50 -- baseline toward a historical friend
-WorldConstants.OpinionRivalBase = -50 -- baseline toward a historical rival
-WorldConstants.OpinionDecayPerMonth = 3 -- drift toward baseline each month
 
--- Pacts (Phase 2): NAP offers (bilateral, offer->accept) + Guarantee independence (instant)
-WorldConstants.PactOfferLifetimeSeconds = 600 -- pending NAP offer TTL before auto-expire
-WorldConstants.NapDurationDays = 3650 -- active NAP length (~10 years)
-WorldConstants.NapAcceptOpinionBonus = 15 -- both-ways on signing a NAP
-WorldConstants.NapBreakOpinionPenalty = 40 -- both-ways for breaking a NAP early (betrayal)
-WorldConstants.NapAcceptThreshold = 0 -- AI signs a NAP when opinion >= this
-WorldConstants.GuaranteeOpinionBonus = 15 -- both-ways when a guarantee is issued
-WorldConstants.GuaranteeRevokeOpinionPenalty = 15 -- protected->guarantor when a guarantee is revoked
-
--- Alliances + call-to-arms (Phase 3). Alliances reuse the pacts pipeline; call-to-arms drags a
--- defender's allies/guarantors into linked co-belligerent wars.
-WorldConstants.AllianceOpinionBonus = 25 -- both-ways on forming an alliance
-WorldConstants.AllianceBreakPenalty = 60 -- both-ways for breaking an alliance
-WorldConstants.AllianceAcceptThreshold = 50 -- AI accepts an alliance only at opinion >= this
-WorldConstants.CallToArmsDeclinePenalty = 75 -- both-ways for refusing a called ally's war (betrayal)
-
--- =====================================================================
--- SIEGES (spec G.2, Phase 5) - see Systems.SiegeSystem.
--- siegeProgress += SiegeBaseSpeed * armySizeFactor * (1 - fortDefenseMod) toward
--- OccupationProgressRequired; forts slow the siege AND bleed the besieger (attrition).
--- =====================================================================
-WorldConstants.SiegeBaseSpeed = 1.0 -- progress per round at reference army size, no fort
-WorldConstants.SiegeArmySizeRef = 8 -- regiments giving sizeFactor 1.0
-WorldConstants.SiegeMinSizeFactor = 0.5 -- clamp: tiny besieging force
-WorldConstants.SiegeMaxSizeFactor = 1.5 -- clamp: large force can't trivialise walls
-WorldConstants.FortSiegeDefensePerTier = 0.15 -- each fort tier slows siege by this (pre-cap)
-WorldConstants.SiegeFortMaxReduction = 0.85 -- max siege slowdown from forts
-WorldConstants.SiegeAttritionPerRound = 0.01 -- besieger loses this regiment-fraction / round
-WorldConstants.SiegeAttritionFortScale = 0.004 -- extra besieger attrition per fort tier
-WorldConstants.OccupationOutputPenalty = 0.20 -- occupied province yields 20pct (hook for economy)
-
--- =====================================================================
--- WAR SCORE / EXHAUSTION / PEACE (spec B.9 / G.4-G.5, Phase 5).
--- war.score is ATTACKER POV (-100..+100): attacker gains push it +, defender gains -.
--- DiplomacySystem accrues from BattleResolved / ProvinceOccupied / NavalBattleResolved
--- and gates AI peace acceptance on score vs term cost (+ exhaustion willingness).
--- =====================================================================
-WorldConstants.WarScoreMax = 100
-WorldConstants.WarScoreBattleWin = 5 -- field-battle victory
-WorldConstants.WarScoreNavalWin = 8 -- naval-battle victory (sink fleet)
--- Rebalanced for instant capture (C2): occupation used to take a 12-point siege, so 8/province
--- was rare; walk-ins accrue per tile and 8 forced peace after ~13 captures. 3 keeps field
--- battles (5) the primary driver and needs ~34 solo-occupied tiles to force peace outright.
-WorldConstants.WarScoreOccupyProvince = 3 -- fully occupy an enemy province
-WorldConstants.WarScoreForcedPeace = 100 -- at +/-100, war auto-ends in winner's favour
-WorldConstants.WarExhaustionMonthlyBase = 0.05 -- both sides gain this per month at war
-WorldConstants.WarExhaustionPerBattleLost = 0.5 -- loser of a battle gains this
-WorldConstants.WarExhaustionPerProvinceLost = 0.4 -- losing a province to occupation (rebalanced with instant capture)
-WorldConstants.WarExhaustionMax = 100
-WorldConstants.WarStalemateYears = 5 -- mandatory white peace after this many years
--- Peace term war-score costs (paid by the side GAINING from the term):
-WorldConstants.PeaceWhitePeaceCost = 0 -- revert occupations: free
-WorldConstants.PeaceAnnexBaseCost = 20 -- annex occupied: base war-score cost
-WorldConstants.PeaceAnnexPerProvinceCost = 10 -- + per annexed province
-WorldConstants.PeaceAIExhaustionWeight = 0.5 -- each exhaustion point adds this to willingness
-WorldConstants.PeaceAIAcceptMargin = 0 -- accept when willingness - cost >= this
-WorldConstants.PeaceVassalizeCost = 90 -- vassalize peace term: very high war-score cost (AI only when crushed)
 -- Phase 3 peace conference (gated by EnablePeaceConference): per-demand war-score costs.
 WorldConstants.PeaceTakeProvinceCost = 12 -- base cost to demand one province
 WorldConstants.PeaceCoreMultiplier = 1.5 -- x cost when the province is a CORE of the loser (homeland)
 WorldConstants.PeaceClaimCostDiscount = 0.7 -- x cost when the demander holds a CLAIM on the province
-WorldConstants.ReleaseSubjectOpinionBonus = 30 -- a freed subject's opinion of its former overlord
 
--- =====================================================================
--- ATTRITION (spec B.10 / 6.9, Phase 5) - see Systems.AttritionSystem.
--- Monthly: provinces with stacked armies over supply bleed manpower (crowding);
--- low-supply terrain adds a base rate. Wasteland slows movement (hook).
--- =====================================================================
-WorldConstants.ProvinceSupplyLimitBase = 5000 -- strength a province supports for free
-WorldConstants.ProvinceSupplyLimitPerDev = 500 -- + per devTier
-WorldConstants.AttritionCrowdingRate = 0.05 -- monthly loss-frac per 1x supply overflow
-WorldConstants.AttritionTerrainScale = 0.02 -- low-supply terrain attrition scale
-WorldConstants.AttritionMaxPerMonth = 0.10 -- cap monthly attrition fraction
--- Encirclement (a pocket: no adjacent owner/allied LAND supply line AND at least one adjacent
--- at-war enemy land tile). While encircled an army bleeds extra manpower and organization each
--- month. Set either to 0 to disable. Deliberately harsh -- a cut-off army should be a liability.
-WorldConstants.EncirclementAttritionPerMonth = 0.08
-WorldConstants.EncirclementOrgLossPerMonth = 3.0
-WorldConstants.AttritionTerrainFreeSupply = 8 -- terrain supplyLimit at/above which terrain attrition is 0
-WorldConstants.AttritionFrostRate = 0.03 -- hook: extra attrition in winter provinces (no season system yet)
-WorldConstants.WastelandMovementSlowdown = 0.5 -- hook: wasteland province speed x this
 
 return WorldConstants
