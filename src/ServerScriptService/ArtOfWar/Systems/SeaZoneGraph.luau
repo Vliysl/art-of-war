@@ -7,7 +7,7 @@
 -- SeaAdjacencyGraph). It exists so naval/convoy work has true sea adjacency to
 -- consume. An empty baked table simply means "no zones yet".
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
 
 local SeaZoneGraph = {}
 
@@ -17,8 +17,8 @@ local shoreByProvince = {}    -- [provinceId] = { zoneKey, ... }
 local function loadZones()
 	zones = {}
 	shoreByProvince = {}
-	local dataFolder = ReplicatedStorage:FindFirstChild("ArtOfWar")
-	dataFolder = dataFolder and dataFolder:FindFirstChild("Data")
+	local aow = ServerScriptService:FindFirstChild("ArtOfWar")
+	local dataFolder = aow and aow:FindFirstChild("ServerData")
 	local moduleScript = dataFolder and dataFolder:FindFirstChild("SeaZones")
 	if not moduleScript then return end
 	local ok, baked = pcall(require, moduleScript)

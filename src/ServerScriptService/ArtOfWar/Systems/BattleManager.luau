@@ -5,7 +5,7 @@ local nextBattleSeq = 0
 -- perf: server-only per-battle round log (see tickBattle). Never replicated; cleared in endBattle.
 local battleLogs = {}
 
-local CombatPhases = require(game:GetService("ReplicatedStorage").ArtOfWar.Data.CombatPhases)
+local CombatPhases = require(game:GetService("ServerScriptService").ArtOfWar.ServerData.CombatPhases)
 
 -- ===== Helpers (stable) =====================================================
 

@@ -95,8 +95,13 @@ end
 
 function DataLoader.loadBundle()
 	local dataRoot = ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Data")
+	-- Seed-data modules the client never reads are moved to ServerScriptService/ArtOfWar/ServerData
+	-- to keep them out of client dumps. Look there first, then fall back to the client Data folder.
+	local serverData = game:GetService("ServerScriptService"):FindFirstChild("ArtOfWar")
+	serverData = serverData and serverData:FindFirstChild("ServerData")
 	local function pull(name)
-		return DataLoader.loadModule(dataRoot:WaitForChild(name))
+		local moved = serverData and serverData:FindFirstChild(name)
+		return DataLoader.loadModule(moved or dataRoot:WaitForChild(name))
 	end
 	local bundle = {
 		climates = pull("Climates"),

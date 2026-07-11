@@ -10,7 +10,7 @@
 
 local CombatEngine = {}
 
-local CombatPhases = require(game:GetService("ReplicatedStorage").ArtOfWar.Data.CombatPhases)
+local CombatPhases = require(game:GetService("ServerScriptService").ArtOfWar.ServerData.CombatPhases)
 
 local function num(v, d)
 	if type(v) == "number" then return v end
