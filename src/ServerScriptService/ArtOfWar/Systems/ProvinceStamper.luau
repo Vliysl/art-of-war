@@ -12,16 +12,36 @@ local EU4_ID_MAP = {}
 for k, v in pairs(SOURCE_EU4_MAP) do
 	EU4_ID_MAP[k] = v
 end
-do
+
+-- World-override source: the baked ServerData/World modules when the file-authoritative boot
+-- is active (Framework/BakedWorld — same getEU4MapOverrides/getTileOverrides/isCollapsed
+-- surface), otherwise the DataStore overlay. Same predicate DataLoader.loadBundle branches
+-- on, so the stamper can never read a different world than the bundle was built from.
+local function worldOverlay()
+	local okBaked, BakedWorld = pcall(function()
+		local framework = script.Parent.Parent:FindFirstChild("Framework")
+		return require(framework and framework:FindFirstChild("BakedWorld"))
+	end)
+	if okBaked and BakedWorld and BakedWorld.isActive() and BakedWorld.isAvailable() then
+		return BakedWorld
+	end
 	local services = game:GetService("ServerStorage"):FindFirstChild("Services")
 	local overlayMod = services and services:FindFirstChild("DataOverlay")
 	if overlayMod then
 		local ok, overlay = pcall(require, overlayMod)
-		if ok and overlay and overlay.getEU4MapOverrides then
-			local overrides = overlay.getEU4MapOverrides()
-			for k, v in pairs(overrides or {}) do
-				EU4_ID_MAP[tonumber(k) or k] = v
-			end
+		if ok then
+			return overlay
+		end
+	end
+	return nil
+end
+
+do
+	local overlay = worldOverlay()
+	if overlay and overlay.getEU4MapOverrides then
+		local overrides = overlay.getEU4MapOverrides()
+		for k, v in pairs(overrides or {}) do
+			EU4_ID_MAP[tonumber(k) or k] = v
 		end
 	end
 end
@@ -31,15 +51,11 @@ end
 -- overlay at stamp time (and at register) since the overlay loads its schema flag at boot.
 local COLLAPSED = false
 local function refreshMode()
-	local services = game:GetService("ServerStorage"):FindFirstChild("Services")
-	local overlayMod = services and services:FindFirstChild("DataOverlay")
-	if overlayMod then
-		local ok, overlay = pcall(require, overlayMod)
-		if ok and overlay and overlay.isCollapsed then
-			local okC, collapsed = pcall(overlay.isCollapsed)
-			if okC then
-				COLLAPSED = collapsed == true
-			end
+	local overlay = worldOverlay()
+	if overlay and overlay.isCollapsed then
+		local okC, collapsed = pcall(overlay.isCollapsed)
+		if okC then
+			COLLAPSED = collapsed == true
 		end
 	end
 end
@@ -122,41 +138,93 @@ local function buildLookups()
 	end
 end
 
+-- Terrain → tile Material (EnableTerrainMaterials aesthetic pass). Coast is intentionally
+-- unmapped ("ignore" per design): coastal tiles keep the legacy default below. Ocean/sea tiles
+-- live outside the Provinces folders and are never touched by this pass at all. Runtime-only
+-- (the place file keeps its saved materials), so flipping the flag false fully reverts the look.
+local TERRAIN_MATERIALS = {
+	farmland = Enum.Material.Carpet,
+	grassland = Enum.Material.Grass,
+	plains = Enum.Material.Grass,
+	steppe = Enum.Material.Grass,
+	savanna = Enum.Material.Ground,
+	drylands = Enum.Material.Ground,
+	forest = Enum.Material.LeafyGrass,
+	hills = Enum.Material.Slate,
+	marsh = Enum.Material.Mud,
+	desert = Enum.Material.Sand,
+	jungle = Enum.Material.LeafyGrass,
+	tundra = Enum.Material.Glacier,
+	mountain = Enum.Material.Rock,
+}
+
+-- Resolve the terrain material for a part id. Only valid in COLLAPSED mode (v3/v4), where the
+-- part id IS the province id; in legacy v2 the ids differ, so the pass keeps the uniform look.
+local function terrainMaterialFor(partId)
+	if not COLLAPSED then
+		return nil
+	end
+	local wc = ctx and ctx.WorldConstants
+	if not (wc and wc.EnableTerrainMaterials) then
+		return nil
+	end
+	local record = ctx.WorldState and ctx.WorldState.getProvince and ctx.WorldState.getProvince(partId)
+	local terrain = record and record.terrain
+	return terrain and TERRAIN_MATERIALS[terrain] or nil
+end
+
+-- Re-application guard token. This must be a scheme-versioned STRING, not a boolean: the old
+-- `true` value got SAVED into place files at some point, which silently skipped this pass on
+-- every boot (tiles stayed whatever the place saved — Plastic). A token that encodes scheme
+-- version + flag state never matches a stale saved value, so the look always self-heals to the
+-- current config; it still deduplicates repeat stamp() calls within a session.
+local function materialsToken()
+	local wc = ctx and ctx.WorldConstants
+	-- v3: hills Glacier → Slate. Bump the version whenever TERRAIN_MATERIALS changes so a
+	-- place that saved the previous scheme's token still repaints on next boot.
+	return (wc and wc.EnableTerrainMaterials) and "v3:terrain" or "v3:legacy"
+end
+
 local function applyTileMaterials()
 	local map = workspace:FindFirstChild("ArtOfWarMap")
-	if map and map:GetAttribute("tileMaterialsApplied") then
+	local token = materialsToken()
+	if map and map:GetAttribute("tileMaterialsApplied") == token then
 		return
 	end
 	local n = 0
-	for _, part in pairs(partLookup) do
-		if part:IsA("BasePart") and part.Material ~= Enum.Material.Concrete then
-			part.Material = Enum.Material.Concrete
+	for pid, part in pairs(partLookup) do
+		if part:IsA("BasePart") then
+			local material = terrainMaterialFor(pid) or Enum.Material.Concrete
+			if part.Material ~= material then
+				part.Material = material
+			end
 		end
 		n += 1
 		if n % YIELD_EVERY == 0 then
 			task.wait()
 		end
 	end
-	for _, part in pairs(leftWrapLookup) do
-		if part:IsA("BasePart") and part.Material ~= Enum.Material.Snow then
-			part.Material = Enum.Material.Snow
-		end
-		n += 1
-		if n % YIELD_EVERY == 0 then
-			task.wait()
+	-- Wrap copies mirror their source tile's terrain material so the seam doesn't pop; tiles
+	-- without a mapped terrain (coast/unknown) keep the legacy wrap default.
+	local function applyWrap(lookup)
+		for name, part in pairs(lookup) do
+			if part:IsA("BasePart") then
+				local pid = tonumber(name:match("prov_(%d+)"))
+				local material = (pid and terrainMaterialFor(pid)) or Enum.Material.Snow
+				if part.Material ~= material then
+					part.Material = material
+				end
+			end
+			n += 1
+			if n % YIELD_EVERY == 0 then
+				task.wait()
+			end
 		end
 	end
-	for _, part in pairs(rightWrapLookup) do
-		if part:IsA("BasePart") and part.Material ~= Enum.Material.Snow then
-			part.Material = Enum.Material.Snow
-		end
-		n += 1
-		if n % YIELD_EVERY == 0 then
-			task.wait()
-		end
-	end
+	applyWrap(leftWrapLookup)
+	applyWrap(rightWrapLookup)
 	if map then
-		map:SetAttribute("tileMaterialsApplied", true)
+		map:SetAttribute("tileMaterialsApplied", token)
 	end
 end
 
@@ -322,13 +390,8 @@ local function stampUnowned()
 end
 
 local function applyTileOwnershipOverlay()
-	local services = game:GetService("ServerStorage"):FindFirstChild("Services")
-	local overlayMod = services and services:FindFirstChild("DataOverlay")
-	if not overlayMod then
-		return 0
-	end
-	local ok, overlay = pcall(require, overlayMod)
-	if not ok or not overlay or not overlay.getTileOverrides then
+	local overlay = worldOverlay()
+	if not overlay or not overlay.getTileOverrides then
 		return 0
 	end
 	local overrides = overlay.getTileOverrides()
@@ -512,13 +575,8 @@ function ProvinceStamper.registerProvincePart(provinceId, eu4Pid)
 end
 
 function ProvinceStamper.refreshEU4Mappings()
-	local services = game:GetService("ServerStorage"):FindFirstChild("Services")
-	local overlayMod = services and services:FindFirstChild("DataOverlay")
-	if not overlayMod then
-		return 0
-	end
-	local ok, overlay = pcall(require, overlayMod)
-	if not ok or not overlay or not overlay.getEU4MapOverrides then
+	local overlay = worldOverlay()
+	if not overlay or not overlay.getEU4MapOverrides then
 		return 0
 	end
 	local overrides = overlay.getEU4MapOverrides()

@@ -40,6 +40,13 @@ WorldConstants.EnableFormables = true -- Phase 4: formable nations (Iberia is th
 WorldConstants.EnableRebellions = false -- Phase 4: rebellions flip provinces
 WorldConstants.EnableNewEditor = false -- Phase 5: reserved. Both editors currently run (legacy=backtick, new=backslash)
 
+-- Map aesthetics: paint each land tile's Material from its province terrain (farmland→Carpet, grass
+-- family→Grass, desert→Sand, …; mapping = TERRAIN_MATERIALS in Systems/ProvinceStamper). Coast tiles
+-- keep the legacy default ("ignore"); ocean/sea tiles live outside the Provinces folders and are never
+-- touched. Materials are applied at RUNTIME only — the place file is never modified — so flipping this
+-- false fully restores the old uniform Concrete/Snow tile look without a code revert.
+WorldConstants.EnableTerrainMaterials = false
+
 -- Feature kill-switches for the combat update (2026-07). Same pattern: each gates one phase's new
 -- behavior; flip false to restore the old behavior without a code revert. A flag stays false until
 -- its phase's code lands on this branch.
@@ -140,7 +147,6 @@ WorldConstants.SecondsPerEconomyUpdate = 3
 WorldConstants.SecondsPerMilitaryUpdate = 1.5
 WorldConstants.SecondsPerDiplomacyUpdate = 6
 
-
 WorldConstants.PriceBandLow = 0.25
 WorldConstants.PriceBandHigh = 1.75
 WorldConstants.PlayerResourceTradeCap = 5
@@ -155,9 +161,7 @@ WorldConstants.CapitalManpowerMultiplier = 1.15
 WorldConstants.CapitalUnrestReduction = 0.10
 WorldConstants.CapitalFortBonus = 1
 
-
 WorldConstants.YearsPerRealSecond = 0.05
-
 
 WorldConstants.LeaderAppointmentCost = 40
 WorldConstants.LeaderDismissalCost = 30
@@ -165,7 +169,6 @@ WorldConstants.LeaderCandidatesPerSlot = 3
 WorldConstants.LeaderTraitMinimum = 2
 WorldConstants.LeaderTraitMaximum = 4
 WorldConstants.LeaderPortraitPoolSize = 100
-
 
 WorldConstants.AdjacencyThreshold = 33 -- scaled for 2048 map (was 300 @ 18665); baked adjacency is primary, this only gates the legacy/synth fallback
 WorldConstants.ArmyRecruitInfraRequirement = 2 -- DEPRECATED: no longer enforced (recruitment unlocked for all owned provinces)
@@ -364,12 +367,9 @@ WorldConstants.ManpowerNationFloor = 5000 -- a nation with any owned+controlled 
 WorldConstants.ManpowerRegenPerDay = 0.003 -- fraction of cap regenerated per in-game day (~11 months to full)
 WorldConstants.AttritionTickInterval = 6
 
-
-
 -- Phase 3 peace conference (gated by EnablePeaceConference): per-demand war-score costs.
 WorldConstants.PeaceTakeProvinceCost = 12 -- base cost to demand one province
 WorldConstants.PeaceCoreMultiplier = 1.5 -- x cost when the province is a CORE of the loser (homeland)
 WorldConstants.PeaceClaimCostDiscount = 0.7 -- x cost when the demander holds a CLAIM on the province
-
 
 return WorldConstants
