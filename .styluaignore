@@ -1,0 +1,3 @@
+# Generated baked world modules (tools/export-world.luau output) — multi-MB, deterministic
+# formatting is owned by the exporter, not stylua.
+src/ServerScriptService/ArtOfWar/ServerData/World/

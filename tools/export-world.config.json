@@ -1,0 +1,4 @@
+{
+	"_note": "universeId = the universe hosting the authoritative world DataStore. Run `lune run tools/export-world -- --probe` to identify it (schema v4, ~5713 provinces), then set it here.",
+	"universeId": 0
+}

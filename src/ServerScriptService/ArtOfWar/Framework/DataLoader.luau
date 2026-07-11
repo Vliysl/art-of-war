@@ -3,31 +3,61 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local DataLoader = {}
 
 local function str(v: any): string
-	if v == nil then return "nil" end
+	if v == nil then
+		return "nil"
+	end
 	return tostring(v)
 end
 
 local requiredProvinceFields = {
-	"id", "name", "areaId", "regionId", "superRegionId",
-	"terrain", "climate", "baseTax", "baseProduction", "baseManpower",
-	"culture", "religion", "tradeGood", "ownerTag", "controllerTag",
+	"id",
+	"name",
+	"areaId",
+	"regionId",
+	"superRegionId",
+	"terrain",
+	"climate",
+	"baseTax",
+	"baseProduction",
+	"baseManpower",
+	"culture",
+	"religion",
+	"tradeGood",
+	"ownerTag",
+	"controllerTag",
 }
 
 local numericProvinceFields = {
-	"baseTax", "baseProduction", "baseManpower",
-	"devTier", "infraTier", "fortTier", "population",
-	"unrest", "autonomy", "centerOfTrade",
+	"baseTax",
+	"baseProduction",
+	"baseManpower",
+	"devTier",
+	"infraTier",
+	"fortTier",
+	"population",
+	"unrest",
+	"autonomy",
+	"centerOfTrade",
 }
 
 local requiredCountryFields = {
-	"tag", "displayName", "capitalProvinceId",
-	"primaryCulture", "stateReligion", "governmentForm", "ideology",
+	"tag",
+	"displayName",
+	"capitalProvinceId",
+	"primaryCulture",
+	"stateReligion",
+	"governmentForm",
+	"ideology",
 	"color",
 }
 
 local numericCountryFields = {
-	"capitalProvinceId", "stability", "legitimacy",
-	"treasury", "manpower", "politicalPower",
+	"capitalProvinceId",
+	"stability",
+	"legitimacy",
+	"treasury",
+	"manpower",
+	"politicalPower",
 }
 
 local function keysAsSet(t)
@@ -58,15 +88,19 @@ local function ensureNumeric(record, fields, label, key, errors)
 	for _, fieldName in fields do
 		local value = record[fieldName]
 		if value ~= nil and type(value) ~= "number" then
-			table.insert(errors, string.format("%s '%s' field '%s' must be number, got %s",
-				label, str(key), fieldName, typeof(value)))
+			table.insert(
+				errors,
+				string.format("%s '%s' field '%s' must be number, got %s", label, str(key), fieldName, typeof(value))
+			)
 		end
 	end
 end
 
 function DataLoader.loadModule(moduleScript)
-	assert(typeof(moduleScript) == "Instance" and moduleScript:IsA("ModuleScript"),
-		"DataLoader.loadModule: expected ModuleScript")
+	assert(
+		typeof(moduleScript) == "Instance" and moduleScript:IsA("ModuleScript"),
+		"DataLoader.loadModule: expected ModuleScript"
+	)
 	local ok, result = pcall(require, moduleScript)
 	if not ok then
 		error(string.format("DataLoader: failed to require '%s': %s", moduleScript:GetFullName(), str(result)))
@@ -139,14 +173,33 @@ function DataLoader.loadBundle()
 		navalMissions = pull("NavalMissions"),
 		technologies = pull("Technologies"),
 	}
-	local overlayModule = game:GetService("ServerStorage"):FindFirstChild("Services")
-	overlayModule = overlayModule and overlayModule:FindFirstChild("DataOverlay")
-	if overlayModule then
-		local ok, DataOverlay = pcall(require, overlayModule)
-		if ok and DataOverlay and DataOverlay.applyTo then
-			local applyOk, err = pcall(DataOverlay.applyTo, bundle)
-			if not applyOk then
-				warn("[DataLoader] DataOverlay.applyTo failed: " .. tostring(err))
+	-- Baked mode (UseBakedWorldData): the committed ServerData/World modules are authoritative
+	-- and the DataStore overlay is skipped entirely. Falls back to DataStore when the baked
+	-- files are missing/unreadable so a bad export can't brick the boot.
+	local usedBaked = false
+	local okBaked, BakedWorld = pcall(require, script.Parent.BakedWorld)
+	if okBaked and BakedWorld and BakedWorld.isActive() then
+		if BakedWorld.isAvailable() then
+			local applyOk, err = pcall(BakedWorld.applyTo, bundle)
+			if applyOk then
+				usedBaked = true
+			else
+				warn("[DataLoader] BakedWorld.applyTo failed, falling back to DataStore: " .. tostring(err))
+			end
+		else
+			warn("[DataLoader] UseBakedWorldData is on but baked world is unavailable — falling back to DataStore")
+		end
+	end
+	if not usedBaked then
+		local overlayModule = game:GetService("ServerStorage"):FindFirstChild("Services")
+		overlayModule = overlayModule and overlayModule:FindFirstChild("DataOverlay")
+		if overlayModule then
+			local ok, DataOverlay = pcall(require, overlayModule)
+			if ok and DataOverlay and DataOverlay.applyTo then
+				local applyOk, err = pcall(DataOverlay.applyTo, bundle)
+				if not applyOk then
+					warn("[DataLoader] DataOverlay.applyTo failed: " .. tostring(err))
+				end
 			end
 		end
 	end
@@ -162,7 +215,10 @@ function DataLoader.validateIndividual(bundle)
 			ensureSchema(record, requiredProvinceFields, "Province", key, errors)
 			ensureNumeric(record, numericProvinceFields, "Province", key, errors)
 			if record.id ~= key then
-				table.insert(errors, string.format("Province keyed at %s has id=%s (mismatch)", str(key), str(record.id)))
+				table.insert(
+					errors,
+					string.format("Province keyed at %s has id=%s (mismatch)", str(key), str(record.id))
+				)
 			end
 		end
 	end
@@ -173,7 +229,10 @@ function DataLoader.validateIndividual(bundle)
 			ensureSchema(record, requiredCountryFields, "Country", key, errors)
 			ensureNumeric(record, numericCountryFields, "Country", key, errors)
 			if record.tag ~= key then
-				table.insert(errors, string.format("Country keyed at '%s' has tag='%s' (mismatch)", str(key), str(record.tag)))
+				table.insert(
+					errors,
+					string.format("Country keyed at '%s' has tag='%s' (mismatch)", str(key), str(record.tag))
+				)
 			end
 		end
 	end
@@ -199,7 +258,10 @@ function DataLoader.validateCrossReferences(bundle)
 
 	for cultureId, culture in bundle.cultures do
 		if not cultureGroupIds[culture.groupId] then
-			table.insert(errors, string.format("Culture '%s' references unknown group '%s'", cultureId, str(culture.groupId)))
+			table.insert(
+				errors,
+				string.format("Culture '%s' references unknown group '%s'", cultureId, str(culture.groupId))
+			)
 		end
 	end
 
@@ -211,65 +273,135 @@ function DataLoader.validateCrossReferences(bundle)
 
 	for regionId, region in bundle.regions do
 		if not superRegionIds[region.superRegionId] then
-			table.insert(errors, string.format("Region '%s' references unknown superRegion '%s'", regionId, str(region.superRegionId)))
+			table.insert(
+				errors,
+				string.format("Region '%s' references unknown superRegion '%s'", regionId, str(region.superRegionId))
+			)
 		end
 	end
 
 	local areaProvinceCount = {}
-	for areaId in areaIds do areaProvinceCount[areaId] = 0 end
+	for areaId in areaIds do
+		areaProvinceCount[areaId] = 0
+	end
 
 	for provinceId, province in bundle.provinces do
 		if not areaIds[province.areaId] then
-			table.insert(errors, string.format("Province %s references unknown area '%s'", str(provinceId), str(province.areaId)))
+			table.insert(
+				errors,
+				string.format("Province %s references unknown area '%s'", str(provinceId), str(province.areaId))
+			)
 		else
 			areaProvinceCount[province.areaId] += 1
 			local area = bundle.areas[province.areaId]
 			if area.regionId ~= province.regionId then
-				table.insert(errors, string.format("Province %s regionId '%s' disagrees with area '%s' regionId '%s'",
-					str(provinceId), str(province.regionId), province.areaId, area.regionId))
+				table.insert(
+					errors,
+					string.format(
+						"Province %s regionId '%s' disagrees with area '%s' regionId '%s'",
+						str(provinceId),
+						str(province.regionId),
+						province.areaId,
+						area.regionId
+					)
+				)
 			end
 		end
 
 		if not regionIds[province.regionId] then
-			table.insert(errors, string.format("Province %s references unknown region '%s'", str(provinceId), str(province.regionId)))
+			table.insert(
+				errors,
+				string.format("Province %s references unknown region '%s'", str(provinceId), str(province.regionId))
+			)
 		else
 			local region = bundle.regions[province.regionId]
 			if region.superRegionId ~= province.superRegionId then
-				table.insert(errors, string.format("Province %s superRegionId '%s' disagrees with region '%s' superRegionId '%s'",
-					str(provinceId), str(province.superRegionId), province.regionId, region.superRegionId))
+				table.insert(
+					errors,
+					string.format(
+						"Province %s superRegionId '%s' disagrees with region '%s' superRegionId '%s'",
+						str(provinceId),
+						str(province.superRegionId),
+						province.regionId,
+						region.superRegionId
+					)
+				)
 			end
 		end
 
 		if not superRegionIds[province.superRegionId] then
-			table.insert(errors, string.format("Province %s references unknown superRegion '%s'", str(provinceId), str(province.superRegionId)))
+			table.insert(
+				errors,
+				string.format(
+					"Province %s references unknown superRegion '%s'",
+					str(provinceId),
+					str(province.superRegionId)
+				)
+			)
 		end
 
 		if not terrainIds[province.terrain] then
-			table.insert(errors, string.format("Province %s references unknown terrain '%s'", str(provinceId), str(province.terrain)))
+			table.insert(
+				errors,
+				string.format("Province %s references unknown terrain '%s'", str(provinceId), str(province.terrain))
+			)
 		end
 		if not climateIds[province.climate] then
-			table.insert(errors, string.format("Province %s references unknown climate '%s'", str(provinceId), str(province.climate)))
+			table.insert(
+				errors,
+				string.format("Province %s references unknown climate '%s'", str(provinceId), str(province.climate))
+			)
 		end
 		if not cultureIds[province.culture] then
-			table.insert(errors, string.format("Province %s references unknown culture '%s'", str(provinceId), str(province.culture)))
+			table.insert(
+				errors,
+				string.format("Province %s references unknown culture '%s'", str(provinceId), str(province.culture))
+			)
 		end
 		if not religionIds[province.religion] then
-			table.insert(errors, string.format("Province %s references unknown religion '%s'", str(provinceId), str(province.religion)))
+			table.insert(
+				errors,
+				string.format("Province %s references unknown religion '%s'", str(provinceId), str(province.religion))
+			)
 		end
 		if not tradeGoodIds[province.tradeGood] then
-			table.insert(errors, string.format("Province %s references unknown tradeGood '%s'", str(provinceId), str(province.tradeGood)))
+			table.insert(
+				errors,
+				string.format("Province %s references unknown tradeGood '%s'", str(provinceId), str(province.tradeGood))
+			)
 		end
 
 		if province.ownerTag ~= "NONE" and not countryTags[province.ownerTag] then
-			table.insert(errors, string.format("Province %s owner '%s' is not a registered country", str(provinceId), str(province.ownerTag)))
+			table.insert(
+				errors,
+				string.format(
+					"Province %s owner '%s' is not a registered country",
+					str(provinceId),
+					str(province.ownerTag)
+				)
+			)
 		end
 		if province.controllerTag ~= "NONE" and not countryTags[province.controllerTag] then
-			table.insert(errors, string.format("Province %s controller '%s' is not a registered country", str(provinceId), str(province.controllerTag)))
+			table.insert(
+				errors,
+				string.format(
+					"Province %s controller '%s' is not a registered country",
+					str(provinceId),
+					str(province.controllerTag)
+				)
+			)
 		end
 		if type(province.cores) == "table" then
 			for _, coreTag in province.cores do
 				if not countryTags[coreTag] then
-					table.insert(errors, string.format("Province %s core '%s' is not a registered country", str(provinceId), str(coreTag)))
+					table.insert(
+						errors,
+						string.format(
+							"Province %s core '%s' is not a registered country",
+							str(provinceId),
+							str(coreTag)
+						)
+					)
 				end
 			end
 		end
@@ -284,20 +416,44 @@ function DataLoader.validateCrossReferences(bundle)
 	if bundle.manufactories then
 		for manufactoryId, manufactory in bundle.manufactories do
 			if manufactory.output and not tradeGoodIds[manufactory.output] then
-				table.insert(errors, string.format("Manufactory '%s' output '%s' is not a registered trade good", manufactoryId, str(manufactory.output)))
+				table.insert(
+					errors,
+					string.format(
+						"Manufactory '%s' output '%s' is not a registered trade good",
+						manufactoryId,
+						str(manufactory.output)
+					)
+				)
 			end
 			if type(manufactory.inputs) == "table" then
 				for inputId, amount in manufactory.inputs do
 					if not tradeGoodIds[inputId] then
-						table.insert(errors, string.format("Manufactory '%s' input '%s' is not a registered trade good", manufactoryId, str(inputId)))
+						table.insert(
+							errors,
+							string.format(
+								"Manufactory '%s' input '%s' is not a registered trade good",
+								manufactoryId,
+								str(inputId)
+							)
+						)
 					end
 					if type(amount) ~= "number" or amount <= 0 then
-						table.insert(errors, string.format("Manufactory '%s' input '%s' must have positive numeric amount", manufactoryId, str(inputId)))
+						table.insert(
+							errors,
+							string.format(
+								"Manufactory '%s' input '%s' must have positive numeric amount",
+								manufactoryId,
+								str(inputId)
+							)
+						)
 					end
 				end
 			end
 			if type(manufactory.outputAmount) ~= "number" or manufactory.outputAmount <= 0 then
-				table.insert(errors, string.format("Manufactory '%s' outputAmount must be positive number", manufactoryId))
+				table.insert(
+					errors,
+					string.format("Manufactory '%s' outputAmount must be positive number", manufactoryId)
+				)
 			end
 		end
 	end
@@ -322,24 +478,52 @@ function DataLoader.validateCrossReferences(bundle)
 			elseif bundle.ideologies then
 				for ideologyId, value in faction.ideologyAffinity do
 					if not bundle.ideologies[ideologyId] then
-						table.insert(errors, string.format("Faction '%s' ideologyAffinity references unknown ideology '%s'", factionId, str(ideologyId)))
+						table.insert(
+							errors,
+							string.format(
+								"Faction '%s' ideologyAffinity references unknown ideology '%s'",
+								factionId,
+								str(ideologyId)
+							)
+						)
 					end
 					if type(value) ~= "number" then
-						table.insert(errors, string.format("Faction '%s' ideologyAffinity[%s] must be number", factionId, str(ideologyId)))
+						table.insert(
+							errors,
+							string.format(
+								"Faction '%s' ideologyAffinity[%s] must be number",
+								factionId,
+								str(ideologyId)
+							)
+						)
 					end
 				end
 			end
 			if faction.governmentAffinity then
 				for govId in faction.governmentAffinity do
 					if bundle.governmentTypes and not bundle.governmentTypes[govId] then
-						table.insert(errors, string.format("Faction '%s' governmentAffinity references unknown government '%s'", factionId, str(govId)))
+						table.insert(
+							errors,
+							string.format(
+								"Faction '%s' governmentAffinity references unknown government '%s'",
+								factionId,
+								str(govId)
+							)
+						)
 					end
 				end
 			end
 			if faction.policyReactions then
 				for policyId in faction.policyReactions do
 					if bundle.policies and not bundle.policies[policyId] then
-						table.insert(errors, string.format("Faction '%s' policyReactions references unknown policy '%s'", factionId, str(policyId)))
+						table.insert(
+							errors,
+							string.format(
+								"Faction '%s' policyReactions references unknown policy '%s'",
+								factionId,
+								str(policyId)
+							)
+						)
 					end
 				end
 			end
@@ -364,7 +548,10 @@ function DataLoader.validateCrossReferences(bundle)
 			else
 				for domain, value in trait.modifiers do
 					if type(value) ~= "number" then
-						table.insert(errors, string.format("LeaderTrait '%s' modifier '%s' must be number", traitId, str(domain)))
+						table.insert(
+							errors,
+							string.format("LeaderTrait '%s' modifier '%s' must be number", traitId, str(domain))
+						)
 					end
 				end
 			end
@@ -376,7 +563,10 @@ function DataLoader.validateCrossReferences(bundle)
 			else
 				for _, slotId in trait.preferredSlots do
 					if not bundle.leaderSlots[slotId] then
-						table.insert(errors, string.format("LeaderTrait '%s' references unknown slot '%s'", traitId, str(slotId)))
+						table.insert(
+							errors,
+							string.format("LeaderTrait '%s' references unknown slot '%s'", traitId, str(slotId))
+						)
 					end
 				end
 			end
@@ -400,7 +590,10 @@ function DataLoader.validateCrossReferences(bundle)
 			else
 				for domain, value in policy.modifiers do
 					if type(value) ~= "number" then
-						table.insert(errors, string.format("Policy '%s' modifier '%s' must be number", policyId, str(domain)))
+						table.insert(
+							errors,
+							string.format("Policy '%s' modifier '%s' must be number", policyId, str(domain))
+						)
 					end
 				end
 			end
@@ -414,7 +607,10 @@ function DataLoader.validateCrossReferences(bundle)
 			else
 				for _, ideologyId in gov.allowedIdeologies do
 					if not bundle.ideologies[ideologyId] then
-						table.insert(errors, string.format("GovernmentType '%s' allows unknown ideology '%s'", govId, str(ideologyId)))
+						table.insert(
+							errors,
+							string.format("GovernmentType '%s' allows unknown ideology '%s'", govId, str(ideologyId))
+						)
 					end
 				end
 			end
@@ -424,10 +620,20 @@ function DataLoader.validateCrossReferences(bundle)
 			if gov.transitions then
 				for targetId, rule in gov.transitions do
 					if not bundle.governmentTypes[targetId] then
-						table.insert(errors, string.format("GovernmentType '%s' transition target '%s' unknown", govId, str(targetId)))
+						table.insert(
+							errors,
+							string.format("GovernmentType '%s' transition target '%s' unknown", govId, str(targetId))
+						)
 					end
 					if type(rule.ppCost) ~= "number" or rule.ppCost <= 0 then
-						table.insert(errors, string.format("GovernmentType '%s' transition to '%s' has invalid ppCost", govId, str(targetId)))
+						table.insert(
+							errors,
+							string.format(
+								"GovernmentType '%s' transition to '%s' has invalid ppCost",
+								govId,
+								str(targetId)
+							)
+						)
 					end
 				end
 			end
@@ -444,10 +650,20 @@ function DataLoader.validateCrossReferences(bundle)
 			if unit.terrainMods then
 				for terrainId, value in unit.terrainMods do
 					if not terrainIds[terrainId] then
-						table.insert(errors, string.format("UnitType '%s' terrainMod references unknown terrain '%s'", unitId, str(terrainId)))
+						table.insert(
+							errors,
+							string.format(
+								"UnitType '%s' terrainMod references unknown terrain '%s'",
+								unitId,
+								str(terrainId)
+							)
+						)
 					end
 					if type(value) ~= "number" then
-						table.insert(errors, string.format("UnitType '%s' terrainMod[%s] must be number", unitId, str(terrainId)))
+						table.insert(
+							errors,
+							string.format("UnitType '%s' terrainMod[%s] must be number", unitId, str(terrainId))
+						)
 					end
 				end
 			end
@@ -461,12 +677,18 @@ function DataLoader.validateCrossReferences(bundle)
 			else
 				for domain, value in doctrine.modifiers do
 					if type(value) ~= "number" then
-						table.insert(errors, string.format("Doctrine '%s' modifier '%s' must be number", doctrineId, str(domain)))
+						table.insert(
+							errors,
+							string.format("Doctrine '%s' modifier '%s' must be number", doctrineId, str(domain))
+						)
 					end
 				end
 			end
 			if bundle.doctrineSlots and doctrine.slot and not bundle.doctrineSlots[doctrine.slot] then
-				table.insert(errors, string.format("Doctrine '%s' references unknown slot '%s'", doctrineId, str(doctrine.slot)))
+				table.insert(
+					errors,
+					string.format("Doctrine '%s' references unknown slot '%s'", doctrineId, str(doctrine.slot))
+				)
 			end
 		end
 	end
@@ -484,49 +706,90 @@ function DataLoader.validateCrossReferences(bundle)
 
 	for tag, country in bundle.countries do
 		if country.economyPolicy and bundle.economyPolicies and not bundle.economyPolicies[country.economyPolicy] then
-			table.insert(errors, string.format("Country '%s' economyPolicy '%s' unknown", tag, str(country.economyPolicy)))
+			table.insert(
+				errors,
+				string.format("Country '%s' economyPolicy '%s' unknown", tag, str(country.economyPolicy))
+			)
 		end
 		if bundle.governmentTypes then
 			local gov = bundle.governmentTypes[country.governmentForm]
 			if not gov then
-				table.insert(errors, string.format("Country '%s' governmentForm '%s' is not a registered government type", tag, str(country.governmentForm)))
+				table.insert(
+					errors,
+					string.format(
+						"Country '%s' governmentForm '%s' is not a registered government type",
+						tag,
+						str(country.governmentForm)
+					)
+				)
 			elseif gov.allowedIdeologies then
 				local allowed = false
 				for _, allowedId in gov.allowedIdeologies do
-					if allowedId == country.ideology then allowed = true break end
+					if allowedId == country.ideology then
+						allowed = true
+						break
+					end
 				end
 				if not allowed then
-					table.insert(errors, string.format("Country '%s' ideology '%s' not allowed by government '%s'", tag, str(country.ideology), str(country.governmentForm)))
+					table.insert(
+						errors,
+						string.format(
+							"Country '%s' ideology '%s' not allowed by government '%s'",
+							tag,
+							str(country.ideology),
+							str(country.governmentForm)
+						)
+					)
 				end
 			end
 		end
 		if not provinceIds[country.capitalProvinceId] then
-			table.insert(errors, string.format("Country '%s' capitalProvinceId %s does not exist",
-				tag, str(country.capitalProvinceId)))
+			table.insert(
+				errors,
+				string.format("Country '%s' capitalProvinceId %s does not exist", tag, str(country.capitalProvinceId))
+			)
 		else
 			local capital = bundle.provinces[country.capitalProvinceId]
 			if capital.ownerTag ~= tag then
-				table.insert(errors, string.format("Country '%s' capital %s is owned by '%s'",
-					tag, str(country.capitalProvinceId), str(capital.ownerTag)))
+				table.insert(
+					errors,
+					string.format(
+						"Country '%s' capital %s is owned by '%s'",
+						tag,
+						str(country.capitalProvinceId),
+						str(capital.ownerTag)
+					)
+				)
 			end
 			if not capital.isCity then
-				table.insert(warnings, string.format("Country '%s' capital %s has isCity=false",
-					tag, str(country.capitalProvinceId)))
+				table.insert(
+					warnings,
+					string.format("Country '%s' capital %s has isCity=false", tag, str(country.capitalProvinceId))
+				)
 			end
 		end
 
 		if not cultureIds[country.primaryCulture] then
-			table.insert(errors, string.format("Country '%s' primaryCulture '%s' unknown", tag, str(country.primaryCulture)))
+			table.insert(
+				errors,
+				string.format("Country '%s' primaryCulture '%s' unknown", tag, str(country.primaryCulture))
+			)
 		end
 		if type(country.acceptedCultures) == "table" then
 			for _, cultureId in country.acceptedCultures do
 				if not cultureIds[cultureId] then
-					table.insert(errors, string.format("Country '%s' acceptedCulture '%s' unknown", tag, str(cultureId)))
+					table.insert(
+						errors,
+						string.format("Country '%s' acceptedCulture '%s' unknown", tag, str(cultureId))
+					)
 				end
 			end
 		end
 		if not religionIds[country.stateReligion] then
-			table.insert(errors, string.format("Country '%s' stateReligion '%s' unknown", tag, str(country.stateReligion)))
+			table.insert(
+				errors,
+				string.format("Country '%s' stateReligion '%s' unknown", tag, str(country.stateReligion))
+			)
 		end
 		if not ideologyIds[country.ideology] then
 			table.insert(errors, string.format("Country '%s' ideology '%s' unknown", tag, str(country.ideology)))
@@ -540,7 +803,10 @@ function DataLoader.validateCrossReferences(bundle)
 				elseif rivalTag == tag then
 					table.insert(warnings, string.format("Country '%s' lists itself as historicalRival", tag))
 				elseif rivalSet[rivalTag] then
-					table.insert(warnings, string.format("Country '%s' has duplicate historicalRival '%s'", tag, rivalTag))
+					table.insert(
+						warnings,
+						string.format("Country '%s' has duplicate historicalRival '%s'", tag, rivalTag)
+					)
 				else
 					rivalSet[rivalTag] = true
 				end
@@ -550,13 +816,22 @@ function DataLoader.validateCrossReferences(bundle)
 			local friendSet = {}
 			for _, friendTag in country.historicalFriends do
 				if not countryTags[friendTag] then
-					table.insert(errors, string.format("Country '%s' historicalFriend '%s' unknown", tag, str(friendTag)))
+					table.insert(
+						errors,
+						string.format("Country '%s' historicalFriend '%s' unknown", tag, str(friendTag))
+					)
 				elseif friendTag == tag then
 					table.insert(warnings, string.format("Country '%s' lists itself as historicalFriend", tag))
 				elseif friendSet[friendTag] then
-					table.insert(warnings, string.format("Country '%s' has duplicate historicalFriend '%s'", tag, friendTag))
+					table.insert(
+						warnings,
+						string.format("Country '%s' has duplicate historicalFriend '%s'", tag, friendTag)
+					)
 				elseif rivalSet[friendTag] then
-					table.insert(errors, string.format("Country '%s' lists '%s' as both rival and friend", tag, friendTag))
+					table.insert(
+						errors,
+						string.format("Country '%s' lists '%s' as both rival and friend", tag, friendTag)
+					)
 				else
 					friendSet[friendTag] = true
 				end
@@ -572,22 +847,32 @@ function DataLoader.validateCrossReferences(bundle)
 end
 
 local function firstKey(t)
-	if type(t) ~= "table" then return nil end
+	if type(t) ~= "table" then
+		return nil
+	end
 	local keys = {}
-	for k in pairs(t) do table.insert(keys, k) end
+	for k in pairs(t) do
+		table.insert(keys, k)
+	end
 	table.sort(keys)
 	return keys[1]
 end
 
 local function pickKey(t, preferred)
-	if type(t) ~= "table" then return nil end
-	if preferred and t[preferred] then return preferred end
+	if type(t) ~= "table" then
+		return nil
+	end
+	if preferred and t[preferred] then
+		return preferred
+	end
 	return firstKey(t)
 end
 
 function DataLoader.healBundle(bundle)
 	local heals = {}
-	if type(bundle) ~= "table" then return heals end
+	if type(bundle) ~= "table" then
+		return heals
+	end
 
 	local areas = bundle.areas or {}
 	local regions = bundle.regions or {}
@@ -627,66 +912,142 @@ function DataLoader.healBundle(bundle)
 
 			if not areas[province.areaId] then
 				if fallbackArea then
-					table.insert(heals, string.format("Province %s areaId '%s' invalid → '%s'", pidStr, str(province.areaId), fallbackArea))
+					table.insert(
+						heals,
+						string.format(
+							"Province %s areaId '%s' invalid → '%s'",
+							pidStr,
+							str(province.areaId),
+							fallbackArea
+						)
+					)
 					province.areaId = fallbackArea
 				end
 			end
 			local areaRec = province.areaId and areas[province.areaId]
 			if areaRec and areaRec.regionId and province.regionId ~= areaRec.regionId then
-				table.insert(heals, string.format("Province %s regionId '%s' → '%s' (from area)", pidStr, str(province.regionId), areaRec.regionId))
+				table.insert(
+					heals,
+					string.format(
+						"Province %s regionId '%s' → '%s' (from area)",
+						pidStr,
+						str(province.regionId),
+						areaRec.regionId
+					)
+				)
 				province.regionId = areaRec.regionId
 			elseif not regions[province.regionId] and fallbackRegion then
-				table.insert(heals, string.format("Province %s regionId '%s' invalid → '%s'", pidStr, str(province.regionId), fallbackRegion))
+				table.insert(
+					heals,
+					string.format(
+						"Province %s regionId '%s' invalid → '%s'",
+						pidStr,
+						str(province.regionId),
+						fallbackRegion
+					)
+				)
 				province.regionId = fallbackRegion
 			end
 			local regionRec = province.regionId and regions[province.regionId]
 			if regionRec and regionRec.superRegionId and province.superRegionId ~= regionRec.superRegionId then
-				table.insert(heals, string.format("Province %s superRegionId '%s' → '%s' (from region)", pidStr, str(province.superRegionId), regionRec.superRegionId))
+				table.insert(
+					heals,
+					string.format(
+						"Province %s superRegionId '%s' → '%s' (from region)",
+						pidStr,
+						str(province.superRegionId),
+						regionRec.superRegionId
+					)
+				)
 				province.superRegionId = regionRec.superRegionId
 			elseif not superRegions[province.superRegionId] and fallbackSuperRegion then
-				table.insert(heals, string.format("Province %s superRegionId '%s' invalid → '%s'", pidStr, str(province.superRegionId), fallbackSuperRegion))
+				table.insert(
+					heals,
+					string.format(
+						"Province %s superRegionId '%s' invalid → '%s'",
+						pidStr,
+						str(province.superRegionId),
+						fallbackSuperRegion
+					)
+				)
 				province.superRegionId = fallbackSuperRegion
 			end
 
 			if not terrains[province.terrain] and fallbackTerrain then
-				table.insert(heals, string.format("Province %s terrain '%s' → '%s'", pidStr, str(province.terrain), fallbackTerrain))
+				table.insert(
+					heals,
+					string.format("Province %s terrain '%s' → '%s'", pidStr, str(province.terrain), fallbackTerrain)
+				)
 				province.terrain = fallbackTerrain
 			end
 			if not climates[province.climate] and fallbackClimate then
-				table.insert(heals, string.format("Province %s climate '%s' → '%s'", pidStr, str(province.climate), fallbackClimate))
+				table.insert(
+					heals,
+					string.format("Province %s climate '%s' → '%s'", pidStr, str(province.climate), fallbackClimate)
+				)
 				province.climate = fallbackClimate
 			end
 			if not tradeGoods[province.tradeGood] and fallbackTradeGood then
-				table.insert(heals, string.format("Province %s tradeGood '%s' → '%s'", pidStr, str(province.tradeGood), fallbackTradeGood))
+				table.insert(
+					heals,
+					string.format(
+						"Province %s tradeGood '%s' → '%s'",
+						pidStr,
+						str(province.tradeGood),
+						fallbackTradeGood
+					)
+				)
 				province.tradeGood = fallbackTradeGood
 			end
 
 			if not province.ownerTag or province.ownerTag == "" then
 				province.ownerTag = "NONE"
 			elseif province.ownerTag ~= "NONE" and not countries[province.ownerTag] then
-				table.insert(heals, string.format("Province %s ownerTag '%s' unknown → 'NONE'", pidStr, str(province.ownerTag)))
+				table.insert(
+					heals,
+					string.format("Province %s ownerTag '%s' unknown → 'NONE'", pidStr, str(province.ownerTag))
+				)
 				province.ownerTag = "NONE"
 			end
 			local ownerCountry = countries[province.ownerTag]
 
 			if not cultures[province.culture] then
-				local fallback = (ownerCountry and cultures[ownerCountry.primaryCulture] and ownerCountry.primaryCulture) or fallbackCulture
+				local fallback = (
+					ownerCountry
+					and cultures[ownerCountry.primaryCulture]
+					and ownerCountry.primaryCulture
+				) or fallbackCulture
 				if fallback then
-					table.insert(heals, string.format("Province %s culture '%s' → '%s'", pidStr, str(province.culture), fallback))
+					table.insert(
+						heals,
+						string.format("Province %s culture '%s' → '%s'", pidStr, str(province.culture), fallback)
+					)
 					province.culture = fallback
 				end
 			end
 			if not religions[province.religion] then
-				local fallback = (ownerCountry and religions[ownerCountry.stateReligion] and ownerCountry.stateReligion) or fallbackReligion
+				local fallback = (ownerCountry and religions[ownerCountry.stateReligion] and ownerCountry.stateReligion)
+					or fallbackReligion
 				if fallback then
-					table.insert(heals, string.format("Province %s religion '%s' → '%s'", pidStr, str(province.religion), fallback))
+					table.insert(
+						heals,
+						string.format("Province %s religion '%s' → '%s'", pidStr, str(province.religion), fallback)
+					)
 					province.religion = fallback
 				end
 			end
 
 			if not province.controllerTag or province.controllerTag == "" or not countries[province.controllerTag] then
 				if province.ownerTag and province.ownerTag ~= "NONE" and countries[province.ownerTag] then
-					table.insert(heals, string.format("Province %s controllerTag '%s' → '%s' (from owner)", pidStr, str(province.controllerTag), province.ownerTag))
+					table.insert(
+						heals,
+						string.format(
+							"Province %s controllerTag '%s' → '%s' (from owner)",
+							pidStr,
+							str(province.controllerTag),
+							province.ownerTag
+						)
+					)
 				end
 				province.controllerTag = province.ownerTag
 			end
@@ -696,7 +1057,9 @@ function DataLoader.healBundle(bundle)
 			else
 				local kept = {}
 				for _, coreTag in ipairs(province.cores) do
-					if countries[coreTag] then table.insert(kept, coreTag) end
+					if countries[coreTag] then
+						table.insert(kept, coreTag)
+					end
 				end
 				province.cores = kept
 			end
@@ -707,7 +1070,9 @@ function DataLoader.healBundle(bundle)
 			else
 				local keptDefault = {}
 				for _, coreTag in ipairs(province.defaultCores) do
-					if countries[coreTag] then table.insert(keptDefault, coreTag) end
+					if countries[coreTag] then
+						table.insert(keptDefault, coreTag)
+					end
 				end
 				province.defaultCores = keptDefault
 			end
@@ -719,7 +1084,9 @@ function DataLoader.healBundle(bundle)
 			else
 				local keptReleasable = {}
 				for _, relTag in ipairs(province.releasableCores) do
-					if countries[relTag] then table.insert(keptReleasable, relTag) end
+					if countries[relTag] then
+						table.insert(keptReleasable, relTag)
+					end
 				end
 				province.releasableCores = keptReleasable
 			end
@@ -735,14 +1102,30 @@ function DataLoader.healBundle(bundle)
 			if country.governmentForm and not governmentTypes[country.governmentForm] then
 				local fallback = firstKey(governmentTypes)
 				if fallback then
-					table.insert(heals, string.format("Country '%s' governmentForm '%s' unknown → '%s'", tag, str(country.governmentForm), fallback))
+					table.insert(
+						heals,
+						string.format(
+							"Country '%s' governmentForm '%s' unknown → '%s'",
+							tag,
+							str(country.governmentForm),
+							fallback
+						)
+					)
 					country.governmentForm = fallback
 				end
 			end
 			if country.ideology and not ideologies[country.ideology] then
 				local fallback = firstKey(ideologies)
 				if fallback then
-					table.insert(heals, string.format("Country '%s' ideology '%s' unknown → '%s'", tag, str(country.ideology), fallback))
+					table.insert(
+						heals,
+						string.format(
+							"Country '%s' ideology '%s' unknown → '%s'",
+							tag,
+							str(country.ideology),
+							fallback
+						)
+					)
 					country.ideology = fallback
 				end
 			end
@@ -750,31 +1133,66 @@ function DataLoader.healBundle(bundle)
 			if gov and gov.allowedIdeologies and country.ideology then
 				local allowed = false
 				for _, id in ipairs(gov.allowedIdeologies) do
-					if id == country.ideology then allowed = true break end
+					if id == country.ideology then
+						allowed = true
+						break
+					end
 				end
 				if not allowed then
 					local replacement = gov.allowedIdeologies[1]
 					if replacement then
-						table.insert(heals, string.format("Country '%s' ideology '%s' incompatible with government '%s' → '%s'", tag, str(country.ideology), str(country.governmentForm), str(replacement)))
+						table.insert(
+							heals,
+							string.format(
+								"Country '%s' ideology '%s' incompatible with government '%s' → '%s'",
+								tag,
+								str(country.ideology),
+								str(country.governmentForm),
+								str(replacement)
+							)
+						)
 						country.ideology = replacement
 					end
 				end
 			end
 			if country.economyPolicy and not economyPolicies[country.economyPolicy] then
-				table.insert(heals, string.format("Country '%s' economyPolicy '%s' unknown → cleared", tag, str(country.economyPolicy)))
+				table.insert(
+					heals,
+					string.format(
+						"Country '%s' economyPolicy '%s' unknown → cleared",
+						tag,
+						str(country.economyPolicy)
+					)
+				)
 				country.economyPolicy = nil
 			end
 			if country.primaryCulture and not cultures[country.primaryCulture] then
 				local fallback = fallbackCulture
 				if fallback then
-					table.insert(heals, string.format("Country '%s' primaryCulture '%s' unknown → '%s'", tag, str(country.primaryCulture), fallback))
+					table.insert(
+						heals,
+						string.format(
+							"Country '%s' primaryCulture '%s' unknown → '%s'",
+							tag,
+							str(country.primaryCulture),
+							fallback
+						)
+					)
 					country.primaryCulture = fallback
 				end
 			end
 			if country.stateReligion and not religions[country.stateReligion] then
 				local fallback = fallbackReligion
 				if fallback then
-					table.insert(heals, string.format("Country '%s' stateReligion '%s' unknown → '%s'", tag, str(country.stateReligion), fallback))
+					table.insert(
+						heals,
+						string.format(
+							"Country '%s' stateReligion '%s' unknown → '%s'",
+							tag,
+							str(country.stateReligion),
+							fallback
+						)
+					)
 					country.stateReligion = fallback
 				end
 			end
@@ -788,7 +1206,14 @@ function DataLoader.healBundle(bundle)
 					end
 				end
 				if #dropped > 0 then
-					table.insert(heals, string.format("Country '%s' acceptedCultures dropped invalid entries: %s", tag, table.concat(dropped, ", ")))
+					table.insert(
+						heals,
+						string.format(
+							"Country '%s' acceptedCultures dropped invalid entries: %s",
+							tag,
+							table.concat(dropped, ", ")
+						)
+					)
 					country.acceptedCultures = kept
 				end
 			end
@@ -796,12 +1221,24 @@ function DataLoader.healBundle(bundle)
 			local capId = country.capitalProvinceId
 			local capProvince = capId and bundle.provinces and bundle.provinces[capId]
 			if capProvince and capProvince.ownerTag ~= tag then
-				table.insert(heals, string.format("Country '%s' capital %s ownership %s → %s", tag, tostring(capId), tostring(capProvince.ownerTag), tag))
+				table.insert(
+					heals,
+					string.format(
+						"Country '%s' capital %s ownership %s → %s",
+						tag,
+						tostring(capId),
+						tostring(capProvince.ownerTag),
+						tag
+					)
+				)
 				capProvince.ownerTag = tag
 				capProvince.controllerTag = tag
 				local hasCore = false
 				for _, coreTag in ipairs(capProvince.cores or {}) do
-					if coreTag == tag then hasCore = true; break end
+					if coreTag == tag then
+						hasCore = true
+						break
+					end
 				end
 				if not hasCore then
 					capProvince.cores = capProvince.cores or {}
@@ -816,7 +1253,15 @@ function DataLoader.healBundle(bundle)
 					end
 				end
 				if replacement then
-					table.insert(heals, string.format("Country '%s' capital %s missing → relocated to %s", tag, tostring(capId), tostring(replacement)))
+					table.insert(
+						heals,
+						string.format(
+							"Country '%s' capital %s missing → relocated to %s",
+							tag,
+							tostring(capId),
+							tostring(replacement)
+						)
+					)
 					country.capitalProvinceId = replacement
 				else
 					table.insert(heals, string.format("Country '%s' has no provinces → dropped entirely", tag))
@@ -845,9 +1290,19 @@ end
 
 function DataLoader.auditUsage(bundle)
 	local used = {
-		cultures = {}, cultureGroups = {}, religions = {}, tradeGoods = {},
-		terrains = {}, climates = {}, areas = {}, regions = {}, superRegions = {},
-		ideologies = {}, manufactories = {}, economyPolicies = {}, governmentTypes = {},
+		cultures = {},
+		cultureGroups = {},
+		religions = {},
+		tradeGoods = {},
+		terrains = {},
+		climates = {},
+		areas = {},
+		regions = {},
+		superRegions = {},
+		ideologies = {},
+		manufactories = {},
+		economyPolicies = {},
+		governmentTypes = {},
 		policies = {},
 	}
 	local function mark(set, value)

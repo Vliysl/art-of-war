@@ -892,7 +892,9 @@ function DataOverlay.pushEditToLive()
 				writes = 0,
 				failures = 1,
 				kinds = {},
-				errors = { { kind = kind, error = "editor aggregate '" .. kind .. "' could not be read; retry the push" } },
+				errors = {
+					{ kind = kind, error = "editor aggregate '" .. kind .. "' could not be read; retry the push" },
+				},
 			}
 		end
 		if next(editData) == nil then
@@ -907,7 +909,11 @@ function DataOverlay.pushEditToLive()
 			writes = 0,
 			failures = 1,
 			kinds = {},
-			errors = { { error = "refusing to push: the editor world is empty (provinces/countries) — this would blank the live map. Save something first." } },
+			errors = {
+				{
+					error = "refusing to push: the editor world is empty (provinces/countries) — this would blank the live map. Save something first.",
+				},
+			},
 		}
 	end
 	local result = { ok = true, writes = 0, failures = 0, kinds = {}, errors = {} }
@@ -934,7 +940,13 @@ end
 function DataOverlay.writeFullSnapshot(worldByKind)
 	ensureLoaded()
 	if type(worldByKind) ~= "table" then
-		return { ok = false, writes = 0, failures = 1, kinds = {}, errors = { { error = "worldByKind table required" } } }
+		return {
+			ok = false,
+			writes = 0,
+			failures = 1,
+			kinds = {},
+			errors = { { error = "worldByKind table required" } },
+		}
 	end
 	-- Never blank the editable map: provinces/countries must be non-empty to snapshot.
 	local prov = worldByKind[KIND_PROVINCES]
@@ -945,7 +957,11 @@ function DataOverlay.writeFullSnapshot(worldByKind)
 			writes = 0,
 			failures = 1,
 			kinds = {},
-			errors = { { error = "refusing snapshot: provinces/countries are empty (would blank the map) -- edit something first" } },
+			errors = {
+				{
+					error = "refusing snapshot: provinces/countries are empty (would blank the map) -- edit something first",
+				},
+			},
 		}
 	end
 	-- All-or-nothing read-failed guard: if ANY kind's aggregate failed to LOAD at boot, cache.loadStatus marks it
@@ -1073,7 +1089,10 @@ local configIndexMemo = nil
 local function validateConfigName(name)
 	assert(type(name) == "string" and name ~= "", "config name required")
 	assert(#name <= CONFIG_NAME_MAX, "config name too long (max " .. CONFIG_NAME_MAX .. " chars)")
-	assert(name:match("^[%w _%-]+$") ~= nil, "config name has invalid characters (allowed: letters, digits, space, _ , -)")
+	assert(
+		name:match("^[%w _%-]+$") ~= nil,
+		"config name has invalid characters (allowed: letters, digits, space, _ , -)"
+	)
 end
 
 local function configKey(name, kind)
@@ -1632,10 +1651,19 @@ function DataOverlay.applyTo(bundle)
 					bundle.provinces[nid] = nil
 				end
 			else
+				-- NOTE: these v4 province defaults (and rawMerge above) are MIRRORED in
+				-- Framework/WorldNormalize.luau for the baked-world export/load pipeline.
+				-- If the defaulting rules change here, change WorldNormalize to match.
 				local incoming = rec
 				if type(rec) == "table" then
 					local owner = rec.ownerTag
-					if rec.controllerTag == nil or rec.cores == nil or rec.claims == nil or rec.defaultCores == nil or rec.releasableCores == nil then
+					if
+						rec.controllerTag == nil
+						or rec.cores == nil
+						or rec.claims == nil
+						or rec.defaultCores == nil
+						or rec.releasableCores == nil
+					then
 						incoming = table.clone(rec)
 						if incoming.controllerTag == nil then
 							incoming.controllerTag = owner
@@ -2140,7 +2168,12 @@ function DataOverlay.verifyV4()
 	local srcProvinces, srcCountries, readOk = readCurrentProvincesCountries()
 	if not readOk then
 		-- A throttled @v3 read must NOT be treated as "source empty" — that would delete good @v4. Abort.
-		return { ok = false, error = "source (@v3) unreadable — DataStore throttled; retry", retryable = true, removedPartial = false }
+		return {
+			ok = false,
+			error = "source (@v3) unreadable — DataStore throttled; retry",
+			retryable = true,
+			removedPartial = false,
+		}
 	end
 	local srcP, srcC = countOf(srcProvinces), countOf(srcCountries)
 

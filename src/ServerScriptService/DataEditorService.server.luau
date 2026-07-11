@@ -23,7 +23,8 @@ end
 local WorldState =
 	tryRequire(game.ServerScriptService:WaitForChild("ArtOfWar"):WaitForChild("Framework"):WaitForChild("WorldState"))
 local EventBus = tryRequire(game.ServerScriptService.ArtOfWar.Framework:FindFirstChild("EventBus"))
-local Channels = tryRequire(game.ServerScriptService:WaitForChild("ArtOfWar"):WaitForChild("Events"):WaitForChild("Channels"))
+local Channels =
+	tryRequire(game.ServerScriptService:WaitForChild("ArtOfWar"):WaitForChild("Events"):WaitForChild("Channels"))
 
 local function syncProvinceToWorld(id)
 	if not WorldState then
@@ -1035,6 +1036,29 @@ local function readLogs(limit)
 	return out
 end
 
+-- Baked-mode boots (Framework/BakedWorld) skip the boot-time Editor.load() near the bottom of
+-- this file — it would re-read all 8 world DataStore aggregates the UseBakedWorldData flag
+-- exists to avoid. The editor world loads lazily here instead, on the first editor command
+-- (admins pay the load once, on first use; the command lock serializes it in staging mode).
+-- Non-baked boots still call this once at boot, preserving today's behavior exactly.
+local editorLoaded = false
+local function ensureEditorLoaded()
+	if editorLoaded then
+		return
+	end
+	Editor.load()
+	editorLoaded = true
+	local st = Editor.getState()
+	local countries, provinces = 0, 0
+	for _ in pairs(st.countries) do
+		countries += 1
+	end
+	for _ in pairs(st.provinces) do
+		provinces += 1
+	end
+	print(string.format("[DataEditorService] ready — %d countries, %d provinces loaded", countries, provinces))
+end
+
 local function handleEditorCommand(player, command, payload)
 	if type(command) ~= "string" then
 		return { ok = false, error = "invalid command" }
@@ -1075,6 +1099,8 @@ local function handleEditorCommand(player, command, payload)
 	if not allowed then
 		return { ok = false, error = rateErr }
 	end
+
+	ensureEditorLoaded()
 
 	if STAGING_ENABLED then
 		pcall(Editor.setActiveUser, player.UserId)
@@ -2071,7 +2097,25 @@ game:BindToClose(function()
 	flushLogs()
 end)
 
-Editor.load()
+-- Boot-time editor load. Skipped in baked mode (world data comes from the committed
+-- ServerData/World files, so reading the aggregates here would defeat the flag) — the world
+-- then loads lazily via ensureEditorLoaded on the first editor command.
+do
+	local bakedBoot = false
+	local okBaked, BakedWorld = pcall(function()
+		local artOfWar = script.Parent:FindFirstChild("ArtOfWar")
+		local framework = artOfWar and artOfWar:FindFirstChild("Framework")
+		return require(framework and framework:FindFirstChild("BakedWorld"))
+	end)
+	if okBaked and BakedWorld and BakedWorld.isActive then
+		bakedBoot = BakedWorld.isActive() == true
+	end
+	if bakedBoot then
+		print("[DataEditorService] baked-world boot — editor world will load on first editor command")
+	else
+		ensureEditorLoaded()
+	end
+end
 
 -- Single-server blessed-server resolution (Phase 2): claim/refresh this server's write authority. Runs once at
 -- boot (synchronously, so the blessed private server is writable immediately) then periodically, so a server can
@@ -2085,22 +2129,6 @@ if singleServerMode() and game.PrivateServerId ~= "" and EditorAdmins.isMapEdito
 		end
 	end)
 end
-
-local function countTable(t)
-	local n = 0
-	for _ in pairs(t) do
-		n += 1
-	end
-	return n
-end
-local st = Editor.getState()
-print(
-	string.format(
-		"[DataEditorService] ready — %d countries, %d provinces loaded",
-		countTable(st.countries),
-		countTable(st.provinces)
-	)
-)
 
 local function adminSummary()
 	local parts = { "Studio=always" }

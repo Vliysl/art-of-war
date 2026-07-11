@@ -56,6 +56,18 @@ ModifierStack.register(context)
 local bundle = DataLoader.loadBundle()
 context.Bundle = bundle
 
+-- File-authoritative boot (UseBakedWorldData): when the world came from the ServerData/World
+-- baked modules, every DataStore-overlay touchpoint below is skipped — there is no overlay to
+-- persist ghost-heals into, migrate, or retry after throttling. healBundle (below) still runs
+-- and re-derives the same fixes in-memory on every boot, so nothing needs persisting.
+local bakedMode = false
+do
+	-- FindFirstChild (not WaitForChild): in a Studio session that predates the module a wait
+	-- would hang the boot; a nil just means "not baked" and the DataStore path proceeds.
+	local okBaked, BakedWorld = pcall(require, Framework:FindFirstChild("BakedWorld"))
+	bakedMode = (okBaked and BakedWorld and BakedWorld.wasApplied()) == true
+end
+
 local heals = DataLoader.healBundle(bundle)
 if #heals > 0 then
 	warn(string.format("[ArtOfWar] auto-healed %d bundle issue(s) before validation:", #heals))
@@ -69,7 +81,7 @@ if #heals > 0 then
 	end
 end
 
-do
+if not bakedMode then
 	local overlayMod = ServerStorage:FindFirstChild("Services")
 	overlayMod = overlayMod and overlayMod:FindFirstChild("DataOverlay")
 	if overlayMod then
@@ -261,7 +273,7 @@ if context.ProvinceReconciler and type(context.ProvinceReconciler.reconcile) == 
 	end
 end
 
-do
+if not bakedMode then
 	local overlayModule = ServerStorage:FindFirstChild("Services")
 	overlayModule = overlayModule and overlayModule:FindFirstChild("DataOverlay")
 	if overlayModule then
@@ -293,6 +305,9 @@ do
 end
 
 task.spawn(function()
+	if bakedMode then
+		return -- baked boot: file loads can't throttle, so there are no late reads to recover
+	end
 	local overlayMod = ServerStorage:FindFirstChild("Services")
 	overlayMod = overlayMod and overlayMod:FindFirstChild("DataOverlay")
 	local ov = overlayMod and select(2, pcall(require, overlayMod))

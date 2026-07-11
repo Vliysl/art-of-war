@@ -1,1 +1,3 @@
 std = "roblox"
+# Generated multi-MB baked world modules (tools/export-world.luau output) — don't lint.
+exclude = ["src/ServerScriptService/ArtOfWar/ServerData/World/**"]
