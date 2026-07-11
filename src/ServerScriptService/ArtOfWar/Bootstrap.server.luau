@@ -11,7 +11,7 @@ local Framework = ArtOfWarServer:WaitForChild("Framework")
 local Systems = ArtOfWarServer:WaitForChild("Systems")
 
 local WorldConstants = require(ReplicatedStorage.ArtOfWar.Shared.WorldConstants)
-local Channels = require(ReplicatedStorage.ArtOfWar.Events.Channels)
+local Channels = require(ArtOfWarServer.Events.Channels)
 
 local EventBus = require(Framework.EventBus)
 local TickScheduler = require(Framework.TickScheduler)

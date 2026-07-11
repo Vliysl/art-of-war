@@ -100,8 +100,8 @@ end
 
 -- Try to load the baked table. Returns (ok, bakedCount, matchedCount).
 local function tryLoadBaked()
-	local dataFolder = ReplicatedStorage:FindFirstChild("ArtOfWar")
-	dataFolder = dataFolder and dataFolder:FindFirstChild("Data")
+	local aow = game:GetService("ServerScriptService"):FindFirstChild("ArtOfWar")
+	local dataFolder = aow and aow:FindFirstChild("ServerData")
 	local moduleScript = dataFolder and dataFolder:FindFirstChild("ProvinceAdjacency")
 	if not moduleScript then
 		return false, 0, 0

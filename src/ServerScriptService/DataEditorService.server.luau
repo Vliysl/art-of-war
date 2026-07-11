@@ -23,7 +23,7 @@ end
 local WorldState =
 	tryRequire(game.ServerScriptService:WaitForChild("ArtOfWar"):WaitForChild("Framework"):WaitForChild("WorldState"))
 local EventBus = tryRequire(game.ServerScriptService.ArtOfWar.Framework:FindFirstChild("EventBus"))
-local Channels = tryRequire(ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Events"):WaitForChild("Channels"))
+local Channels = tryRequire(game.ServerScriptService:WaitForChild("ArtOfWar"):WaitForChild("Events"):WaitForChild("Channels"))
 
 local function syncProvinceToWorld(id)
 	if not WorldState then

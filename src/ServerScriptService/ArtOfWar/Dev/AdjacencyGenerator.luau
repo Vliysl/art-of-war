@@ -1014,7 +1014,7 @@ function AdjacencyGenerator.generateSea(opts)
 	local coastalPA
 	do
 		local okPA, pa = pcall(function()
-			return require(ReplicatedStorage.ArtOfWar.Data.ProvinceAdjacency)
+			return require(game:GetService("ServerScriptService").ArtOfWar.ServerData.ProvinceAdjacency)
 		end)
 		coastalPA = (okPA and type(pa) == "table") and pa or nil
 	end

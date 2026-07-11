@@ -2,7 +2,7 @@ local RunService = game:GetService("RunService")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("ArtOfWar"):WaitForChild("Shared")
 local WorldConstants = require(Shared:WaitForChild("WorldConstants"))
-local Events = require(game:GetService("ReplicatedStorage").ArtOfWar.Events.Channels)
+local Events = require(game:GetService("ServerScriptService").ArtOfWar.Events.Channels)
 
 local EventBus = require(script.Parent.EventBus)
 
