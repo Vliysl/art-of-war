@@ -66,6 +66,13 @@
 				},
 				"EditorAdmins": {
 					"$path": "src/ServerStorage/Dev/EditorAdmins.luau"
+				},
+				"AdminGui": {
+					"$className": "Folder",
+					"$ignoreUnknownInstances": true,
+					"EditorClientV2": {
+						"$path": "src/ServerStorage/Dev/AdminGui/EditorClientV2.client.luau"
+					}
 				}
 			},
 			"Services": {

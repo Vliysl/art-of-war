@@ -2480,14 +2480,63 @@ local isAdminPlayer = EditorAdmins.isAllowed
 
 context.isAdminPlayer = isAdminPlayer
 
+-- The Data Editor client (EditorClientV2) is no longer shipped in StarterGui -- that replicated its
+-- full ~120 KB source to every player. The template lives in ServerStorage and is cloned into an
+-- authorized editor's PlayerGui only while their IsAdmin attribute is true; non-admins never receive
+-- the code. FindFirstChild (not WaitForChild) so a missing template degrades to "no editor" rather
+-- than hanging Bootstrap.
+local editorClientTemplate
+do
+	local dev = ServerStorage:FindFirstChild("Dev")
+	local adminGui = dev and dev:FindFirstChild("AdminGui")
+	editorClientTemplate = adminGui and adminGui:FindFirstChild("EditorClientV2")
+end
+local ADMIN_EDITOR_HOST = "AoWDataEditorHost"
+
+-- Clone the editor into (or remove it from) a player's PlayerGui to match their effective access.
+-- Idempotent: safe to call repeatedly (join, config change, live grant/revoke).
+local function syncAdminEditorGui(player, allowed)
+	task.spawn(function()
+		if not player.Parent then
+			return
+		end
+		local playerGui = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 15)
+		if not playerGui or not player.Parent then
+			return
+		end
+		local host = playerGui:FindFirstChild(ADMIN_EDITOR_HOST)
+		if allowed and editorClientTemplate then
+			if not host then
+				host = Instance.new("ScreenGui")
+				host.Name = ADMIN_EDITOR_HOST
+				host.ResetOnSpawn = false -- survive respawns; the editor builds its own gui too
+				host.Enabled = false -- just a container for the LocalScript
+				editorClientTemplate:Clone().Parent = host
+				host.Parent = playerGui
+			end
+		else
+			if host then
+				host:Destroy()
+			end
+			-- The editor builds a sibling ScreenGui ("AoWDataEditorV2"); clean it up on revoke too.
+			local editorGui = playerGui:FindFirstChild("AoWDataEditorV2")
+			if editorGui then
+				editorGui:Destroy()
+			end
+		end
+	end)
+end
+
 local function applyAdminAttribute(player)
-	player:SetAttribute("IsAdmin", isAdminPlayer(player))
+	local allowed = isAdminPlayer(player)
+	player:SetAttribute("IsAdmin", allowed)
 	-- Place-independent editor authorization — drives the Settings "Teleport to Map Editor" button. Distinct
 	-- from IsAdmin, which is the EFFECTIVE editor access in THIS place (config tiers only unlock on the Map
 	-- Editor place). A historian therefore has MapEditorAuthorized=true but IsAdmin=false in the main game.
 	local anywhere = EditorAdmins.isEditorAuthorizedAnywhere and EditorAdmins.isEditorAuthorizedAnywhere(player)
 		or false
 	player:SetAttribute("MapEditorAuthorized", anywhere)
+	syncAdminEditorGui(player, allowed)
 end
 
 local Players = game:GetService("Players")
