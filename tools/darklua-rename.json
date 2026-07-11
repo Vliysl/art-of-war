@@ -1,0 +1,10 @@
+{
+	"generator": "retain_lines",
+	"rules": [
+		{
+			"rule": "rename_variables",
+			"globals": ["$default", "$roblox"]
+		}
+	],
+	"loaders": { "**/*.json": "skip" }
+}

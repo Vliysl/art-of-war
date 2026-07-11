@@ -8,15 +8,25 @@ local Instance = roblox.Instance
 
 local basePath = nil
 local dryRun = false
+local obfuscate = false
 for _, arg in ipairs(process.args) do
 	if arg == "--dry-run" then
 		dryRun = true
+	elseif arg == "--obfuscate" then
+		obfuscate = true
 	elseif arg ~= "--" and not basePath then
 		basePath = arg
 	end
 end
 if not basePath then
-	error("usage: lune run tools/publish -- <base.rbxl> [--dry-run]")
+	error("usage: lune run tools/publish -- <base.rbxl> [--dry-run] [--obfuscate]")
+end
+
+-- With --obfuscate, stage + transform the client subtrees first and overlay from the
+-- staged tree instead of src/ (server code is staged verbatim, so the snapshot is coherent).
+local srcRoot = "src"
+if obfuscate then
+	srcRoot = require("./obfuscate")
 end
 
 local place = roblox.deserializePlace(fs.readFile(basePath))
@@ -70,9 +80,9 @@ local function overlay(dir, parent)
 	end
 end
 
-for _, serviceName in ipairs(fs.readDir("src")) do
-	if fs.isDir("src/" .. serviceName) then
-		overlay("src/" .. serviceName, place:GetService(serviceName))
+for _, serviceName in ipairs(fs.readDir(srcRoot)) do
+	if fs.isDir(srcRoot .. "/" .. serviceName) then
+		overlay(srcRoot .. "/" .. serviceName, place:GetService(serviceName))
 	end
 end
 

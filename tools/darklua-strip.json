@@ -1,0 +1,10 @@
+{
+	"generator": "retain_lines",
+	"rules": [
+		{
+			"rule": "remove_comments",
+			"except": ["^--!"]
+		}
+	],
+	"loaders": { "**/*.json": "skip" }
+}
