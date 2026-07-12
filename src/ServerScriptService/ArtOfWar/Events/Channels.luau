@@ -79,7 +79,6 @@ Channels.ProvinceOccupied = "province.occupied"
 Channels.CountryDoctrineChanged = "country.doctrine.changed"
 
 Channels.BattleArmyJoined = "battle.army.joined"
-Channels.BattlePhaseChanged = "battle.phase.changed"
 
 Channels.ArmyGroupFormed = "army.group.formed"
 Channels.ArmyGroupDisbanded = "army.group.disbanded"

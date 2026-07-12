@@ -152,7 +152,16 @@ local function regenManpower(systemCtx)
 	local perDay = C.ManpowerRegenPerDay or 0.003
 	local year = (systemCtx and systemCtx.gameDate and systemCtx.gameDate.year) or 0
 	local frac = perDay * inGameDaysFromDelta(systemCtx and systemCtx.deltaSeconds, year)
+	-- S3: only relevant (claimed / at-war) countries regen manpower per tick; frozen countries hold their
+	-- pool (no AI recruits for them, and it is re-derived on claim). This is a per-tick all-countries walk,
+	-- so gating it matches the S3 freeze applied in Economy/Faction/Unrest. (The monthly cap recompute is
+	-- intentionally left ungated: on first boot relevantSet() is empty, and it seeds every country's pool.)
+	local relevant = ctx.PlayerAuthority and ctx.PlayerAuthority.relevantSet and ctx.PlayerAuthority.relevantSet()
+		or nil
 	for _, country in ctx.WorldState.allCountries() do
+		if relevant and not relevant[country.tag] then
+			continue
+		end
 		local cap = country.manpowerCap or 0
 		local cur = country.manpower or 0
 		local newCur = cur

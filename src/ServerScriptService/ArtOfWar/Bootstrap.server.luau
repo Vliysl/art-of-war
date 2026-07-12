@@ -2427,13 +2427,9 @@ if loadedSystems.NotificationBroadcaster and context.NotificationBroadcaster the
 	context.NotificationBroadcaster.setRemote(notificationChannel)
 end
 
-local battlePhaseChannel = ensureEvent("BattlePhaseChannel")
-EventBus.subscribe(Channels.BattlePhaseChanged, function(data)
-	if type(data) ~= "table" then
-		return
-	end
-	battlePhaseChannel:FireAllClients(data)
-end)
+-- (removed) BattlePhaseChannel relay: BattlePhaseChanged had ZERO client subscribers, so the
+-- per-battle FireAllClients on every phase flip was pure wasted replication. The client bubble reads
+-- phaseCycle/phaseIndex off the normal replicated battle record.
 
 local timeSync = ensureEvent("TimeSync")
 local timeRequest = ensureEvent("TimeRequest")
