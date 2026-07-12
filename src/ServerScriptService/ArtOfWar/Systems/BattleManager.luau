@@ -760,16 +760,12 @@ local function tickBattle(record)
 	local phaseDuration = math.max(1, (activeSpec and activeSpec.duration) or 1)
 	record.phaseElapsed = (record.phaseElapsed or 0) + 1
 	if record.phaseElapsed >= phaseDuration then
+		-- Advance the phase. phaseCycle/phaseIndex ride the replicated battle record, so the client
+		-- combat bubble reads them from there. The old BattlePhaseChanged -> BattlePhaseChannel broadcast
+		-- (a dead client channel with ZERO subscribers) was removed: at war scale it fired FireAllClients
+		-- per phase flip per battle every combat tick for data nothing consumed.
 		record.phaseIndex = CombatPhases.next(record.phaseCycle, record.phaseIndex or 1)
 		record.phaseElapsed = 0
-		local nextSpec, nextIdx = CombatPhases.getPhase(record.phaseCycle, record.phaseIndex)
-		ctx.EventBus.publish(ctx.Channels.BattlePhaseChanged, {
-			battleId = record.id,
-			provinceId = record.provinceId,
-			phaseCycle = record.phaseCycle,
-			phaseIndex = nextIdx or record.phaseIndex,
-			phaseName = nextSpec and (nextSpec.displayName or nextSpec.id) or nil,
-		})
 	end
 
 	-- perf: the round log is server-only debug data. Keeping it on the replicated record meant the

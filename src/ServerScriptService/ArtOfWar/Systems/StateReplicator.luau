@@ -1,6 +1,17 @@
 local StateReplicator = {}
 
-local BROADCAST_INTERVAL = 1.5
+-- Replication cadence is REAL-time (wall-clock), NOT sim-time. Broadcasting on a sim-scaled TickScheduler
+-- interval meant that at high sim speed the world re-broadcast far more often (the tick profiler measured
+-- StateReplicator at ~10x the next system, firing ~16x/sec at 16x sim speed) -- driving GC + FireAllClients
+-- serialization churn for no player-visible benefit. tickReplicator is now CALLED frequently (a cheap
+-- os.clock check) but only BROADCASTS once per REAL_BROADCAST_INTERVAL of wall-clock, so the rate is
+-- independent of sim speed AND a record re-dirtied every regen tick is projected far fewer times per second.
+-- (~0.4s ~= the old effective 2.5/s at the default speed 4, so default-speed freshness is unchanged.)
+local REAL_BROADCAST_INTERVAL = 0.4
+-- sim-seconds between tickReplicator INVOCATIONS (just the cheap clock check); small so the real-time gate,
+-- not the sim interval, sets the broadcast rate across all speeds.
+local BROADCAST_CALL_INTERVAL = 0.2
+local lastBroadcastClock = 0
 -- perf: cache the full-state snapshot so concurrent joiners (RequestFullState)
 -- reuse one re-serialized world instead of each rebuilding it. Invalidated on
 -- every broadcast tick + bounded by a short TTL; a joiner may see state up to
@@ -501,6 +512,13 @@ local function broadcast()
 end
 
 local function tickReplicator()
+	-- Real-time cadence gate: broadcast at most once per REAL_BROADCAST_INTERVAL of wall-clock regardless of
+	-- how often the (sim-scaled) TickScheduler calls us. broadcast() itself early-returns when nothing is dirty.
+	local now = os.clock()
+	if now - lastBroadcastClock < REAL_BROADCAST_INTERVAL then
+		return
+	end
+	lastBroadcastClock = now
 	broadcast()
 end
 
@@ -524,7 +542,7 @@ function StateReplicator.register(context)
 	ctx.TickScheduler.register({
 		id = "StateReplicator",
 		priority = 50,
-		updateIntervalSeconds = BROADCAST_INTERVAL,
+		updateIntervalSeconds = BROADCAST_CALL_INTERVAL,
 		update = tickReplicator,
 	})
 end

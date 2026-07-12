@@ -60,28 +60,52 @@ local function activeWarAITags()
 	return set
 end
 
--- One province sweep -> per-tag list of border provinces (owned+controlled by the AI and adjacent
--- to a province controlled by a country it is at war with).
+-- Per-tag list of border provinces (owned+controlled by the AI and adjacent to a province controlled by a
+-- country it is at war with). Checks one owned province; shared by the fast + fallback paths below.
+local function checkBorderProvince(borders, adj, tag, pid, prov)
+	if prov.controllerTag ~= tag then
+		return
+	end
+	for _, n in ipairs(adj.getNeighbors(pid)) do
+		local np = ctx.WorldState.getProvince(n)
+		local nc = np and np.controllerTag
+		if nc and nc ~= tag and not isUnowned(nc) and atWar(tag, nc) then
+			local list = borders[tag]
+			if not list then
+				list = {}
+				borders[tag] = list
+			end
+			table.insert(list, pid)
+			return
+		end
+	end
+end
+
 local function collectBorders(aiSet)
 	local borders = {}
 	local adj = ctx.AdjacencyGraph
-	if not adj or not adj.getNeighbors then return borders end
-	for pid, prov in ctx.WorldState.allProvinces() do
-		local owner = prov.ownerTag
-		if owner and aiSet[owner] and prov.controllerTag == owner then
-			for _, n in ipairs(adj.getNeighbors(pid)) do
-				local np = ctx.WorldState.getProvince(n)
-				local nc = np and np.controllerTag
-				if nc and nc ~= owner and not isUnowned(nc) and atWar(owner, nc) then
-					local list = borders[owner]
-					if not list then
-						list = {}
-						borders[owner] = list
-					end
-					table.insert(list, pid)
-					break
+	if not adj or not adj.getNeighbors then
+		return borders
+	end
+	-- perf: iterate ONLY each at-war AI's owned provinces via the ProvinceRegistry byOwner index instead of
+	-- sweeping all ~5713 provinces every tick (measured as a multi-hundred-ms / ~1.3s server stall at war
+	-- scale). O(sum of AI-owned provinces) vs O(all provinces); identical result. Falls back to the full
+	-- sweep only if the registry is unavailable.
+	local registry = ctx.ProvinceRegistry
+	if registry and registry.byOwner then
+		for tag in aiSet do
+			for _, pid in ipairs(registry.byOwner(tag)) do
+				local prov = ctx.WorldState.getProvince(pid)
+				if prov then
+					checkBorderProvince(borders, adj, tag, pid, prov)
 				end
 			end
+		end
+		return borders
+	end
+	for pid, prov in ctx.WorldState.allProvinces() do
+		if prov.ownerTag and aiSet[prov.ownerTag] then
+			checkBorderProvince(borders, adj, prov.ownerTag, pid, prov)
 		end
 	end
 	return borders
@@ -147,13 +171,35 @@ local function tick()
 	runForTags(aiSet, ctx.TickScheduler.getSimTime())
 end
 
--- React the instant war is declared so a player sees the AI mobilize without waiting a full tick.
+-- React the instant war is declared so a player sees the AI mobilize without waiting a full tick, but
+-- COALESCE the burst: one declaration fans out into several linked WarDeclared events (allies / guarantors
+-- / subjects), and reacting synchronously to each re-ran a full border pass per event (the measured
+-- call-to-arms stall). Accumulate the AI tags and run ONE pass via task.defer -- still the same frame, so
+-- no perceptible mobilization delay, just one pass instead of N.
+local pendingReactTags = nil
 local function onWarDeclared(payload)
-	if type(payload) ~= "table" then return end
-	local single = {}
-	if isAI(payload.attackerTag) then single[payload.attackerTag] = true end
-	if isAI(payload.defenderTag) then single[payload.defenderTag] = true end
-	runForTags(single, ctx.TickScheduler.getSimTime())
+	if type(payload) ~= "table" then
+		return
+	end
+	if not (isAI(payload.attackerTag) or isAI(payload.defenderTag)) then
+		return
+	end
+	if not pendingReactTags then
+		pendingReactTags = {}
+		task.defer(function()
+			local batch = pendingReactTags
+			pendingReactTags = nil
+			if batch and next(batch) then
+				runForTags(batch, ctx.TickScheduler.getSimTime())
+			end
+		end)
+	end
+	if isAI(payload.attackerTag) then
+		pendingReactTags[payload.attackerTag] = true
+	end
+	if isAI(payload.defenderTag) then
+		pendingReactTags[payload.defenderTag] = true
+	end
 end
 
 function AISystem.register(context)

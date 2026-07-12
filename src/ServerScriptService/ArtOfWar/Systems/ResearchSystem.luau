@@ -55,7 +55,7 @@ local function applyGates(country, def)
 end
 
 local function grantStarting(country)
-	for id, def in techs() do
+	for _, def in techs() do
 		if def.starting then
 			applyGates(country, def)
 		end
@@ -100,8 +100,17 @@ local function applyDays(daysAdvanced)
 	if days <= 0 then
 		return
 	end
+	-- S3: only relevant (claimed / at-war) countries advance research; frozen countries hold their
+	-- progress (no AI researches for them, and a claimant sees their seeded starting techs). This loop
+	-- runs on every DateAdvanced (~2.7x/sec at speed 4), so gating it drops it from all ~104 countries
+	-- to the ~players-relevant set -- the last ungated economy-adjacent per-day walk (matches S3 elsewhere).
+	local relevant = ctx.PlayerAuthority and ctx.PlayerAuthority.relevantSet and ctx.PlayerAuthority.relevantSet()
+		or nil
 	local T = techs()
 	for tag in ctx.WorldState.allCountries() do
+		if relevant and not relevant[tag] then
+			continue
+		end
 		local country = ctx.WorldState.getCountry(tag)
 		if country then
 			ensureState(country)

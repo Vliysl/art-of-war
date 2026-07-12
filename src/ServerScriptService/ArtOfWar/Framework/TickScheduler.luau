@@ -26,6 +26,9 @@ local speedListeners = {}
 
 local DaysInMonth = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
 
+-- perf (herd fix, part 2): seconds between consecutive interval-groups' initial phase offsets. See start().
+local PHASE_STEP = 0.37
+
 local function isLeapYear(year)
 	if year % 4 ~= 0 then
 		return false
@@ -222,7 +225,20 @@ local function step(deltaSeconds)
 		descriptor.accumulator += effectiveDelta
 		if descriptor.accumulator >= descriptor.updateIntervalSeconds then
 			local stepDelta = descriptor.accumulator
-			descriptor.accumulator = 0
+			-- perf (herd fix, part 1 of 2 -- the enabler): keep the overshoot instead of resetting the
+			-- accumulator to 0 on every fire. Resetting to 0 ERASES a system's phase, which would collapse
+			-- the P1 group-stagger (per-group initial offsets) back into lockstep on the very first fire.
+			-- Subtracting the interval PRESERVES each system's phase so that stagger persists. On its own
+			-- this does not yet spread the herd -- every system currently seeds at accumulator=0 and gets
+			-- the same delta, so same-interval systems still cross together -- but it is the safe
+			-- precondition for the P1 initial-offset seeding, and it makes catch-up after a hitch exact
+			-- (no dropped time). Clamp the carry to [0, interval] so a long hitch can only trigger a single
+			-- catch-up fire next frame (step() fires each system at most once per frame -- no spiral).
+			descriptor.accumulator = math.clamp(
+				descriptor.accumulator - descriptor.updateIntervalSeconds,
+				0,
+				descriptor.updateIntervalSeconds
+			)
 			local systemCtx = {
 				simTime = ctx.simTime,
 				deltaSeconds = stepDelta,
@@ -248,6 +264,28 @@ function TickScheduler.start()
 	lastTickClock = simStartClock
 	if sortedDirty then
 		rebuildSorted()
+	end
+	-- perf (herd fix, part 2 of 2): phase-stagger interval-GROUPS so different-cadence groups fire on
+	-- different Heartbeats instead of all crossing their threshold on the same frame. Systems that share an
+	-- interval get the SAME offset -- they stay together, in priority order, so intra-group producer->
+	-- consumer ordering (Combat->AutoCapture->Siege, all interval 3) is preserved; only which FRAME a group
+	-- first fires on changes. The P0 overshoot (accumulator -= interval) makes the offset PERSIST instead of
+	-- collapsing back to lockstep on the first fire. Opt out with WorldConstants.TickPhaseStagger = false.
+	if WorldConstants.TickPhaseStagger ~= false then
+		local groupOffset = {}
+		local groupCount = 0
+		for _, descriptor in sortedSystems do
+			local iv = descriptor.updateIntervalSeconds
+			local off = groupOffset[iv]
+			if off == nil then
+				-- deterministic spread (no RNG): consecutive interval-groups start PHASE_STEP apart, wrapped
+				-- into [0, interval) -- enough to break the alignment that clumped every group onto one frame.
+				off = (groupCount * PHASE_STEP) % iv
+				groupOffset[iv] = off
+				groupCount += 1
+			end
+			descriptor.accumulator = off
+		end
 	end
 	for _, descriptor in sortedSystems do
 		if descriptor.start then

@@ -82,7 +82,7 @@ end
 -- Recompute every country's manpowerCap from owned+controlled provinces (occupied or
 -- foreign-controlled provinces contribute 0). Clamps current manpower down when the cap
 -- shrinks (lost land -> lost reserve).
-local function recomputeManpowerCaps()
+local function recomputeManpowerCaps(relevant)
 	local caps = {}
 	-- A nation holding ANY owned+controlled land is floored at ManpowerNationFloor (5K by default); a landless
 	-- nation stays at 0. (This replaced the old per-province 5K floor, which scaled the minimum with tile count.)
@@ -90,10 +90,16 @@ local function recomputeManpowerCaps()
 	-- perf: iterate each country's owned provinces via the O(1) registry instead of scanning all
 	-- ~5713 provinces. byOwner is the owned set; still require controllerTag == owner (occupied
 	-- provinces contribute 0). Falls back to a full scan if the registry is unavailable.
+	-- S3: `relevant` (the claimed / at-war set) gates the walk to hot countries -- the monthly
+	-- all-907-country recompute was a measured server-frame spike at high sim speed. nil = compute every
+	-- country (used on first boot to seed all pools; see manpowerTick).
 	local registry = ctx.ProvinceRegistry
 	if registry and registry.byOwner then
 		for _, country in ctx.WorldState.allCountries() do
 			local tag = country.tag
+			if relevant and not relevant[tag] then
+				continue
+			end
 			local total, ownsAny = 0, false
 			for _, id in ipairs(registry.byOwner(tag)) do
 				local province = ctx.WorldState.getProvince(id)
@@ -117,6 +123,9 @@ local function recomputeManpowerCaps()
 		end
 	end
 	for _, country in ctx.WorldState.allCountries() do
+		if relevant and not relevant[country.tag] then
+			continue
+		end
 		local cap = math.floor(caps[country.tag] or 0)
 		local changed = false
 		if country.manpowerCap ~= cap then
@@ -152,7 +161,16 @@ local function regenManpower(systemCtx)
 	local perDay = C.ManpowerRegenPerDay or 0.003
 	local year = (systemCtx and systemCtx.gameDate and systemCtx.gameDate.year) or 0
 	local frac = perDay * inGameDaysFromDelta(systemCtx and systemCtx.deltaSeconds, year)
+	-- S3: only relevant (claimed / at-war) countries regen manpower per tick; frozen countries hold their
+	-- pool (no AI recruits for them, and it is re-derived on claim). This is a per-tick all-countries walk,
+	-- so gating it matches the S3 freeze applied in Economy/Faction/Unrest. (The monthly cap recompute is
+	-- intentionally left ungated: on first boot relevantSet() is empty, and it seeds every country's pool.)
+	local relevant = ctx.PlayerAuthority and ctx.PlayerAuthority.relevantSet and ctx.PlayerAuthority.relevantSet()
+		or nil
 	for _, country in ctx.WorldState.allCountries() do
+		if relevant and not relevant[country.tag] then
+			continue
+		end
 		local cap = country.manpowerCap or 0
 		local cur = country.manpower or 0
 		local newCur = cur
@@ -176,7 +194,15 @@ local function manpowerTick(systemCtx)
 	local gd = systemCtx and systemCtx.gameDate
 	local idx = gd and (gd.year * 12 + (gd.month - 1)) or nil
 	if not manpowerInited or (idx and idx ~= lastManpowerMonthIndex) then
-		recomputeManpowerCaps()
+		-- Gate the monthly recompute to relevant (claimed / at-war) countries -- the ~907-country monthly
+		-- sweep was a measured spike at high sim speed. EXCEPT on first boot: relevantSet() is empty then, so
+		-- pass nil to compute EVERY country's cap once (that first pass seeds all the pools below).
+		local relevant = manpowerInited
+				and ctx.PlayerAuthority
+				and ctx.PlayerAuthority.relevantSet
+				and ctx.PlayerAuthority.relevantSet()
+			or nil
+		recomputeManpowerCaps(relevant)
 		lastManpowerMonthIndex = idx
 	end
 	if not manpowerInited then

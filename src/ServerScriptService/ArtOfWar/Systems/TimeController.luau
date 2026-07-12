@@ -1,5 +1,3 @@
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
 local TimeController = {}
 
 -- Engine rate multipliers (unchanged so sim balance / per-tier tick rates stay identical). The UI
@@ -13,6 +11,16 @@ local timeSync
 local lastRequestAt = {}
 local REQUEST_COOLDOWN = 0.1
 
+-- perf (clock fire-rate): the per-day DateAdvanced broadcast fires ~2.7x/sec at speed 4 and ~10x/sec at the
+-- top speed; times every player that is ~135-535 FireAllClients/sec purely for the date HUD, on the sim
+-- thread. Coalesce the DateAdvanced-driven broadcast to at most one per BROADCAST_MIN_INTERVAL, with a
+-- trailing fire so the latest date always lands. SimClock extrapolates simTime between packets, so the
+-- lower packet rate does NOT reduce clock / progress-bar accuracy. Speed/pause/join changes still broadcast
+-- immediately via broadcast().
+local BROADCAST_MIN_INTERVAL = 0.5
+local lastBroadcastAt = 0
+local pendingBroadcast = false
+
 local function buildPacket()
 	local date = ctx.TickScheduler.getGameDate()
 	return {
@@ -25,9 +33,29 @@ local function buildPacket()
 	}
 end
 
+-- Immediate/authoritative broadcast -- used for speed/pause changes and joins, which must reflect at once.
 local function broadcast()
 	if not timeSync then return end
+	lastBroadcastAt = os.clock()
+	pendingBroadcast = false
 	timeSync:FireAllClients(buildPacket())
+end
+
+-- Coalesced broadcast for the high-frequency per-day DateAdvanced tick: at most one fire per
+-- BROADCAST_MIN_INTERVAL, with a single trailing fire scheduled so the latest date always lands.
+local function broadcastThrottled()
+	if not timeSync then return end
+	local elapsed = os.clock() - lastBroadcastAt
+	if elapsed >= BROADCAST_MIN_INTERVAL then
+		broadcast()
+	elseif not pendingBroadcast then
+		pendingBroadcast = true
+		task.delay(BROADCAST_MIN_INTERVAL - elapsed, function()
+			if pendingBroadcast then
+				broadcast()
+			end
+		end)
+	end
 end
 
 local function isAllowedSpeed(value)
@@ -89,7 +117,7 @@ function TimeController.register(context)
 	end)
 
 	ctx.EventBus.subscribe(ctx.Channels.DateAdvanced, function()
-		broadcast()
+		broadcastThrottled()
 	end)
 
 	ctx.EventBus.subscribe(ctx.Channels.PlayerReady, function()
