@@ -23,6 +23,7 @@ local WorldState = require(AoW.Framework.WorldState)
 local TickScheduler = require(AoW.Framework.TickScheduler)
 local ArmySystem = require(AoW.Systems.ArmySystem)
 local DiplomacySystem = require(AoW.Systems.DiplomacySystem)
+local StateReplicator = require(AoW.Systems.StateReplicator)
 
 local SEED_UNIT = "irregular_infantry" -- default-unlocked levy; valid in Bundle.unitTypes
 local SEED_REGIMENTS = 4
@@ -183,6 +184,19 @@ local function handle(cmd)
 		return { profiling = false }
 	elseif verb == "profile" then
 		return TickScheduler.getProfile()
+	elseif verb == "bcOn" then
+		StateReplicator.setBroadcastProfile(true)
+		return { bcProfiling = true }
+	elseif verb == "bcOff" then
+		StateReplicator.setBroadcastProfile(false)
+		return { bcProfiling = false }
+	elseif verb == "bc" then
+		return StateReplicator.getBroadcastProfile()
+	elseif verb == "mem" then
+		return {
+			luaHeapMb = math.floor(collectgarbage("count") / 1024 * 10) / 10,
+			totalMemMb = math.floor(Stats:GetTotalMemoryUsageMb() + 0.5),
+		}
 	end
 	return { error = "unknown command: " .. tostring(cmd) }
 end
