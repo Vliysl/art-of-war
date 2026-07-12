@@ -174,6 +174,15 @@ local function handle(cmd)
 	elseif verb == "setSpeed" then
 		TickScheduler.setSpeed(tonumber(a1) or 16)
 		return { speed = TickScheduler.getSpeed() }
+	elseif verb == "profileOn" then
+		TickScheduler.resetProfile()
+		TickScheduler.setProfile(true)
+		return { profiling = true }
+	elseif verb == "profileOff" then
+		TickScheduler.setProfile(false)
+		return { profiling = false }
+	elseif verb == "profile" then
+		return TickScheduler.getProfile()
 	end
 	return { error = "unknown command: " .. tostring(cmd) }
 end
