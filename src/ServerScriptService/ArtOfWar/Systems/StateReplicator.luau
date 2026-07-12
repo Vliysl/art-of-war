@@ -12,12 +12,6 @@ local REAL_BROADCAST_INTERVAL = 0.4
 -- not the sim interval, sets the broadcast rate across all speeds.
 local BROADCAST_CALL_INTERVAL = 0.2
 local lastBroadcastClock = 0
-
--- broadcast attribution (dev, opt-in via StateReplicator.setBroadcastProfile). Where does a broadcast's time
--- + heap churn go: buildDeltaFrom (the per-record projection shallow-copies) vs the FireAllClients enqueue,
--- plus per-collection dirty-record counts and net KB allocated per broadcast. Off by default; near-free.
-local bcProfileOn = false
-local bcStats = { broadcasts = 0, buildMs = 0, fireMs = 0, allocKb = 0, maxBuildMs = 0, dirty = {} }
 -- perf: cache the full-state snapshot so concurrent joiners (RequestFullState)
 -- reuse one re-serialized world instead of each rebuilding it. Invalidated on
 -- every broadcast tick + bounded by a short TTL; a joiner may see state up to
@@ -465,11 +459,7 @@ local function broadcast()
 	if not drained then
 		return
 	end
-	local prof = bcProfileOn
-	local memBefore = prof and collectgarbage("count") or 0
-	local buildT0 = prof and os.clock() or 0
 	local packet = buildDeltaFrom(drained)
-	local buildMs = prof and (os.clock() - buildT0) * 1000 or 0
 	if not packet then
 		return
 	end
@@ -491,25 +481,9 @@ local function broadcast()
 			end
 		end
 	end
-	local fireT0 = prof and os.clock() or 0
 	stateSync:FireAllClients(packet)
 	for _, p in ipairs(pending) do
 		fireChunkedDelta(p.field, p.records, packet.revision, p.size)
-	end
-	if prof then
-		bcStats.broadcasts += 1
-		bcStats.buildMs += buildMs
-		bcStats.fireMs += (os.clock() - fireT0) * 1000
-		bcStats.allocKb += collectgarbage("count") - memBefore
-		if buildMs > bcStats.maxBuildMs then
-			bcStats.maxBuildMs = buildMs
-		end
-		for _, name in ipairs(COLLECTIONS) do
-			local keys = drained[name]
-			if keys and #keys > 0 then
-				bcStats.dirty[name] = (bcStats.dirty[name] or 0) + #keys
-			end
-		end
 	end
 	-- Tier 3: leaders/factions are stripped from the shared broadcast above. Push the owning player their own
 	-- country's politics whenever that country changed this tick (claim dirties it, and later politics/economy
@@ -571,35 +545,6 @@ function StateReplicator.register(context)
 		updateIntervalSeconds = BROADCAST_CALL_INTERVAL,
 		update = tickReplicator,
 	})
-end
-
-function StateReplicator.setBroadcastProfile(on)
-	bcProfileOn = on and true or false
-	if bcProfileOn then
-		bcStats = { broadcasts = 0, buildMs = 0, fireMs = 0, allocKb = 0, maxBuildMs = 0, dirty = {} }
-	end
-end
-
-function StateReplicator.getBroadcastProfile()
-	local function r2(x)
-		return math.floor(x * 100 + 0.5) / 100
-	end
-	local b = math.max(1, bcStats.broadcasts)
-	local dirtyPerBc = {}
-	for k, v in bcStats.dirty do
-		dirtyPerBc[k] = r2(v / b)
-	end
-	return {
-		broadcasts = bcStats.broadcasts,
-		buildMsTotal = r2(bcStats.buildMs),
-		buildMsAvg = r2(bcStats.buildMs / b),
-		maxBuildMs = r2(bcStats.maxBuildMs),
-		fireMsTotal = r2(bcStats.fireMs),
-		fireMsAvg = r2(bcStats.fireMs / b),
-		allocKbTotal = math.floor(bcStats.allocKb),
-		allocKbPerBroadcast = math.floor(bcStats.allocKb / b),
-		dirtyPerBroadcast = dirtyPerBc,
-	}
 end
 
 return StateReplicator

@@ -29,20 +29,6 @@ local DaysInMonth = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
 -- perf (herd fix, part 2): seconds between consecutive interval-groups' initial phase offsets. See start().
 local PHASE_STEP = 0.37
 
--- dev profiling (off by default; toggled via TickScheduler.setProfile). Times each system + the whole step,
--- keeps the worst step-frame's per-system breakdown, and tracks the worst UNCLAMPED Heartbeat frame time.
--- Comparing maxFrameMs (whole frame) vs maxStepMs (sim only) localizes a stall to INSIDE vs OUTSIDE the tick
--- (GC / render / physics / autosave). The debug.profilebegin tags in step() are unconditional + near-free.
-local function ms2(x)
-	return math.floor(x * 100 + 0.5) / 100
-end
-local profileEnabled = false
-local profileAccum = {} -- id -> { totalMs, calls }
-local profileWorstStep = nil -- { totalMs, unaccountedMs, systems = { {id, ms}, ... } }
-local profileFrames = 0
-local profileMaxStepMs = 0
-local profileMaxFrameMs = 0
-
 local function isLeapYear(year)
 	if year % 4 ~= 0 then
 		return false
@@ -235,10 +221,6 @@ local function step(deltaSeconds)
 	if sortedDirty then
 		rebuildSorted()
 	end
-	local profiling = profileEnabled
-	local stepStart = profiling and os.clock() or 0
-	local frameBreak = profiling and {} or nil
-	local frameSum = 0
 	for _, descriptor in sortedSystems do
 		descriptor.accumulator += effectiveDelta
 		if descriptor.accumulator >= descriptor.updateIntervalSeconds then
@@ -263,43 +245,10 @@ local function step(deltaSeconds)
 				gameDate = ctx.gameDate,
 				scenarioProgress = ctx.scenarioProgress,
 			}
-			debug.profilebegin(descriptor.id)
-			local sysStart = profiling and os.clock() or 0
 			local ok, err = pcall(descriptor.update, systemCtx)
-			if profiling then
-				local sysMs = (os.clock() - sysStart) * 1000
-				frameSum += sysMs
-				frameBreak[#frameBreak + 1] = { id = descriptor.id, ms = sysMs }
-				local a = profileAccum[descriptor.id]
-				if not a then
-					a = { totalMs = 0, calls = 0 }
-					profileAccum[descriptor.id] = a
-				end
-				a.totalMs += sysMs
-				a.calls += 1
-			end
-			debug.profileend()
 			if not ok then
 				warn(string.format("[TickScheduler] system '%s' errored: %s", descriptor.id, tostring(err)))
 			end
-		end
-	end
-
-	if profiling then
-		profileFrames += 1
-		local stepMs = (os.clock() - stepStart) * 1000
-		if stepMs > profileMaxStepMs then
-			profileMaxStepMs = stepMs
-		end
-		if not profileWorstStep or stepMs > profileWorstStep.totalMs then
-			table.sort(frameBreak, function(a, b)
-				return a.ms > b.ms
-			end)
-			local top = {}
-			for i = 1, math.min(6, #frameBreak) do
-				top[i] = { id = frameBreak[i].id, ms = ms2(frameBreak[i].ms) }
-			end
-			profileWorstStep = { totalMs = ms2(stepMs), unaccountedMs = ms2(stepMs - frameSum), systems = top }
 		end
 	end
 
@@ -350,12 +299,6 @@ function TickScheduler.start()
 		local now = os.clock()
 		local delta = now - lastTickClock
 		lastTickClock = now
-		if profileEnabled then
-			local frameMs = delta * 1000
-			if frameMs > profileMaxFrameMs then
-				profileMaxFrameMs = frameMs
-			end
-		end
 		if delta > 0.25 then
 			delta = 0.25
 		end
@@ -372,40 +315,6 @@ function TickScheduler.stop()
 		heartbeatConnection:Disconnect()
 		heartbeatConnection = nil
 	end
-end
-
-function TickScheduler.setProfile(on)
-	profileEnabled = on and true or false
-end
-
-function TickScheduler.resetProfile()
-	table.clear(profileAccum)
-	profileWorstStep = nil
-	profileFrames = 0
-	profileMaxStepMs = 0
-	profileMaxFrameMs = 0
-end
-
--- Attribution snapshot: per-system accumulated self-time (steady-state cost, heaviest first), the worst
--- single step frame's breakdown, and the worst whole-frame time. maxFrameMs >> maxStepMs => the stall is
--- OUTSIDE the sim tick (GC / render / physics / autosave); else worstStep.systems names the owner.
-function TickScheduler.getProfile()
-	local accum = {}
-	for id, a in profileAccum do
-		accum[#accum + 1] =
-			{ id = id, totalMs = ms2(a.totalMs), calls = a.calls, avgMs = ms2(a.totalMs / math.max(1, a.calls)) }
-	end
-	table.sort(accum, function(a, b)
-		return a.totalMs > b.totalMs
-	end)
-	return {
-		enabled = profileEnabled,
-		frames = profileFrames,
-		maxStepMs = ms2(profileMaxStepMs),
-		maxFrameMs = ms2(profileMaxFrameMs),
-		worstStep = profileWorstStep,
-		accum = accum,
-	}
 end
 
 return TickScheduler
