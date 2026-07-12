@@ -167,6 +167,20 @@ do
 	end
 end
 
+-- Preload the icon textures the same way (async, non-blocking): each icon is otherwise fetched lazily on
+-- first render, so on a cold cache / flaky CDN they intermittently fail to appear. Icons.preload warms them
+-- all into the texture cache up-front and retries the odd transient failure.
+do
+	local ds = aow:FindFirstChild("DesignSystem")
+	local iconsMod = ds and ds:FindFirstChild("Icons")
+	if iconsMod then
+		local ok, Icons = pcall(require, iconsMod)
+		if ok and Icons and Icons.preload then
+			task.spawn(Icons.preload)
+		end
+	end
+end
+
 local NotificationChannel = Remotes and Remotes:WaitForChild("NotificationChannel", 120)
 if NotificationChannel then
 	NotificationChannel.OnClientEvent:Connect(function(payload)

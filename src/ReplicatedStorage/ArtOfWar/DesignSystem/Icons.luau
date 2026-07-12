@@ -92,4 +92,58 @@ function Icons.create(key, size, tint)
 	return img
 end
 
+-- Warm every icon into the client texture cache up-front. Icons are otherwise fetched LAZILY the first
+-- time each ImageLabel renders (Icons.create just sets .Image), so on a cold cache or a flaky CDN they
+-- intermittently pop in late or render blank -- the "icons sometimes not loading" symptom. Preloading them
+-- all on boot (see ClientBoot) makes later Icons.create renders instant, and a one-shot retry recovers the
+-- odd transient fetch failure. Yields; call from a task.spawn. Uses throwaway ImageLabel holders because the
+-- codebase's other PreloadAsync calls pass Instances (province meshes / shells).
+function Icons.preload()
+	local ContentProvider = game:GetService("ContentProvider")
+	local function holdersFor(ids)
+		local holders = {}
+		for _, id in ipairs(ids) do
+			local img = Instance.new("ImageLabel")
+			img.Image = id
+			holders[#holders + 1] = img
+		end
+		return holders
+	end
+
+	local ids = {}
+	for _, id in pairs(Icons.Ids) do
+		if type(id) == "string" and id ~= "" then
+			ids[#ids + 1] = id
+		end
+	end
+	if #ids == 0 then
+		return
+	end
+
+	local failed = {}
+	local holders = holdersFor(ids)
+	pcall(function()
+		ContentProvider:PreloadAsync(holders, function(contentId, status)
+			if status ~= Enum.AssetFetchStatus.Success then
+				failed[#failed + 1] = contentId
+			end
+		end)
+	end)
+	for _, img in ipairs(holders) do
+		img:Destroy()
+	end
+
+	-- one retry pass for transient failures / timeouts
+	if #failed > 0 then
+		task.wait(1)
+		local retry = holdersFor(failed)
+		pcall(function()
+			ContentProvider:PreloadAsync(retry)
+		end)
+		for _, img in ipairs(retry) do
+			img:Destroy()
+		end
+	end
+end
+
 return Icons
