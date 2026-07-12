@@ -33,6 +33,25 @@ local subscribers = {}
 local prefixSubscribers = {}
 local initialized = false
 
+-- P0-e notify indexing. prefixSubscribers stays keyed by prefix (registration/unsub); prefixByFirstSeg
+-- indexes those by the path's FIRST segment so firePrefix scans only the handful of prefixes that could
+-- match a given path instead of ALL of them (each entry caches prefix.."." + #prefix to skip re-concat).
+-- fieldSubscriberCount counts EXACT subscribers whose path has >=2 dots ("collection.id.field"); when it is
+-- 0 (the normal case -- nothing subscribes to a single field today) mergeEntry skips the per-field loop
+-- entirely instead of building a path string for every field of every changed record.
+local prefixByFirstSeg = {}
+local fieldSubscriberCount = 0
+
+local function firstSegment(path)
+	local dot = path:find(".", 1, true)
+	return dot and path:sub(1, dot - 1) or path
+end
+
+local function isFieldPath(path)
+	local first = path:find(".", 1, true)
+	return first ~= nil and path:find(".", first + 1, true) ~= nil
+end
+
 local function fireExact(path, value)
 	local list = subscribers[path]
 	if not list then
@@ -47,18 +66,25 @@ local function fireExact(path, value)
 end
 
 local function firePrefix(path, value)
-	for prefix, list in prefixSubscribers do
-		if path == prefix or path:sub(1, #prefix + 1) == prefix .. "." then
-			for _, cb in list do
-				local ok, err = pcall(cb, value, path)
-				if not ok then
-					warn(
-						string.format(
-							"[ClientStateCache] prefix subscriber for '%s' errored: %s",
-							prefix,
-							tostring(err)
+	local bucket = prefixByFirstSeg[firstSegment(path)]
+	if not bucket then
+		return
+	end
+	for prefix, meta in bucket do
+		if path == prefix or path:sub(1, meta.plen + 1) == meta.dot then
+			local list = prefixSubscribers[prefix]
+			if list then
+				for _, cb in list do
+					local ok, err = pcall(cb, value, path)
+					if not ok then
+						warn(
+							string.format(
+								"[ClientStateCache] prefix subscriber for '%s' errored: %s",
+								prefix,
+								tostring(err)
+							)
 						)
-					)
+					end
 				end
 			end
 		end
@@ -92,7 +118,7 @@ local function mergeEntry(collection, key, record, basePath)
 	-- C4: previously this fired notify() -- including an O(#prefixSubscribers) scan with string
 	-- matching -- for EVERY field of every changed record (tens of thousands of ops per packet).
 	-- Now fields only notify the cheap EXACT-path subscribers that are actually registered.
-	if type(record) == "table" then
+	if fieldSubscriberCount > 0 and type(record) == "table" then
 		for field, fieldValue in record do
 			local fp = recPath .. "." .. tostring(field)
 			if subscribers[fp] then
@@ -276,6 +302,10 @@ function ClientStateCache.onChange(path, callback)
 		subscribers[path] = list
 	end
 	table.insert(list, callback)
+	local isField = isFieldPath(path)
+	if isField then
+		fieldSubscriberCount += 1
+	end
 	return function()
 		local current = subscribers[path]
 		if not current then
@@ -284,6 +314,9 @@ function ClientStateCache.onChange(path, callback)
 		for i, cb in current do
 			if cb == callback then
 				table.remove(current, i)
+				if isField then
+					fieldSubscriberCount -= 1
+				end
 				if #current == 0 then
 					subscribers[path] = nil
 				end
@@ -301,6 +334,13 @@ function ClientStateCache.onChangePrefix(prefix, callback)
 	if not list then
 		list = {}
 		prefixSubscribers[prefix] = list
+		local seg = firstSegment(prefix)
+		local bucket = prefixByFirstSeg[seg]
+		if not bucket then
+			bucket = {}
+			prefixByFirstSeg[seg] = bucket
+		end
+		bucket[prefix] = { dot = prefix .. ".", plen = #prefix }
 	end
 	table.insert(list, callback)
 	return function()
@@ -313,6 +353,14 @@ function ClientStateCache.onChangePrefix(prefix, callback)
 				table.remove(current, i)
 				if #current == 0 then
 					prefixSubscribers[prefix] = nil
+					local seg = firstSegment(prefix)
+					local bucket = prefixByFirstSeg[seg]
+					if bucket then
+						bucket[prefix] = nil
+						if next(bucket) == nil then
+							prefixByFirstSeg[seg] = nil
+						end
+					end
 				end
 				return
 			end
