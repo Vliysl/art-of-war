@@ -18,17 +18,9 @@ local EconomyPreview = require(script.Parent.Parent.Parent.Modules.EconomyPrevie
 local RecruitGate = require(script.Parent.Parent.Parent.Modules.RecruitGate)
 local RunService = game:GetService("RunService")
 
--- Economy rework: buildings absorbed into districts are hidden from the legacy build catalog when
--- DistrictsPlayable is on (they live in the district grid instead). manufactory_* are filtered separately.
-local DISTRICT_ABSORBED = {
-	marketplace = true,
-	workshop = true,
-	granary = true,
-	tax_office = true,
-	barracks = true,
-	stables = true,
-	trading_port = true,
-}
+-- Economy rework: buildings absorbed into districts (base buildings + manufactories) carry
+-- def.absorbedByDistrict (set in Data/BuildingTypes -- the single source of truth). When DistrictsPlayable is
+-- on they are hidden from the legacy build catalogs; they live in the district grid instead.
 
 -- District accent color by colorKey -> one warm-palette color. Drives the left spine + icon tint ONLY (never
 -- the border fill), so each district TYPE gets a restrained identity and Military(olive)/Harbor(blue) never
@@ -487,9 +479,12 @@ local function createMulti(ctx)
 		ScreenKit.section(body, "Build in all (where eligible)", 30)
 		-- Union: a building shows when ANY owned selected province can take it; the batched
 		-- remote validates per province, so ineligible tiles just count as failures in the toast.
+		-- District-absorbed buildings (and manufactories) are hidden once the district economy is on --
+		-- they are built as districts, not here (matches the single-province + Economy build catalogs).
+		local districtsOn = WorldConstants.DistrictsPlayable
 		local buildable = {}
 		for id, def in pairs((registries and registries.BuildingTypes) or {}) do
-			if type(def) == "table" and not TIER_BUILDINGS[id] then
+			if type(def) == "table" and not TIER_BUILDINGS[id] and not (districtsOn and def.absorbedByDistrict) then
 				for _, pid in ipairs(ownedIds) do
 					if canBuildAt(cacheProvince(pid), id, def) then
 						buildable[#buildable + 1] = { id = id, def = def }
@@ -1350,10 +1345,11 @@ function ProvinceOverview.create(ctx)
 			renderDistrictGrid(body, p, 5)
 		end
 
-		-- Buildings absorbed into districts (and manufactory_*) drop out of the legacy catalog + built list
-		-- when the district system is on; only special buildings (fortress/shipyard/university) remain here.
-		local function absorbed(bid, def)
-			return districtsOn and (DISTRICT_ABSORBED[bid] or (def ~= nil and def.manufactoryId ~= nil))
+		-- Buildings absorbed into districts (base + manufactories, flagged in Data/BuildingTypes) drop out of
+		-- the legacy catalog + built list when the district system is on; only special buildings
+		-- (fortress/shipyard/university) remain here.
+		local function absorbed(_bid, def)
+			return districtsOn and def ~= nil and def.absorbedByDistrict == true
 		end
 
 		ScreenKit.section(body, districtsOn and "Special Buildings" or "Buildings", 10)

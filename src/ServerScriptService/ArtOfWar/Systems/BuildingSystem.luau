@@ -211,6 +211,14 @@ local function enqueue(tag, provinceId, buildingId)
 	local building = buildingOf(buildingId)
 	if not building then return false, "unknown_building" end
 
+	-- Economy rework: district-absorbed buildings (base buildings + manufactories, flagged in
+	-- Data/BuildingTypes with absorbedByDistrict) are built as districts now, not through this system.
+	-- Reject them at the remote so a crafted client call can't construct a phased-out building while
+	-- DistrictsPlayable is on. Districts are seeded/placed directly, never via enqueue, so this is safe.
+	if ctx.WorldConstants.DistrictsPlayable and building.absorbedByDistrict then
+		return false, "absorbed_into_district"
+	end
+
 	local province = ctx.WorldState.getProvince(provinceId)
 	local ok, reason = provinceSupportsBuild(province, building, tag)
 	if not ok then return false, reason end
