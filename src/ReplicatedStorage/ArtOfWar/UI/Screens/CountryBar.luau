@@ -267,6 +267,7 @@ function CountryBar.create(config)
 		value = r.treasury or "0",
 		delta = "",
 		caption = "Economy",
+		clickSound = "economy",
 		onClick = function()
 			openMenu("Economy")
 		end,
@@ -291,6 +292,7 @@ function CountryBar.create(config)
 		iconPosition = "left",
 		value = r.manpower or "0",
 		caption = "Manpower",
+		clickSound = "military",
 		onClick = function()
 			openMenu("Military")
 		end,

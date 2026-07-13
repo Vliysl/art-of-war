@@ -17,6 +17,8 @@ local ASSETS = {
 	claim   = "rbxassetid://130735746419880",
 	phase   = "rbxasset://sounds/bass.wav",
 	delete  = "rbxassetid://10066926605",
+	economy  = "rbxassetid://99927446005550",  -- Economy window open/close
+	military = "rbxassetid://140203539654892", -- Military window open/close
 }
 
 local PITCH = {
@@ -28,6 +30,8 @@ local PITCH = {
 	claim  = 1.0,
 	phase  = 0.85,
 	delete = 1.0,
+	economy  = 1.0,
+	military = 1.0,
 }
 
 local VOLUMES = {
@@ -39,6 +43,8 @@ local VOLUMES = {
 	claim  = 0.7,
 	phase  = 0.35,
 	delete = 0.5,
+	economy  = 0.5,
+	military = 0.5,
 }
 
 local sounds = {}

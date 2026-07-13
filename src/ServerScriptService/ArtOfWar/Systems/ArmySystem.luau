@@ -569,7 +569,14 @@ end
 local function setMerge(armyId, enabled)
 	local army = ctx.WorldState.getArmy(armyId)
 	if not army then return false end
-	army.mergeEnabled = enabled and nil or false
+	-- nil = default ON, false = explicitly OFF. (NOT `enabled and nil or false` -- that idiom yields false
+	-- even when enabled is true, since `true and nil` is nil then `nil or false` is false -- which is why
+	-- merge could be turned off but never back on.)
+	if enabled then
+		army.mergeEnabled = nil
+	else
+		army.mergeEnabled = false
+	end
 	ctx.WorldState.setArmy(armyId, army)
 	ctx.EventBus.publish(ctx.Channels.ArmyStateChanged, {
 		armyId = armyId,

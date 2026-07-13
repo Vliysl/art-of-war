@@ -2319,13 +2319,65 @@ local function renderFormables()
 			})
 		end
 
-		-- The forming nation KEEPS its own tag (HoI4-style); a formable is just an identity (name/colour/
-		-- flag) it ADOPTS on formation — so there's no "formable tag" to enter. The internal id is derived
-		-- from the name on create (kept as-is when editing). "Formed by (tags)" is the comma-separated
+		-- Fields grouped into three sections. The forming nation KEEPS its own tag (HoI4-style); a formable is
+		-- just an identity (name/colour/flag) it ADOPTS on formation. "Formed by (tags)" is the comma-separated
 		-- whitelist of countries that may form it (e.g. POR, SPA for Iberia); empty = any holder.
+		local function sectionHeader(text)
+			local h = label(detail, string.upper(text), "label", Colors.Accent or Colors.TextSecondary)
+			h.Size = UDim2.new(1, 0, 0, 24)
+			return h
+		end
+
+		-- ── Information ──────────────────────────────────────────────────────────────────────────────
+		sectionHeader("Information")
 		local nameBox = field("Display name", def and def.displayName or "")
 		local formerBox = field("Formed by (tags)", def and def.formerTags and table.concat(def.formerTags, ", ") or "")
+		local descBox = bigField("Formable description", def and def.description or "", 54)
 		local col3 = (def and def.color) or { 150, 150, 150 }
+		local colorBox = field("Colour (r,g,b)", string.format("%d, %d, %d", col3[1] or 0, col3[2] or 0, col3[3] or 0))
+		do
+			local pick = Instance.new("TextButton")
+			pick.Size = UDim2.fromOffset(46, 22)
+			pick.AnchorPoint = Vector2.new(1, 0.5)
+			pick.Position = UDim2.new(1, -2, 0.5, 0)
+			pick.BackgroundColor3 = Colors.SurfaceOverlay or Colors.SurfaceElevated
+			pick.TextColor3 = Colors.TextPrimary
+			pick.Text = "Pick"
+			pick.Font = Enum.Font.GothamMedium
+			pick.TextSize = 12
+			pick.BorderSizePixel = 0
+			pick.ZIndex = 3
+			pick.Parent = colorBox
+			pick.Activated:Connect(function()
+				local cur = {}
+				for n in string.gmatch(colorBox.Text or "", "%d+") do
+					cur[#cur + 1] = tonumber(n)
+				end
+				openColorPicker(gui, { cur[1] or 150, cur[2] or 150, cur[3] or 150 }, function(rgb)
+					colorBox.Text = string.format("%d, %d, %d", rgb[1], rgb[2], rgb[3])
+				end)
+			end)
+		end
+		local flagBox = field("Flag (rbxassetid)", (def and def.flag) or "")
+		do
+			-- Live crest preview at the right edge of the field (mirrors the country editor's crest preview).
+			local flagPrev = Instance.new("ImageLabel")
+			flagPrev.Size = UDim2.fromOffset(22, 22)
+			flagPrev.AnchorPoint = Vector2.new(1, 0.5)
+			flagPrev.Position = UDim2.new(1, -2, 0.5, 0)
+			flagPrev.BackgroundTransparency = 1
+			flagPrev.ScaleType = Enum.ScaleType.Crop
+			flagPrev.ZIndex = 3
+			flagPrev.Parent = flagBox
+			local function refresh()
+				flagPrev.Image = normalizeAssetId(flagBox.Text) or ""
+			end
+			refresh()
+			flagBox:GetPropertyChangedSignal("Text"):Connect(refresh)
+		end
+
+		-- ── Requirements ────────────────────────────────────────────────────────────────────────────
+		sectionHeader("Requirements")
 		local reqBox = bigField(
 			"Required province IDs",
 			def and def.requiredProvinceIds and table.concat(def.requiredProvinceIds, ", ") or "",
@@ -2407,47 +2459,6 @@ local function renderFormables()
 		end
 		refreshCount()
 		reqBox:GetPropertyChangedSignal("Text"):Connect(refreshCount)
-		local colorBox = field("Colour (r,g,b)", string.format("%d, %d, %d", col3[1] or 0, col3[2] or 0, col3[3] or 0))
-		do
-			local pick = Instance.new("TextButton")
-			pick.Size = UDim2.fromOffset(46, 22)
-			pick.AnchorPoint = Vector2.new(1, 0.5)
-			pick.Position = UDim2.new(1, -2, 0.5, 0)
-			pick.BackgroundColor3 = Colors.SurfaceOverlay or Colors.SurfaceElevated
-			pick.TextColor3 = Colors.TextPrimary
-			pick.Text = "Pick"
-			pick.Font = Enum.Font.GothamMedium
-			pick.TextSize = 12
-			pick.BorderSizePixel = 0
-			pick.ZIndex = 3
-			pick.Parent = colorBox
-			pick.Activated:Connect(function()
-				local cur = {}
-				for n in string.gmatch(colorBox.Text or "", "%d+") do
-					cur[#cur + 1] = tonumber(n)
-				end
-				openColorPicker(gui, { cur[1] or 150, cur[2] or 150, cur[3] or 150 }, function(rgb)
-					colorBox.Text = string.format("%d, %d, %d", rgb[1], rgb[2], rgb[3])
-				end)
-			end)
-		end
-		local flagBox = field("Flag (rbxassetid)", (def and def.flag) or "")
-		do
-			-- Live crest preview at the right edge of the field (mirrors the country editor's crest preview).
-			local flagPrev = Instance.new("ImageLabel")
-			flagPrev.Size = UDim2.fromOffset(22, 22)
-			flagPrev.AnchorPoint = Vector2.new(1, 0.5)
-			flagPrev.Position = UDim2.new(1, -2, 0.5, 0)
-			flagPrev.BackgroundTransparency = 1
-			flagPrev.ScaleType = Enum.ScaleType.Crop
-			flagPrev.ZIndex = 3
-			flagPrev.Parent = flagBox
-			local function refresh()
-				flagPrev.Image = normalizeAssetId(flagBox.Text) or ""
-			end
-			refresh()
-			flagBox:GetPropertyChangedSignal("Text"):Connect(refresh)
-		end
 		-- Territory requirement (blank = must own ALL required provinces). "Min provinces" needs holding N of
 		-- them; "Percent required" needs that % of them. These cure the "own everything before you qualify" and
 		-- "blocked by one obscure province" problems and let big-territory formables stay achievable.
@@ -2457,15 +2468,16 @@ local function renderFormables()
 		local bonusBox =
 			field("Form bonus: stability", def and def.formBonuses and tostring(def.formBonuses.stability or "") or "")
 		local canFormDD = ddYesNo("Can form", def == nil or def.canForm ~= false)
-		local canReleaseDD = ddYesNo("Can release", def == nil or def.canRelease ~= false)
+		-- (Can Release removed: releasing is now driven by per-province Releasable Cores, not the formable def.)
 		-- Secret: hide from the Missions tab until a nation already holds the full territory (otherwise
 		-- eligible formers see it as a goal with progress). Default No (visible as a goal).
 		local secretDD = ddYesNo("Secret formable", def ~= nil and def.secret == true)
 
-		-- Formation/release EVENT: a global super-event banner (+ optional audio sting) authored per formable.
-		-- All blank => a generic templated event still fires. Forming reads these; releasing reuses them if a
-		-- def exists for the released tag. Rendered by UI/Screens/SuperEvent via NotificationBroadcaster.
-		local descBox = bigField("Formable description", def and def.description or "", 54)
+		-- ── Formable Event ──────────────────────────────────────────────────────────────────────────
+		-- A global super-event banner (+ optional audio sting) authored per formable. All blank => a generic
+		-- templated event still fires. Forming reads these; releasing reuses them if a def exists for the
+		-- released tag. Rendered by UI/Screens/SuperEvent via NotificationBroadcaster.
+		sectionHeader("Formable Event")
 		local eventTitleBox = field("Event: title", def and def.eventTitle or "", "blank = generic")
 		local eventDescBox = bigField("Event: description", def and def.eventDesc or "", 54)
 		local eventButtonBox = field("Event: button text", def and def.eventButton or "", "e.g. Glory!")
@@ -2535,7 +2547,6 @@ local function renderFormables()
 					requiredProvinceIds = ids,
 					formerTags = (#formers > 0) and formers or nil,
 					canForm = canFormDD.get() == "Yes",
-					canRelease = canReleaseDD.get() == "Yes",
 					secret = (secretDD.get() == "Yes") or nil,
 				}
 				if flagBox.Text ~= "" then

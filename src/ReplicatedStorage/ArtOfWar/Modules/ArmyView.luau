@@ -1387,11 +1387,28 @@ end
 local function reconcileOne(armyId)
 	local army = ClientStateCache.allArmies()[armyId]
 	if not army then
-		-- The army record is gone (destroyed/annexed/disbanded) -- ragdoll the model with the
-		-- oof instead of instantly deleting it. Stack-hide and model-kind-change removals below
-		-- keep the plain destroy (the army still exists; only its rendered model is swapped).
+		-- The army record is gone. Distinguish a MERGE (silent) from a death/annex/disband (ragdoll + "oof"):
+		-- a merged army vanishes but leaves a friendly army standing on its tile (the merge target), whereas a
+		-- killed/disbanded army usually does not. Suppress the death FX when a same-owner army still holds the
+		-- vanished army's last province. (Read lastKnownState BEFORE cleanupTracking, which clears it.)
+		local last = lastKnownState[armyId]
+		local merged = false
+		if last and last.provinceId then
+			for otherId, other in pairs(ClientStateCache.allArmies()) do
+				if otherId ~= armyId and other.ownerTag == last.ownerTag and other.provinceId == last.provinceId then
+					merged = true
+					break
+				end
+			end
+		end
 		local model = cleanupTracking(armyId)
-		if model then playDeathFx(model) end
+		if model then
+			if merged then
+				model:Destroy() -- silent: this army merged into a friendly stack, it didn't die
+			else
+				playDeathFx(model)
+			end
+		end
 		return
 	end
 
