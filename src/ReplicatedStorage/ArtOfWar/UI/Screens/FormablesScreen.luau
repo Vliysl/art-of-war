@@ -19,6 +19,7 @@ local aow = script.Parent.Parent.Parent -- ArtOfWar
 local FormablesClient = require(aow.Modules.FormablesClient)
 local WorldConstants = require(aow.Shared.WorldConstants)
 local WorldEventLog = require(aow.Modules.WorldEventLog)
+local FormableRules = require(aow.Shared.FormableRules)
 
 local FormablesScreen = {}
 
@@ -358,6 +359,125 @@ function FormablesScreen.renderWorldEvents(body, ctx, startOrder)
 	return order
 end
 
+-- ── All-formables catalog (browse every formable, not just the eligible ones) ────────────────────────────
+local function catLine(parent, text, role, color, y)
+	local l = Instance.new("TextLabel")
+	l.BackgroundTransparency = 1
+	l.Position = UDim2.fromOffset(52, y)
+	l.Size = UDim2.new(1, -52 - 8, 0, 16)
+	l.Text = text
+	l.TextColor3 = color
+	l.TextXAlignment = Enum.TextXAlignment.Left
+	l.TextTruncate = Enum.TextTruncate.AtEnd
+	Typography.apply(l, role)
+	l.Parent = parent
+	return l
+end
+
+local function catalogRow(parent, tag, def, order, records)
+	local row = Instance.new("Frame")
+	row.Name = "Cat_" .. tag
+	row.Size = UDim2.new(1, 0, 0, 58)
+	row.BackgroundColor3 = Colors.SurfaceSunken or Colors.SurfaceBase
+	row.BorderSizePixel = 0
+	row.LayoutOrder = order
+	row.Parent = parent
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 5)
+	pad.PaddingRight = UDim.new(0, 5)
+	pad.Parent = row
+
+	CountryBadge.create({
+		parent = row,
+		code = tag,
+		countryColor = def.color,
+		flag = def.flag,
+		square = true,
+		px = 44,
+	}).Position = UDim2.fromScale(0, 0.12)
+
+	catLine(row, def.displayName or tag, "bodyMd", Colors.TextPrimary, 4)
+	local sub = (type(def.description) == "string" and def.description ~= "" and def.description)
+		or FormableRules.requirementLabel(def)
+	catLine(row, sub, "bodySm", Colors.TextSecondary, 22)
+	local rec = records[tag]
+	local recText = rec
+			and string.format("\u{2605} Fastest: %s \u{00B7} %s", FormablesClient.formatDuration(rec.seconds), rec.holder or "?")
+		or "Not yet formed"
+	catLine(row, recText, "bodySm", rec and Colors.Positive or (Colors.TextTertiary or Colors.TextSecondary), 40)
+	return row
+end
+
+-- Every formable (with territory), grouped by tier, with its fastest-time record. Read-only browsing.
+function FormablesScreen.renderCatalog(body, ctx, startOrder)
+	local order = startOrder or 0
+	if not WorldConstants.EnableFormables then
+		return order
+	end
+	local records = FormablesClient.getRecords()
+	local list = {}
+	for tag, def in pairs(FormablesClient.getAll()) do
+		if FormableRules.total(def) > 0 then -- skip territory-less skeletons
+			list[#list + 1] = { tag = tag, def = def, need = FormableRules.threshold(def) }
+		end
+	end
+	table.sort(list, function(a, b)
+		if a.need ~= b.need then
+			return a.need < b.need
+		end
+		return (a.def.displayName or a.tag) < (b.def.displayName or b.tag)
+	end)
+	if #list == 0 then
+		order += 1
+		ScreenKit.note(body, "No formables defined yet.", order)
+		return order
+	end
+	local lastTier = nil
+	for _, e in ipairs(list) do
+		local tier, tierLabel = tierOf(e.need)
+		if tier ~= lastTier then
+			lastTier = tier
+			order += 1
+			ScreenKit.section(body, tierLabel, order)
+		end
+		order += 1
+		catalogRow(body, e.tag, e.def, order, records)
+	end
+	return order
+end
+
+-- A two-button "Available | All formables" mode switch pinned to the top of the screen.
+local function renderModeToggle(parent, showAll, onSelect)
+	local row = Instance.new("Frame")
+	row.Name = "ModeToggle"
+	row.Size = UDim2.new(1, 0, 0, 30)
+	row.BackgroundTransparency = 1
+	row.LayoutOrder = -1000
+	row.Parent = parent
+	local avail = Button.create({
+		parent = row,
+		variant = showAll and "ghost" or "primary",
+		text = "Available",
+		width = 106,
+		size = "sm",
+		onClick = function()
+			onSelect(false)
+		end,
+	})
+	avail.Position = UDim2.fromOffset(0, 0)
+	local all = Button.create({
+		parent = row,
+		variant = showAll and "primary" or "ghost",
+		text = "All formables",
+		width = 130,
+		size = "sm",
+		onClick = function()
+			onSelect(true)
+		end,
+	})
+	all.Position = UDim2.fromOffset(112, 0)
+end
+
 -- Build the screen either as a standalone window (container == nil) or embedded in a host pane (RealmScreen
 -- "Nation" tab). Mirrors DiplomacyScreen's build(ctx, container). Refreshes as territory replicates in.
 local function build(ctx, container)
@@ -381,9 +501,22 @@ local function build(ctx, container)
 		root = handle.root
 	end
 
-	local function rebuild()
+	local showAll = false
+	local rebuild
+	rebuild = function()
 		clearBody()
-		local order = FormablesScreen.renderFormables(body, ctx, 0)
+		renderModeToggle(body, showAll, function(v)
+			if v ~= showAll then
+				showAll = v
+				rebuild()
+			end
+		end)
+		local order
+		if showAll then
+			order = FormablesScreen.renderCatalog(body, ctx, 0)
+		else
+			order = FormablesScreen.renderFormables(body, ctx, 0)
+		end
 		order = FormablesScreen.renderReleasables(body, ctx, order)
 		FormablesScreen.renderWorldEvents(body, ctx, order)
 	end

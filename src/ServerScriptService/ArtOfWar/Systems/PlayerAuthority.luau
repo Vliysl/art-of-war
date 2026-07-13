@@ -26,6 +26,11 @@ local function writeClaimField(tag, userId)
 	local country = ctx.WorldState.getCountry(tag)
 	if not country then return end
 	country.claimedBy = userId
+	-- Stamp when this player took the nation, so FormationRecordStore can measure "time to form" for the
+	-- fastest-time leaderboard. Only set on a real claim (userId present), not on release/unclaim.
+	if userId then
+		country.claimedAt = os.time()
+	end
 	ctx.WorldState.setCountry(tag, country)
 end
 
