@@ -1,16 +1,19 @@
 -- SuperEvent — the "a nation has formed / was released" announcement, styled as a period BROADSHEET (a
 -- Hearts-of-Iron-IV news-event front page) in Art of War's dark parchment + gold palette: an ornate framed
 -- page with a Bodoni masthead, double rule, a dateline (in-game date), a framed headline photo, a serif
--- headline + article body, and a single acknowledge button. Non-blocking, auto-dismissing, shown top-centre
--- to everyone. Reusable: the game shows it via Hud.showSuperEvent (server broadcast); the Data Editor
--- previews it locally.
+-- headline + article body, and a single acknowledge button. Non-blocking and draggable, shown centre-screen
+-- to everyone and dismissed by its button (no auto-dismiss). Reusable: the game shows it via
+-- Hud.showSuperEvent (server broadcast); the Data Editor previews it locally.
 --
--- payload = { title, body, buttonText?, imageId?, audioId?, tag?, color?, date?, ttl? }
+-- payload = { title, body, buttonText?, imageId?, audioId?, tag?, color?, date? }
 --   imageId -- headline photo; when blank, resolves the tag's crest (CountryColor.resolveFlag), else placeholder
---   date    -- { year, month, day } in-game date for the dateline (blank => dateline without a day)
+--   date    -- { year, month, day } in-game date for the dateline (the dateline is omitted when absent)
 --   audioId -- one-shot sting (blank = silent); UISound.playAssetId honours the Formation Audio mute
 --   color   -- {r,g,b} nation accent (tints the top rule); defaults to gold
--- opts = { ttl?, parent?, onDismiss? }
+-- Shown centred and non-blocking; the player drags it by the page and dismisses it with the button.
+-- opts = { parent?, onDismiss? }
+
+local UserInputService = game:GetService("UserInputService")
 
 local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
 local Colors = DesignSystem.Colors
@@ -21,7 +24,11 @@ local UISound = require(script.Parent.Parent.UISound)
 
 local SuperEvent = {}
 
-local MASTHEAD = "The Gazette" -- the fixed broadsheet name (period-accurate: London/France Gazettes, c.1750)
+-- How many broadsheets are currently open, so concurrent ones cascade instead of stacking exactly (they no
+-- longer auto-dismiss, so several can be up at once).
+local openModals = 0
+
+local MASTHEAD = "World News" -- the fixed broadsheet name
 local INK = Colors.TextPrimary -- warm ivory, our "ink on the page"
 local SEPIA = Colors.TextSecondary -- muted taupe for datelines/captions
 local GOLD = Colors.Accent
@@ -81,22 +88,100 @@ end
 function SuperEvent.show(parentGui, payload, opts)
 	payload = payload or {}
 	opts = opts or {}
-	local ttl = opts.ttl or payload.ttl or 10
 	local accent = toColor3(payload.color) or GOLD
 
-	-- Root sizes its height to the content column; the ornate shell fills it as the "page".
+	-- Root sizes its height to the content column; the ornate shell fills it as the "page". Centred on screen
+	-- and given a responsive width so it never runs past a phone's edges; concurrent broadsheets cascade
+	-- slightly (bounded) so they don't land exactly on top of one another.
+	local camera = workspace.CurrentCamera
+	local viewport = (camera and camera.ViewportSize) or Vector2.new(1280, 720)
+	local width = math.min(500, viewport.X - 24)
+	local slot = openModals
+	local casc = (slot % 6) * 22
 	local root = Instance.new("Frame")
 	root.Name = "SuperEvent"
-	root.AnchorPoint = Vector2.new(0.5, 0)
-	root.Position = UDim2.new(0.5, 0, 0, 22)
-	root.Size = UDim2.fromOffset(500, 0)
+	root.AnchorPoint = Vector2.new(0.5, 0.5)
+	root.Position = UDim2.new(0.5, casc, 0.5, casc)
+	root.Size = UDim2.fromOffset(width, 0)
 	root.AutomaticSize = Enum.AutomaticSize.Y
 	root.BackgroundTransparency = 1
 	root.ZIndex = 60
+	-- Parent now, and only count broadsheets we actually show, so a nil-parent call can't leak the open-count.
+	if parentGui then
+		root.Parent = parentGui
+		openModals += 1
+	end
 
-	-- Ornate gilt-framed dark-parchment page (existing 9-slice shell). Fills the root behind the content.
+	-- Ornate gilt-framed dark-parchment page (existing 9-slice shell). Fills the root behind the content and
+	-- doubles as the drag handle: Active so it catches the press, while the dismiss button (also Active) sinks
+	-- its own so clicking it never starts a drag.
 	local page = Shells.create("panel_large_shell", { Name = "Page", Size = UDim2.fromScale(1, 1), ZIndex = 60 })
+	page.Active = true
 	page.Parent = root
+
+	-- Drag-to-move: press anywhere on the page and drag (UserInputService tracks the pointer). Connections are
+	-- kept so they can be torn down on dismiss — nothing leaks while several broadsheets are open at once.
+	local dragConns = {}
+	do
+		local dragging, dragStart, startPos, dragInput
+		table.insert(
+			dragConns,
+			page.InputBegan:Connect(function(input)
+				if
+					input.UserInputType == Enum.UserInputType.MouseButton1
+					or input.UserInputType == Enum.UserInputType.Touch
+				then
+					dragging = true
+					dragStart = input.Position
+					startPos = root.Position
+					local endConn
+					endConn = input.Changed:Connect(function()
+						if input.UserInputState == Enum.UserInputState.End then
+							dragging = false
+							endConn:Disconnect()
+						end
+					end)
+				end
+			end)
+		)
+		table.insert(
+			dragConns,
+			page.InputChanged:Connect(function(input)
+				if
+					input.UserInputType == Enum.UserInputType.MouseMovement
+					or input.UserInputType == Enum.UserInputType.Touch
+				then
+					dragInput = input
+				end
+			end)
+		)
+		table.insert(
+			dragConns,
+			UserInputService.InputChanged:Connect(function(input)
+				if dragging and input == dragInput then
+					local delta = input.Position - dragStart
+					local vp = (camera and camera.ViewportSize) or viewport
+					local half = root.AbsoluteSize / 2
+					-- Keep the page reachable: fully on-screen when it fits, and pannable edge-to-edge when it
+					-- is larger than the viewport, so the dismiss button can always be dragged back into view.
+					local function clampAxis(off, vpLen, halfLen)
+						local centre = 0.5 * vpLen + off
+						local lo, hi = halfLen, vpLen - halfLen
+						if lo > hi then
+							lo, hi = hi, lo
+						end
+						return math.clamp(centre, lo, hi) - 0.5 * vpLen
+					end
+					root.Position = UDim2.new(
+						0.5,
+						clampAxis(startPos.X.Offset + delta.X, vp.X, half.X),
+						0.5,
+						clampAxis(startPos.Y.Offset + delta.Y, vp.Y, half.Y)
+					)
+				end
+			end)
+		)
+	end
 
 	local content = Instance.new("Frame")
 	content.Name = "Content"
@@ -118,7 +203,7 @@ function SuperEvent.show(parentGui, payload, opts)
 	list.Padding = UDim.new(0, 6)
 	list.Parent = content
 
-	-- 1) Masthead: the paper name in Bodoni (the loading-screen display face), flanked by small taglines.
+	-- 1) Masthead: the paper name in Bodoni (the loading-screen display face), centred.
 	local mastheadRow = Instance.new("Frame")
 	mastheadRow.Name = "Masthead"
 	mastheadRow.Size = UDim2.new(1, 0, 0, 40)
@@ -140,22 +225,6 @@ function SuperEvent.show(parentGui, payload, opts)
 	mCon.MaxTextSize = 40
 	mCon.MinTextSize = 20
 	mCon.Parent = masthead
-	local function tagline(text, anchorRight)
-		local l = Instance.new("TextLabel")
-		l.Size = UDim2.fromOffset(120, 14)
-		l.AnchorPoint = Vector2.new(anchorRight and 1 or 0, 1)
-		l.Position = UDim2.new(anchorRight and 1 or 0, 0, 1, -2)
-		l.BackgroundTransparency = 1
-		l.Text = text
-		l.TextColor3 = SEPIA
-		l.TextXAlignment = anchorRight and Enum.TextXAlignment.Right or Enum.TextXAlignment.Left
-		l.TextTruncate = Enum.TextTruncate.AtEnd
-		l.ZIndex = 62
-		Typography.apply(l, "caption")
-		l.Parent = mastheadRow
-	end
-	tagline("of every court", false)
-	tagline("EXTRA EDITION", true)
 
 	-- 2) Double rule under the masthead (existing gold double-line divider).
 	local mastRule =
@@ -164,21 +233,23 @@ function SuperEvent.show(parentGui, payload, opts)
 	mastRule.LayoutOrder = 2
 	mastRule.Parent = content
 
-	-- 3) Dateline (in-game date · price).
+	-- 3) Dateline (in-game date only) — the band and its rule are omitted entirely when there is no date.
 	local dateStr = formatDate(payload.date)
-	local dateline = Instance.new("TextLabel")
-	dateline.Name = "Dateline"
-	dateline.Size = UDim2.new(1, 0, 0, 15)
-	dateline.BackgroundTransparency = 1
-	dateline.Text = dateStr and (dateStr .. "  \u{00B7}  PRICE ONE PENNY") or "PRICE ONE PENNY"
-	dateline.TextColor3 = SEPIA
-	dateline.FontFace = Typography.Serif
-	dateline.TextSize = 12
-	dateline.TextXAlignment = Enum.TextXAlignment.Center
-	dateline.LayoutOrder = 3
-	dateline.ZIndex = 62
-	dateline.Parent = content
-	hairline(content, 4, 2)
+	if dateStr then
+		local dateline = Instance.new("TextLabel")
+		dateline.Name = "Dateline"
+		dateline.Size = UDim2.new(1, 0, 0, 15)
+		dateline.BackgroundTransparency = 1
+		dateline.Text = dateStr
+		dateline.TextColor3 = SEPIA
+		dateline.FontFace = Typography.Serif
+		dateline.TextSize = 12
+		dateline.TextXAlignment = Enum.TextXAlignment.Center
+		dateline.LayoutOrder = 3
+		dateline.ZIndex = 62
+		dateline.Parent = content
+		hairline(content, 4, 2)
+	end
 
 	-- 4) Headline photo: the event image (or the tag's crest), framed like a press cut.
 	local imageId = payload.imageId
@@ -258,6 +329,16 @@ function SuperEvent.show(parentGui, payload, opts)
 	hairline(content, 8, 2)
 
 	-- 7) Dismiss: a bespoke gold-outlined serif button (sharp corners — no UICorner, per house style).
+	-- Bookkeeping (drop the open-count, disconnect the drag) rides on Destroying, so it runs exactly once
+	-- whether the player clicks the button or the layer is torn down out from under us.
+	root.Destroying:Connect(function()
+		if parentGui then
+			openModals = math.max(0, openModals - 1)
+		end
+		for _, c in ipairs(dragConns) do
+			c:Disconnect()
+		end
+	end)
 	local dismissed = false
 	local function dismiss()
 		if dismissed then
@@ -307,17 +388,9 @@ function SuperEvent.show(parentGui, payload, opts)
 	end)
 	btn.MouseButton1Click:Connect(dismiss)
 
-	if parentGui then
-		root.Parent = parentGui
-	end
-
 	-- One-shot audio sting (honours the player's Formation Audio mute + the single-sting guard).
 	if payload.audioId and payload.audioId ~= "" then
 		UISound.playAssetId(payload.audioId)
-	end
-
-	if ttl and ttl > 0 then
-		task.delay(ttl, dismiss)
 	end
 
 	return { root = root, dismiss = dismiss }

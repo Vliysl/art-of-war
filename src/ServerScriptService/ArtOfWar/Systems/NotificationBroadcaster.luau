@@ -447,7 +447,6 @@ local function fireSuperEvent(kind, tag, formableTag, oldTag)
 		audioId = def and def.eventAudioId or nil,
 		color = (def and def.color) or (country and country.color) or nil,
 		date = date,
-		ttl = 10,
 	}))
 end
 
