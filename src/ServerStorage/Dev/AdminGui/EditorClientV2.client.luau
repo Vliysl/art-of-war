@@ -2630,11 +2630,12 @@ local function renderFormables()
 				SuperEvent.show(gui, {
 					title = sub(eventTitleBox.Text, "A New Power Rises"),
 					body = sub(eventDescBox.Text, nm .. " has been forged!"),
-					buttonText = eventButtonBox.Text ~= "" and eventButtonBox.Text or "Continue",
+					buttonText = eventButtonBox.Text ~= "" and eventButtonBox.Text or "Interesting.",
 					imageId = normalizeAssetId(eventImageBox.Text) or normalizeAssetId(flagBox.Text),
 					audioId = normalizeAssetId(eventAudioBox.Text),
 					color = { rgb[1] or 150, rgb[2] or 150, rgb[3] or 150 },
 					tag = nm,
+					date = { year = 1750, month = 7, day = 12 }, -- sample dateline for the preview
 				})
 			end,
 		})
