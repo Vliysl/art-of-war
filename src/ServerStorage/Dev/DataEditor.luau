@@ -600,7 +600,11 @@ function DataEditor.addCountry(tag, opts)
 	if type(opts.governmentForm) ~= "string" or opts.governmentForm == "" then
 		error(("Country %q requires governmentForm"):format(tag))
 	end
-	pushHistory("addCountry " .. tag)
+	-- addCountry writes exactly one record (countries[tag]) and nothing else, so the record fast-path is
+	-- sufficient and avoids deep-cloning all ~5.7k provinces for a one-country add. Undo captures the nil
+	-- before-image and deletes the record. (removeCountry stays on the full snapshot: it also rewrites every
+	-- province that referenced the tag.)
+	pushRecordHistory("countries", tag, "addCountry " .. tag)
 	countries[tag] = {
 		tag = tag,
 		displayName = opts.displayName or tag,
@@ -663,7 +667,7 @@ function DataEditor.setCountryStartingTechs(tag, techMap)
 			end
 		end
 	end
-	pushHistory("setStartingTechs " .. tag)
+	pushRecordHistory("countries", tag, "setStartingTechs " .. tag)
 	countries[tag].startingTechs = validated
 	return countries[tag]
 end
@@ -1165,7 +1169,7 @@ function DataEditor.setTileOwner(partName, ownerTag)
 	if not clearing and not countries[ownerTag] then
 		error(string.format("Country %q does not exist", ownerTag))
 	end
-	pushHistory("setTileOwner " .. partName)
+	pushRecordHistory("tileOwners", partName, "setTileOwner " .. partName)
 	if clearing then
 		tileOwners[partName] = nil
 	else
@@ -2102,7 +2106,11 @@ function DataEditor.addCulture(id, opts)
 	if cultures[id] then
 		error(("Culture %q already exists"):format(id))
 	end
-	pushHistory("addCulture " .. id)
+	-- Identity registry edits (cultures/religions/ideologies/governments) each touch exactly one record in one
+	-- collection: add/update write the single record, and remove only deletes it after a read-only ref-check
+	-- (the loops over provinces/countries just count references and error; they never mutate). So all of them
+	-- use the record fast-path instead of a whole-world snapshot per edit.
+	pushRecordHistory("cultures", id, "addCulture " .. id)
 	cultures[id] = {
 		id = id,
 		displayName = opts.displayName or id,
@@ -2114,7 +2122,7 @@ end
 function DataEditor.updateCulture(id, opts)
 	ensureLoaded()
 	requireKey(cultures, id, "Culture")
-	pushHistory("updateCulture " .. id)
+	pushRecordHistory("cultures", id, "updateCulture " .. id)
 	for k, v in pairs(opts) do
 		cultures[id][k] = v
 	end
@@ -2146,7 +2154,7 @@ function DataEditor.removeCulture(id)
 	if refs > 0 then
 		error(string.format("Culture %q is still referenced by %d record(s) — reassign them first", id, refs))
 	end
-	pushHistory("removeCulture " .. id)
+	pushRecordHistory("cultures", id, "removeCulture " .. id)
 	cultures[id] = nil
 	return true
 end
@@ -2158,7 +2166,7 @@ function DataEditor.addReligion(id, opts)
 	if religions[id] then
 		error(("Religion %q already exists"):format(id))
 	end
-	pushHistory("addReligion " .. id)
+	pushRecordHistory("religions", id, "addReligion " .. id)
 	religions[id] = {
 		id = id,
 		displayName = opts.displayName or id,
@@ -2170,7 +2178,7 @@ end
 function DataEditor.updateReligion(id, opts)
 	ensureLoaded()
 	requireKey(religions, id, "Religion")
-	pushHistory("updateReligion " .. id)
+	pushRecordHistory("religions", id, "updateReligion " .. id)
 	for k, v in pairs(opts) do
 		religions[id][k] = v
 	end
@@ -2195,7 +2203,7 @@ function DataEditor.removeReligion(id)
 	if refs > 0 then
 		error(string.format("Religion %q is still referenced by %d record(s) — reassign them first", id, refs))
 	end
-	pushHistory("removeReligion " .. id)
+	pushRecordHistory("religions", id, "removeReligion " .. id)
 	religions[id] = nil
 	return true
 end
@@ -2207,7 +2215,7 @@ function DataEditor.addIdeology(id, opts)
 	if ideologies[id] then
 		error(("Ideology %q already exists"):format(id))
 	end
-	pushHistory("addIdeology " .. id)
+	pushRecordHistory("ideologies", id, "addIdeology " .. id)
 	ideologies[id] = {
 		id = id,
 		displayName = opts.displayName or id,
@@ -2220,7 +2228,7 @@ end
 function DataEditor.updateIdeology(id, opts)
 	ensureLoaded()
 	requireKey(ideologies, id, "Ideology")
-	pushHistory("updateIdeology " .. id)
+	pushRecordHistory("ideologies", id, "updateIdeology " .. id)
 	for k, v in pairs(opts) do
 		if k == "modifiers" or k == "color" then
 			ideologies[id][k] = type(v) == "table" and deepClone(v) or v
@@ -2254,7 +2262,7 @@ function DataEditor.removeIdeology(id)
 	if refs > 0 then
 		error(string.format("Ideology %q is still referenced by %d record(s) — reassign them first", id, refs))
 	end
-	pushHistory("removeIdeology " .. id)
+	pushRecordHistory("ideologies", id, "removeIdeology " .. id)
 	ideologies[id] = nil
 	return true
 end
@@ -2266,7 +2274,7 @@ function DataEditor.addGovernmentType(id, opts)
 	if governments[id] then
 		error(("Government %q already exists"):format(id))
 	end
-	pushHistory("addGovernmentType " .. id)
+	pushRecordHistory("governments", id, "addGovernmentType " .. id)
 	governments[id] = {
 		id = id,
 		displayName = opts.displayName or id,
@@ -2282,7 +2290,7 @@ end
 function DataEditor.updateGovernmentType(id, opts)
 	ensureLoaded()
 	requireKey(governments, id, "Government")
-	pushHistory("updateGovernmentType " .. id)
+	pushRecordHistory("governments", id, "updateGovernmentType " .. id)
 	for k, v in pairs(opts) do
 		if k == "allowedIdeologies" or k == "modifiers" or k == "transitions" then
 			governments[id][k] = type(v) == "table" and deepClone(v) or v
@@ -2319,7 +2327,7 @@ function DataEditor.removeGovernmentType(id)
 			)
 		)
 	end
-	pushHistory("removeGovernmentType " .. id)
+	pushRecordHistory("governments", id, "removeGovernmentType " .. id)
 	governments[id] = nil
 	return true
 end

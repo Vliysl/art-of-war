@@ -1974,20 +1974,27 @@ local function renderProvinces()
 				setStatus("No seeded land tiles selected (shift-click tiles on the map)", Colors.Negative)
 				return
 			end
-			if #items > 500 then
-				setStatus(string.format("Too many (%d); max 500 — select fewer", #items), Colors.Negative)
-				return
-			end
 			local target = state.paintTarget or "owner"
 			local field = paintFieldForTarget(target)
 			local mode = state.paintMode or "add"
-			local res, err
-			if not field then
-				res, err = editorCall("assignBatch", { ownerTag = tag, items = items })
-			else
-				res, err = editorCall("paintTagBatch", { target = target, tag = tag, mode = mode, items = items })
-			end
-			if res then
+			-- Auto-split large selections into successive <=500-item batch calls (the server rejects a single
+			-- batch over 500). Each chunk stays on the efficient batched path instead of forcing the user to
+			-- manually re-select in pieces. Chunks are spaced above the 0.05s PAINT_COOLDOWN, and we accumulate
+			-- results across them, mirroring only the tiles the server actually wrote.
+			local BATCH_MAX = 500
+			local totalProcessed, totalFailed, callErr = 0, 0, nil
+			for start = 1, #items, BATCH_MAX do
+				local chunk = table.move(items, start, math.min(start + BATCH_MAX - 1, #items), 1, {})
+				local res, err
+				if not field then
+					res, err = editorCall("assignBatch", { ownerTag = tag, items = chunk })
+				else
+					res, err = editorCall("paintTagBatch", { target = target, tag = tag, mode = mode, items = chunk })
+				end
+				if not res then
+					callErr = err
+					break -- stop on a call-level failure (e.g. rate limit); tiles already applied stay applied
+				end
 				-- Honor the server's per-item results: only mirror tiles it actually applied into the local
 				-- snapshot (so rejected tiles don't show a tag/owner the server never wrote and then get
 				-- persisted on the next Save), and surface any failures.
@@ -1998,8 +2005,9 @@ local function renderProvinces()
 							failed[e.id] = true
 						end
 					end
+					totalFailed += #res.errors
 				end
-				for _, it in ipairs(items) do
+				for _, it in ipairs(chunk) do
 					local p = not failed[it.id] and snap.provinces[it.id]
 					if p then
 						if not field then
@@ -2024,19 +2032,27 @@ local function renderProvinces()
 						end
 					end
 				end
-				local processed = tonumber(res.processed) or #items
-				local failCount = (type(res.errors) == "table") and #res.errors or 0
+				totalProcessed += (tonumber(res.processed) or #chunk)
+				if start + BATCH_MAX <= #items then
+					task.wait(0.1) -- keep successive chunks above the server PAINT_COOLDOWN
+				end
+			end
+			if totalProcessed > 0 then
 				local what = field and (mode .. " " .. target) or "owner"
+				local suffix = totalFailed > 0 and string.format(" (%d failed)", totalFailed) or ""
+				if callErr then
+					suffix = suffix .. " — stopped: " .. tostring(callErr)
+				end
 				setStatus(
 					string.format(
 						"Applied %s to %d tile%s -> %s%s",
 						what,
-						processed,
-						processed == 1 and "" or "s",
+						totalProcessed,
+						totalProcessed == 1 and "" or "s",
 						tag,
-						failCount > 0 and string.format(" (%d failed)", failCount) or ""
+						suffix
 					),
-					failCount > 0 and (Colors.Warning or Colors.Negative) or Colors.Positive
+					(totalFailed > 0 or callErr) and (Colors.Warning or Colors.Negative) or Colors.Positive
 				)
 				markDirty()
 				if paintUpdate then
@@ -2047,8 +2063,10 @@ local function renderProvinces()
 				end
 				state.multiSelCount = 0
 				updatePaintUI() -- refresh the Apply-selected label/enabled state
+			elseif callErr then
+				setStatus("Bulk apply failed: " .. tostring(callErr), Colors.Negative)
 			else
-				setStatus("Bulk apply failed: " .. tostring(err), Colors.Negative)
+				setStatus(string.format("No tiles applied (%d rejected)", totalFailed), Colors.Negative)
 			end
 		end,
 	})
@@ -3385,11 +3403,15 @@ local function loadProvincesPaged(snap)
 	table.clear(livePatchedProvinces)
 	local offset, total = 0, nil
 	while snap == state.snapshot do
+		-- Space each page above the server's 0.2s CALL_COOLDOWN. Keep this wait BEFORE the fetch: page 1
+		-- follows immediately after loadState (which already stamped the cooldown), so firing it with no gap
+		-- would be rejected as "too many calls" and abort the whole fill. Request the server's max page size
+		-- (1200, matching its clamp) so a ~5.7k-province world is 5 pages instead of 8 — 3 fewer round-trips.
 		task.wait(0.25)
 		if snap ~= state.snapshot then
 			return
 		end
-		local page, err = editorCall("provincesPage", { offset = offset, limit = 800 })
+		local page, err = editorCall("provincesPage", { offset = offset, limit = 1200 })
 		if type(page) ~= "table" then
 			setStatus("Province load failed: " .. tostring(err), Colors.Negative)
 			return
@@ -3479,9 +3501,10 @@ ensureLoaded = function()
 	applySnapshot(snap)
 	-- Surface read-only up-front: if this server can't write (off the editor place, or not the blessed
 	-- single-server writer), say so now rather than only when an edit is rejected. Edits still round-trip to
-	-- the server, which is the authoritative gate; this is just an early heads-up.
-	state.canWrite = snap.canWriteHere ~= false
-	if not state.canWrite then
+	-- the server, which is the authoritative gate; this is just an early heads-up. (We don't disable the edit
+	-- controls on a read-only server — the server rejects the write regardless — so there's no persisted flag
+	-- to keep; the banner below is the only use of canWriteHere.)
+	if snap.canWriteHere == false then
 		setStatus("Read-only on this server — browse only. Reopen from the editor's blessed server to make changes.", Colors.Negative)
 	end
 end
@@ -3626,7 +3649,6 @@ ClientSignals.connect("OpenDataEditor", function()
 	setEditorOpen(true)
 end)
 
--- If access is revoked while the window is open, close it.
 -- Live co-editor sync: the server fires DataEditorLive when another editor's Save or config Load moves the
 -- shared editor world. Auto-reload when we have no unsaved edits (re-baselining so our next Save diffs
 -- against the new shared world); if we DO have unsaved edits, only prompt, so we never clobber them.
@@ -3729,6 +3751,8 @@ do
 	end
 end
 
+-- If access is revoked while the window is open, close it. The server clears IsAdmin (and Destroys this GUI)
+-- when an editor loses authorization; this catches the window still being open at that moment.
 player:GetAttributeChangedSignal("IsAdmin"):Connect(function()
 	if gui.Enabled and player:GetAttribute("IsAdmin") ~= true then
 		setEditorOpen(false)
