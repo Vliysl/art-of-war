@@ -534,6 +534,9 @@ function SuperEvent.show(parentGui, payload, opts)
 	btn.ZIndex = 62
 	btn.Parent = btnRow
 	local btnStroke = Instance.new("UIStroke")
+	-- Border mode draws a rectangular border around the button; the default (Contextual) would instead
+	-- outline the text glyphs, which is not what we want here.
+	btnStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 	btnStroke.Color = GOLD
 	btnStroke.Thickness = 1
 	btnStroke.Transparency = 0.15
