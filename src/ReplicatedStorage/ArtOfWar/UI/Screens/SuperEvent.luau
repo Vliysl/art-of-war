@@ -1,16 +1,18 @@
 -- SuperEvent — the "a nation has formed / was released" announcement, styled as a period BROADSHEET (a
 -- Hearts-of-Iron-IV news-event front page) in Art of War's dark parchment + gold palette: an ornate framed
--- page with a Bodoni masthead, double rule, a dateline (in-game date), a framed headline photo, a serif
--- headline + article body, and a single acknowledge button. Non-blocking and draggable, shown centre-screen
--- to everyone and dismissed by its button (no auto-dismiss). Reusable: the game shows it via
--- Hud.showSuperEvent (server broadcast); the Data Editor previews it locally.
+-- page with a Bodoni masthead, a ruled colophon (place + in-game date), a framed headline cut with a caption,
+-- a gold event kicker, a flush-left serif headline + deck + drop-capped article body, an ornate end-mark, and
+-- a single acknowledge button. Non-blocking and draggable, shown centre-screen to everyone and dismissed by
+-- its button (no auto-dismiss); it scales down to always fit the viewport so the button is never off-screen.
+-- Reusable: the game shows it via Hud.showSuperEvent (server broadcast); the Data Editor previews it locally.
 --
--- payload = { title, body, buttonText?, imageId?, audioId?, tag?, color?, date? }
---   imageId -- headline photo; when blank, resolves the tag's crest (CountryColor.resolveFlag), else placeholder
---   date    -- { year, month, day } in-game date for the dateline (the dateline is omitted when absent)
---   audioId -- one-shot sting (blank = silent); UISound.playAssetId honours the Formation Audio mute
---   color   -- {r,g,b} nation accent (tints the top rule); defaults to gold
--- Shown centred and non-blocking; the player drags it by the page and dismisses it with the button.
+-- payload = { title, body, buttonText?, imageId?, audioId?, tag?, subject?, color?, date?, eventType?, kicker?, deck?, caption? }
+--   imageId   -- headline cut; when blank, resolves the tag's crest (CountryColor.resolveFlag), else placeholder
+--   subject   -- the nation's display name (colophon place + photo caption); falls back to the tag
+--   date      -- { year, month, day } in-game date for the colophon (omitted when absent)
+--   eventType -- "nation.formed" | "nation.released"; drives the kicker + deck when not given explicitly
+--   audioId   -- one-shot sting (blank = silent); UISound.playAssetId honours the Formation Audio mute
+--   color     -- {r,g,b} nation accent (tints the masthead rule); defaults to gold
 -- opts = { parent?, onDismiss? }
 
 local UserInputService = game:GetService("UserInputService")
@@ -19,6 +21,7 @@ local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
 local Colors = DesignSystem.Colors
 local Typography = DesignSystem.Typography
 local Shells = DesignSystem.Shells
+local Responsive = DesignSystem.Responsive
 local CountryColor = require(script.Parent.Parent.Parent.Modules.CountryColor)
 local UISound = require(script.Parent.Parent.UISound)
 
@@ -47,6 +50,17 @@ local MONTHS = {
 	"December",
 }
 
+-- The small gold caps line above the headline + the one-line deck under it — derived from the event kind so
+-- every broadsheet reads as FORMATION / INDEPENDENCE at a glance (an author may override via payload.kicker/deck).
+local EVENT_KICKER = {
+	["nation.formed"] = "Formation",
+	["nation.released"] = "Independence",
+}
+local EVENT_DECK = {
+	["nation.formed"] = "A new power takes its place among the nations of the world.",
+	["nation.released"] = "A people reclaim their sovereignty and raise their own standard.",
+}
+
 local function toColor3(c)
 	if typeof(c) == "Color3" then
 		return c
@@ -56,12 +70,28 @@ local function toColor3(c)
 	return nil
 end
 
+local function toHex(c)
+	return string.format(
+		"#%02X%02X%02X",
+		math.floor(c.R * 255 + 0.5),
+		math.floor(c.G * 255 + 0.5),
+		math.floor(c.B * 255 + 0.5)
+	)
+end
+local GOLD_HEX = toHex(GOLD)
+
+-- Escape RichText metacharacters so an authored body with & < > renders literally (we use RichText for the
+-- drop-cap initial).
+local function escapeRich(s)
+	return (s:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
+end
+
 local function formatDate(d)
 	if type(d) ~= "table" or not d.year then
 		return nil
 	end
 	local month = MONTHS[d.month or 1] or ""
-	return string.format("%d %s %d", d.day or 1, string.upper(month), d.year)
+	return string.upper(string.format("%d %s %d", d.day or 1, month, d.year))
 end
 
 -- A thin gold hairline whose ends fade out (the loading-screen rule technique) — no asset needed.
@@ -89,6 +119,7 @@ function SuperEvent.show(parentGui, payload, opts)
 	payload = payload or {}
 	opts = opts or {}
 	local accent = toColor3(payload.color) or GOLD
+	local touch = Responsive.isTouch()
 
 	-- Root sizes its height to the content column; the ornate shell fills it as the "page". Centred on screen
 	-- and given a responsive width so it never runs past a phone's edges; concurrent broadsheets cascade
@@ -112,6 +143,13 @@ function SuperEvent.show(parentGui, payload, opts)
 		openModals += 1
 	end
 
+	-- Fit-to-viewport: a UIScale shrinks the whole page so it always fits within the screen (height AND width),
+	-- guaranteeing the dismiss button is on-screen even on a short landscape phone. natural = AbsoluteSize/scale
+	-- recovers the unscaled size, so this converges (the epsilon guard stops the AbsoluteSize<->scale loop).
+	local uiScale = Instance.new("UIScale")
+	uiScale.Scale = 1
+	uiScale.Parent = root
+
 	-- Ornate gilt-framed dark-parchment page (existing 9-slice shell). Fills the root behind the content and
 	-- doubles as the drag handle: Active so it catches the press, while the dismiss button (also Active) sinks
 	-- its own so clicking it never starts a drag.
@@ -122,6 +160,28 @@ function SuperEvent.show(parentGui, payload, opts)
 	-- Drag-to-move: press anywhere on the page and drag (UserInputService tracks the pointer). Connections are
 	-- kept so they can be torn down on dismiss — nothing leaks while several broadsheets are open at once.
 	local dragConns = {}
+
+	local function refit()
+		if not camera then
+			return
+		end
+		local s = uiScale.Scale
+		if s <= 0.01 then
+			s = 0.01
+		end
+		local nat = root.AbsoluteSize / s -- unscaled size
+		if nat.X < 1 or nat.Y < 1 then
+			return
+		end
+		local vp = camera.ViewportSize
+		local target = math.min(1, (vp.X - 24) / nat.X, (vp.Y * 0.92) / nat.Y)
+		if math.abs(target - uiScale.Scale) > 0.01 then
+			uiScale.Scale = target
+		end
+	end
+	table.insert(dragConns, root:GetPropertyChangedSignal("AbsoluteSize"):Connect(refit))
+	task.defer(refit)
+
 	do
 		local dragging, dragStart, startPos, dragInput
 		table.insert(
@@ -203,10 +263,15 @@ function SuperEvent.show(parentGui, payload, opts)
 	list.Padding = UDim.new(0, 6)
 	list.Parent = content
 
+	local subject = payload.subject
+	if (not subject or subject == "") and payload.tag then
+		subject = payload.tag
+	end
+
 	-- 1) Masthead: the paper name in Bodoni (the loading-screen display face), centred.
 	local mastheadRow = Instance.new("Frame")
 	mastheadRow.Name = "Masthead"
-	mastheadRow.Size = UDim2.new(1, 0, 0, 40)
+	mastheadRow.Size = UDim2.new(1, 0, 0, 42)
 	mastheadRow.BackgroundTransparency = 1
 	mastheadRow.LayoutOrder = 1
 	mastheadRow.ZIndex = 62
@@ -222,39 +287,68 @@ function SuperEvent.show(parentGui, payload, opts)
 	masthead.ZIndex = 62
 	masthead.Parent = mastheadRow
 	local mCon = Instance.new("UITextSizeConstraint")
-	mCon.MaxTextSize = 40
+	mCon.MaxTextSize = 38
 	mCon.MinTextSize = 20
 	mCon.Parent = masthead
 
-	-- 2) Double rule under the masthead (existing gold double-line divider).
+	-- 2) Double rule under the masthead (existing gold double-line divider, tinted with the nation colour).
 	local mastRule =
 		Shells.create("divider_line_double", { Name = "MastRule", Size = UDim2.new(1, 0, 0, 6), ZIndex = 62 })
-	mastRule.ImageColor3 = accent -- tint the top rule with the nation colour
+	mastRule.ImageColor3 = accent
 	mastRule.LayoutOrder = 2
 	mastRule.Parent = content
 
-	-- 3) Dateline (in-game date only) — the band and its rule are omitted entirely when there is no date.
+	-- 3) Colophon bar: place (subject) flush-left, in-game date flush-right — the Georgian nameplate line.
 	local dateStr = formatDate(payload.date)
-	if dateStr then
-		local dateline = Instance.new("TextLabel")
-		dateline.Name = "Dateline"
-		dateline.Size = UDim2.new(1, 0, 0, 15)
-		dateline.BackgroundTransparency = 1
-		dateline.Text = dateStr
-		dateline.TextColor3 = SEPIA
-		dateline.FontFace = Typography.Serif
-		dateline.TextSize = 12
-		dateline.TextXAlignment = Enum.TextXAlignment.Center
-		dateline.LayoutOrder = 3
-		dateline.ZIndex = 62
-		dateline.Parent = content
+	if subject or dateStr then
+		local bar = Instance.new("Frame")
+		bar.Name = "Colophon"
+		bar.Size = UDim2.new(1, 0, 0, 16)
+		bar.BackgroundTransparency = 1
+		bar.LayoutOrder = 3
+		bar.ZIndex = 62
+		bar.Parent = content
+		if subject then
+			local place = Instance.new("TextLabel")
+			place.Name = "Place"
+			place.AnchorPoint = Vector2.new(0, 0.5)
+			place.Position = UDim2.fromScale(0, 0.5)
+			place.Size = UDim2.fromScale(0.6, 1)
+			place.BackgroundTransparency = 1
+			place.Text = string.upper(subject)
+			place.TextColor3 = SEPIA
+			place.FontFace = Typography.Serif
+			place.TextSize = 12
+			place.TextXAlignment = Enum.TextXAlignment.Left
+			place.TextTruncate = Enum.TextTruncate.AtEnd
+			place.ZIndex = 62
+			place.Parent = bar
+		end
+		if dateStr then
+			local date = Instance.new("TextLabel")
+			date.Name = "Dateline"
+			date.AnchorPoint = Vector2.new(1, 0.5)
+			date.Position = UDim2.fromScale(1, 0.5)
+			date.Size = UDim2.fromScale(0.6, 1)
+			date.BackgroundTransparency = 1
+			date.Text = dateStr
+			date.TextColor3 = SEPIA
+			date.FontFace = Typography.Serif
+			date.TextSize = 12
+			date.TextXAlignment = Enum.TextXAlignment.Right
+			date.ZIndex = 62
+			date.Parent = bar
+		end
 		hairline(content, 4, 2)
 	end
 
-	-- 4) Headline photo: the event image (or the tag's crest), framed like a press cut.
+	-- 4) Headline cut: the event image, else the tag's crest, framed like a press engraving. A crest fallback
+	-- is shown whole (Fit) on the sunken parchment; a real event photo is cropped to fill (Crop).
 	local imageId = payload.imageId
+	local isCrest = false
 	if not imageId or imageId == "" then
 		imageId = CountryColor.resolveFlag(payload.tag)
+		isCrest = imageId ~= nil and imageId ~= ""
 	end
 	local photo = Instance.new("Frame")
 	photo.Name = "Photo"
@@ -271,10 +365,12 @@ function SuperEvent.show(parentGui, payload, opts)
 	photoStroke.Parent = photo
 	if imageId and imageId ~= "" then
 		local img = Instance.new("ImageLabel")
-		img.Size = UDim2.fromScale(1, 1)
+		img.Size = isCrest and UDim2.new(1, -18, 1, -18) or UDim2.fromScale(1, 1)
+		img.Position = UDim2.fromScale(0.5, 0.5)
+		img.AnchorPoint = Vector2.new(0.5, 0.5)
 		img.BackgroundTransparency = 1
 		img.Image = imageId
-		img.ScaleType = Enum.ScaleType.Crop
+		img.ScaleType = isCrest and Enum.ScaleType.Fit or Enum.ScaleType.Crop
 		img.ZIndex = 62
 		img.Parent = photo
 	else
@@ -290,7 +386,41 @@ function SuperEvent.show(parentGui, payload, opts)
 		ph.Parent = photo
 	end
 
-	-- 5) Headline (centered serif).
+	-- 4b) Photo caption — the single strongest "this is a newspaper cut" signal.
+	local captionText = payload.caption or subject
+	if captionText and captionText ~= "" then
+		local caption = Instance.new("TextLabel")
+		caption.Name = "Caption"
+		caption.Size = UDim2.new(1, 0, 0, 14)
+		caption.BackgroundTransparency = 1
+		caption.Text = captionText
+		caption.TextColor3 = SEPIA
+		caption.FontFace = Typography.Serif
+		caption.TextSize = 11
+		caption.TextTransparency = 0.1
+		caption.TextXAlignment = Enum.TextXAlignment.Center
+		caption.TextTruncate = Enum.TextTruncate.AtEnd
+		caption.LayoutOrder = 6
+		caption.ZIndex = 62
+		caption.Parent = content
+	end
+
+	-- 5) Kicker: a small gold caps line naming the event class, flush-left above the headline.
+	local kicker = payload.kicker or EVENT_KICKER[payload.eventType] or "Dispatch"
+	local kick = Instance.new("TextLabel")
+	kick.Name = "Kicker"
+	kick.Size = UDim2.new(1, 0, 0, 14)
+	kick.BackgroundTransparency = 1
+	kick.Text = string.upper(kicker)
+	kick.TextColor3 = GOLD
+	kick.FontFace = Typography.SerifBold
+	kick.TextSize = 12
+	kick.TextXAlignment = Enum.TextXAlignment.Left
+	kick.LayoutOrder = 7
+	kick.ZIndex = 62
+	kick.Parent = content
+
+	-- 6) Headline (flush-left serif — the asymmetry is what reads as a front page rather than a poster).
 	local headline = Instance.new("TextLabel")
 	headline.Name = "Headline"
 	headline.Size = UDim2.fromScale(1, 0)
@@ -298,39 +428,68 @@ function SuperEvent.show(parentGui, payload, opts)
 	headline.BackgroundTransparency = 1
 	headline.Text = payload.title or "A New Power Rises"
 	headline.TextColor3 = INK
-	headline.TextXAlignment = Enum.TextXAlignment.Center
+	headline.TextXAlignment = Enum.TextXAlignment.Left
 	headline.TextWrapped = true
-	headline.LayoutOrder = 6
+	headline.LayoutOrder = 8
 	headline.ZIndex = 62
 	Typography.apply(headline, "displayLg")
 	headline.Parent = content
 
-	-- 6) Article body (justified feel via serif; Roblox has no true justify, left-aligned reads as column text).
+	-- 7) Deck: a one-line summary under the headline (author override, else derived from the event kind).
+	local deckText = payload.deck or EVENT_DECK[payload.eventType]
+	if deckText and deckText ~= "" then
+		local deck = Instance.new("TextLabel")
+		deck.Name = "Deck"
+		deck.Size = UDim2.fromScale(1, 0)
+		deck.AutomaticSize = Enum.AutomaticSize.Y
+		deck.BackgroundTransparency = 1
+		deck.Text = deckText
+		deck.TextColor3 = SEPIA
+		deck.TextXAlignment = Enum.TextXAlignment.Left
+		deck.TextWrapped = true
+		deck.LayoutOrder = 9
+		deck.ZIndex = 62
+		Typography.apply(deck, "title")
+		deck.Parent = content
+	end
+
+	-- 8) Article body (serif column text, flush-left, with a large gold drop-cap initial).
 	if payload.body and payload.body ~= "" then
 		local body = Instance.new("TextLabel")
 		body.Name = "Body"
 		body.Size = UDim2.fromScale(1, 0)
 		body.AutomaticSize = Enum.AutomaticSize.Y
 		body.BackgroundTransparency = 1
-		body.Text = payload.body
+		body.RichText = true
+		-- Split on the first full CODEPOINT (not byte) so a body starting with a multi-byte character -- e.g. a
+		-- native nation name like "Österreich" or "Éire" -- drop-caps cleanly instead of splitting the sequence.
+		local raw = payload.body
+		local second = utf8.offset(raw, 2) or (#raw + 1)
+		local first = escapeRich(string.sub(raw, 1, second - 1))
+		local rest = escapeRich(string.sub(raw, second))
+		body.Text = string.format('<font size="30" color="%s"><b>%s</b></font>%s', GOLD_HEX, first, rest)
 		body.TextColor3 = INK
-		body.TextTransparency = 0.08
 		body.TextXAlignment = Enum.TextXAlignment.Left
 		body.TextYAlignment = Enum.TextYAlignment.Top
 		body.TextWrapped = true
 		body.FontFace = Typography.Serif
-		body.TextSize = 14
-		body.LineHeight = 1.15
-		body.LayoutOrder = 7
+		body.TextSize = 16
+		body.LineHeight = 1.12
+		body.LayoutOrder = 10
 		body.ZIndex = 62
 		body.Parent = content
 	end
 
-	hairline(content, 8, 2)
+	-- 9) Ornate end-mark (period "furniture" — replaces a plain rule before the button).
+	local endMark =
+		Shells.create("divider_ornate_diamond", { Name = "EndMark", Size = UDim2.fromOffset(240, 22), ZIndex = 62 })
+	endMark.ImageColor3 = GOLD
+	endMark.LayoutOrder = 11
+	endMark.Parent = content
 
-	-- 7) Dismiss: a bespoke gold-outlined serif button (sharp corners — no UICorner, per house style).
-	-- Bookkeeping (drop the open-count, disconnect the drag) rides on Destroying, so it runs exactly once
-	-- whether the player clicks the button or the layer is torn down out from under us.
+	-- 10) Dismiss: a bespoke gold-outlined serif button (sharp corners — no UICorner, per house style).
+	-- Bookkeeping (drop the open-count, disconnect the drag/refit) rides on Destroying, so it runs exactly
+	-- once whether the player clicks the button or the layer is torn down out from under us.
 	root.Destroying:Connect(function()
 		if parentGui then
 			openModals = math.max(0, openModals - 1)
@@ -351,18 +510,19 @@ function SuperEvent.show(parentGui, payload, opts)
 		root:Destroy()
 	end
 
+	local btnH = touch and 44 or 34
 	local btnRow = Instance.new("Frame")
 	btnRow.Name = "Actions"
-	btnRow.Size = UDim2.new(1, 0, 0, 34)
+	btnRow.Size = UDim2.new(1, 0, 0, btnH + 4)
 	btnRow.BackgroundTransparency = 1
-	btnRow.LayoutOrder = 9
+	btnRow.LayoutOrder = 12
 	btnRow.ZIndex = 62
 	btnRow.Parent = content
 	local btn = Instance.new("TextButton")
 	btn.Name = "Dismiss"
 	btn.AnchorPoint = Vector2.new(0.5, 0.5)
 	btn.Position = UDim2.fromScale(0.5, 0.5)
-	btn.Size = UDim2.fromOffset(150, 30)
+	btn.Size = UDim2.fromOffset(touch and 190 or 160, btnH)
 	btn.BackgroundColor3 = Colors.SurfaceOverlay or Colors.SurfaceElevated
 	btn.BackgroundTransparency = 0.2
 	btn.AutoButtonColor = false

@@ -2635,6 +2635,8 @@ local function renderFormables()
 					audioId = normalizeAssetId(eventAudioBox.Text),
 					color = { rgb[1] or 150, rgb[2] or 150, rgb[3] or 150 },
 					tag = nm,
+					subject = nm, -- colophon place + photo caption
+					eventType = "nation.formed", -- sample kind so the kicker + deck render in the preview
 					date = { year = 1750, month = 7, day = 12 }, -- sample dateline for the preview
 				})
 			end,
