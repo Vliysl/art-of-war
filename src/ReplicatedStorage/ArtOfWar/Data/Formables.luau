@@ -23,6 +23,16 @@
 --     canForm             = boolean?,             -- default true
 --     canRelease          = boolean?,             -- default true
 --     secret              = boolean?,             -- hidden until the FULL territory is held (a discovery goal)
+--     description         = string?,             -- flavor shown in the Formables/Nation screen
+--     -- Formation/release EVENT (a global super-event banner; all optional -- a generic templated event with
+--     -- token substitution ({nation}, {oldNation}) fires when these are blank). Releasing reuses a def's event
+--     -- if one exists for the released tag. Rendered by UI/Screens/SuperEvent via NotificationBroadcaster.
+--     eventTitle          = string?,             -- banner heading
+--     eventDesc           = string?,             -- banner body
+--     eventButton         = string?,             -- dismiss-button label
+--     eventAudioId        = string?,             -- "rbxassetid://..." one-shot sting (blank = silent)
+--     eventImageId        = string?,             -- "rbxassetid://..." banner image (blank = the nation's crest)
+--     eventAudience       = ("global"|"personal")?, -- who sees the banner; nil/"global" = everyone
 --   }
 --
 -- DIFFICULTY BANDS (mirror UI/Screens/FormablesScreen tiers): Early <=15 required, Major <=40, Grand >40.

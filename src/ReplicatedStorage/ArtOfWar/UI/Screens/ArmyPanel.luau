@@ -1034,6 +1034,21 @@ function ArmyPanel.create(ctx)
 			ctx.fire("SetAutoCapture", id, not allOn)
 		end
 	end
+	function cmd.toggleMerge()
+		-- Merge is default-ON (mergeEnabled ~= false). "All on" means none is explicitly off.
+		local targets = liveTargets()
+		local allOn = true
+		for _, id in ipairs(targets) do
+			local a = getArmy(id)
+			if a and a.mergeEnabled == false then
+				allOn = false
+				break
+			end
+		end
+		for _, id in ipairs(targets) do
+			ctx.fire("SetMerge", id, not allOn)
+		end
+	end
 	function cmd.halt()
 		for _, id in ipairs(liveTargets()) do
 			local a = getArmy(id)
@@ -1303,7 +1318,7 @@ function ArmyPanel.create(ctx)
 	local function buildCommandBar(parent, order)
 		local targets = liveTargets()
 		local primaryArmy = getArmy(targets[1])
-		local reAllOn, capAllOn, anyMoving = true, true, false
+		local reAllOn, capAllOn, mergeAllOn, anyMoving = true, true, true, false
 		for _, id in ipairs(targets) do
 			local a = getArmy(id)
 			if a then
@@ -1312,6 +1327,9 @@ function ArmyPanel.create(ctx)
 				end
 				if not a.autoCapture then
 					capAllOn = false
+				end
+				if a.mergeEnabled == false then -- default ON; only explicit false is "off"
+					mergeAllOn = false
 				end
 				if a.movement then
 					anyMoving = true
@@ -1334,6 +1352,7 @@ function ArmyPanel.create(ctx)
 
 		toggleRow(wrap, { label = "Reinforcements", on = reAllOn, key = "R", onClick = cmd.toggleReinforce, order = 1 })
 		toggleRow(wrap, { label = "Auto-capture", on = capAllOn, key = "C", onClick = cmd.toggleCapture, order = 2 })
+		toggleRow(wrap, { label = "Merge", on = mergeAllOn, key = "M", onClick = cmd.toggleMerge, order = 3 })
 
 		-- Always render the full command grid so the layout is stable and the actions (and their hotkeys)
 		-- are discoverable; disable the ones that don't apply to the current selection rather than hiding
@@ -1813,6 +1832,7 @@ function ArmyPanel.create(ctx)
 		[Enum.KeyCode.T] = cmd.recruit,
 		[Enum.KeyCode.V] = cmd.split,
 		[Enum.KeyCode.G] = cmd.merge,
+		[Enum.KeyCode.M] = cmd.toggleMerge,
 	}
 	local keyConn = game:GetService("UserInputService").InputBegan:Connect(function(input, gameProcessed)
 		if gameProcessed then

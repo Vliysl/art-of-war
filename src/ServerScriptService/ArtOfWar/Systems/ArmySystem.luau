@@ -563,6 +563,22 @@ local function mergeArmies(primaryId, otherIds)
 	return true
 end
 
+-- Per-army "auto-merge on arrival" flag, DEFAULT ON. Stored as `false` ONLY when a player turns it off
+-- (nil = default ON, so the common case replicates no noise) -- mirrors reinforceEnabled's `~= false`
+-- semantics. "Is merge on for this army" is `army.mergeEnabled ~= false` everywhere.
+local function setMerge(armyId, enabled)
+	local army = ctx.WorldState.getArmy(armyId)
+	if not army then return false end
+	army.mergeEnabled = enabled and nil or false
+	ctx.WorldState.setArmy(armyId, army)
+	ctx.EventBus.publish(ctx.Channels.ArmyStateChanged, {
+		armyId = armyId,
+		tag = army.ownerTag,
+		state = army.state or "idle",
+	})
+	return true
+end
+
 -- Split: detach a sub-composition into a NEW army at the same province (inverse of
 -- mergeArmies). The new army inherits the source's morale; its organization is
 -- inherited too but capped at its own baseOrganization (which its composition sets),
@@ -826,6 +842,7 @@ function ArmySystem.register(context)
 		setState = setState,
 		setOriginProvinceId = setOriginProvinceId,
 		mergeArmies = mergeArmies,
+		setMerge = setMerge,
 		splitArmy = splitArmy,
 		reassignOfficer = reassignOfficer,
 		regenTick = regenTick,

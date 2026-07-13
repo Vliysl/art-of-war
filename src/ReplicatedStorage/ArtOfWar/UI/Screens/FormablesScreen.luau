@@ -18,6 +18,7 @@ local Typography = DesignSystem.Typography
 local aow = script.Parent.Parent.Parent -- ArtOfWar
 local FormablesClient = require(aow.Modules.FormablesClient)
 local WorldConstants = require(aow.Shared.WorldConstants)
+local WorldEventLog = require(aow.Modules.WorldEventLog)
 
 local FormablesScreen = {}
 
@@ -35,9 +36,12 @@ end
 -- when the threshold is met. Built from primitives (not StatRow) so the progress bar and crest fit cleanly.
 local function formableRow(parent, entry, ctx, order)
 	local def = entry.def
+	-- A formable with a description gets a taller row so the flavor line has its own space above the bar.
+	local hasDesc = type(def.description) == "string" and def.description ~= ""
+	local barY, statusY = (hasDesc and 40 or 30), (hasDesc and 48 or 38)
 	local row = Instance.new("Frame")
 	row.Name = "Formable_" .. entry.tag
-	row.Size = UDim2.new(1, 0, 0, 54)
+	row.Size = UDim2.new(1, 0, 0, hasDesc and 64 or 54)
 	row.BackgroundColor3 = Colors.SurfaceSunken or Colors.SurfaceBase
 	row.BorderSizePixel = 0
 	row.LayoutOrder = order
@@ -58,7 +62,7 @@ local function formableRow(parent, entry, ctx, order)
 
 	local name = Instance.new("TextLabel")
 	name.BackgroundTransparency = 1
-	name.Position = UDim2.fromOffset(52, 6)
+	name.Position = UDim2.fromOffset(52, hasDesc and 4 or 6)
 	name.Size = UDim2.new(1, -52 - 110, 0, 18)
 	name.Text = def.displayName or entry.tag
 	name.TextColor3 = Colors.TextPrimary
@@ -66,9 +70,22 @@ local function formableRow(parent, entry, ctx, order)
 	Typography.apply(name, "bodyMd")
 	name.Parent = row
 
+	if hasDesc then
+		local desc = Instance.new("TextLabel")
+		desc.BackgroundTransparency = 1
+		desc.Position = UDim2.fromOffset(52, 22)
+		desc.Size = UDim2.new(1, -52 - 110, 0, 14)
+		desc.Text = def.description
+		desc.TextColor3 = Colors.TextTertiary or Colors.TextSecondary
+		desc.TextXAlignment = Enum.TextXAlignment.Left
+		desc.TextTruncate = Enum.TextTruncate.AtEnd
+		Typography.apply(desc, "bodySm")
+		desc.Parent = row
+	end
+
 	-- Progress bar: fill = held / need, clamped. Green when the threshold is met, accent while in progress.
 	local barBg = Instance.new("Frame")
-	barBg.Position = UDim2.fromOffset(52, 30)
+	barBg.Position = UDim2.fromOffset(52, barY)
 	barBg.Size = UDim2.new(1, -52 - 110, 0, 6)
 	barBg.BackgroundColor3 = Colors.SurfaceBase or Colors.SurfaceElevated
 	barBg.BorderSizePixel = 0
@@ -88,7 +105,7 @@ local function formableRow(parent, entry, ctx, order)
 
 	local status = Instance.new("TextLabel")
 	status.BackgroundTransparency = 1
-	status.Position = UDim2.fromOffset(52, 38)
+	status.Position = UDim2.fromOffset(52, statusY)
 	status.Size = UDim2.new(1, -52 - 110, 0, 14)
 	status.Text = entry.reason
 	status.TextColor3 = entry.ready and Colors.Positive or Colors.TextSecondary
@@ -320,6 +337,27 @@ function FormablesScreen.renderReleasables(body, ctx, startOrder)
 	return order
 end
 
+-- Recent world events (formations / releases) so players who dismissed/missed a banner can catch up. Reads
+-- the shared WorldEventLog ring buffer (populated by Hud.showSuperEvent). Only shown when non-empty.
+function FormablesScreen.renderWorldEvents(body, ctx, startOrder)
+	local order = startOrder or 0
+	local list = WorldEventLog.getAll()
+	if #list == 0 then
+		return order
+	end
+	order += 1
+	ScreenKit.section(body, "World Events", order)
+	for _, e in ipairs(list) do
+		order += 1
+		ScreenKit.stat(body, { icon = "Star", label = e.title or "Event", layoutOrder = order })
+		if e.body and e.body ~= "" then
+			order += 1
+			ScreenKit.note(body, e.body, order)
+		end
+	end
+	return order
+end
+
 -- Build the screen either as a standalone window (container == nil) or embedded in a host pane (RealmScreen
 -- "Nation" tab). Mirrors DiplomacyScreen's build(ctx, container). Refreshes as territory replicates in.
 local function build(ctx, container)
@@ -346,7 +384,8 @@ local function build(ctx, container)
 	local function rebuild()
 		clearBody()
 		local order = FormablesScreen.renderFormables(body, ctx, 0)
-		FormablesScreen.renderReleasables(body, ctx, order)
+		order = FormablesScreen.renderReleasables(body, ctx, order)
+		FormablesScreen.renderWorldEvents(body, ctx, order)
 	end
 	rebuild()
 

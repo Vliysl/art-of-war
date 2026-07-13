@@ -397,23 +397,35 @@ local function endBattle(record, winnerSide, reason)
 				ctx.WorldState.setArmy(armyId, army)
 				ctx.ArmySystem.setState(armyId, "idle")
 				if isAttacker then
-					ctx.ArmySystem.relocateArmy(armyId, provinceId)
-					-- relocateArmy publishes no arrival event (and no-ops when the winner already
-					-- stands on the tile). Route through onArmyArrival explicitly: it instant-
-					-- captures the won tile, and if an at-war straggler somehow still stands there
-					-- it starts the follow-up battle instead of leaving hostile armies co-located.
-					-- Safe re-entrancy-wise: this record was removed before side processing.
-					if ctx.CombatSystem and ctx.CombatSystem.onArmyArrival then
-						ctx.CombatSystem.onArmyArrival(armyId, provinceId)
+					-- Adjacent-engagement victory: the winner fought from its OWN tile while the enemy held
+					-- `provinceId`, and must now advance into the vacated tile. Previously it TELEPORTED in
+					-- (relocateArmy, 0 movement time) then instantly re-captured + re-attacked, letting one
+					-- unit chain-grab provinces. Now it MARCHES: beginMove takes normal movement time, and the
+					-- existing pipeline runs on real arrival (ArmyMoveCompleted -> onArmyArrival captures the
+					-- tile; finishMove -> continuePath resumes any queued order). beginMove preserves
+					-- movementPath, and adjacency + the war gate are satisfied (winner on the adjacent origin,
+					-- target still enemy-owned).
+					local winner = ctx.WorldState.getArmy(armyId)
+					local alreadyThere = winner and winner.provinceId == provinceId
+					local marched = false
+					if not alreadyThere and ctx.MovementSystem and ctx.MovementSystem.beginMove then
+						marched = ctx.MovementSystem.beginMove(armyId, provinceId) == true
 					end
-					-- Adjacent engagement: a queued multi-tile order paused for this battle;
-					-- resume it through the just-won tile.
-					if ctx.WorldConstants.EnableAdjacentEngagement
-						and ctx.MovementSystem and ctx.MovementSystem.continuePath then
-						local refreshed = ctx.WorldState.getArmy(armyId)
-						if refreshed and refreshed.movementPath
-							and not refreshed.battleId and not refreshed.retreating then
-							ctx.MovementSystem.continuePath(refreshed)
+					if not marched then
+						-- Winner already stands on the contested tile (moved directly onto it and fought there),
+						-- or the march couldn't start: keep the immediate capture + path resume so it still
+						-- holds/advances (relocateArmy no-ops when already there).
+						ctx.ArmySystem.relocateArmy(armyId, provinceId)
+						if ctx.CombatSystem and ctx.CombatSystem.onArmyArrival then
+							ctx.CombatSystem.onArmyArrival(armyId, provinceId)
+						end
+						if ctx.WorldConstants.EnableAdjacentEngagement
+							and ctx.MovementSystem and ctx.MovementSystem.continuePath then
+							local refreshed = ctx.WorldState.getArmy(armyId)
+							if refreshed and refreshed.movementPath
+								and not refreshed.battleId and not refreshed.retreating then
+								ctx.MovementSystem.continuePath(refreshed)
+							end
 						end
 					end
 				end

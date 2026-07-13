@@ -187,6 +187,12 @@ if NotificationChannel then
 		if type(payload) ~= "table" then
 			return
 		end
+		-- Formation/release announcements ride the same channel as toasts but render as a prominent,
+		-- non-blocking banner (crest + title + body + dismiss + audio) instead of a corner toast.
+		if payload.kind == "superevent" and Hud and Hud.showSuperEvent then
+			Hud.showSuperEvent(payload)
+			return
+		end
 		if Hud and Hud.notify then
 			Hud.notify({
 				title = payload.title,

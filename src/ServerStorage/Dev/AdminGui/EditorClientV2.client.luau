@@ -2462,6 +2462,41 @@ local function renderFormables()
 		-- eligible formers see it as a goal with progress). Default No (visible as a goal).
 		local secretDD = ddYesNo("Secret formable", def ~= nil and def.secret == true)
 
+		-- Formation/release EVENT: a global super-event banner (+ optional audio sting) authored per formable.
+		-- All blank => a generic templated event still fires. Forming reads these; releasing reuses them if a
+		-- def exists for the released tag. Rendered by UI/Screens/SuperEvent via NotificationBroadcaster.
+		local descBox = bigField("Formable description", def and def.description or "", 54)
+		local eventTitleBox = field("Event: title", def and def.eventTitle or "", "blank = generic")
+		local eventDescBox = bigField("Event: description", def and def.eventDesc or "", 54)
+		local eventButtonBox = field("Event: button text", def and def.eventButton or "", "e.g. Glory!")
+		local eventAudioBox = field("Event: audio id", def and def.eventAudioId or "", "rbxassetid (blank = none)")
+		local eventImageBox = field("Event: image id", def and def.eventImageId or "", "rbxassetid (blank = crest)")
+		do
+			local imgPrev = Instance.new("ImageLabel")
+			imgPrev.Size = UDim2.fromOffset(22, 22)
+			imgPrev.AnchorPoint = Vector2.new(1, 0.5)
+			imgPrev.Position = UDim2.new(1, -2, 0.5, 0)
+			imgPrev.BackgroundTransparency = 1
+			imgPrev.ScaleType = Enum.ScaleType.Crop
+			imgPrev.ZIndex = 3
+			imgPrev.Parent = eventImageBox
+			local function refresh()
+				imgPrev.Image = normalizeAssetId(eventImageBox.Text) or ""
+			end
+			refresh()
+			eventImageBox:GetPropertyChangedSignal("Text"):Connect(refresh)
+		end
+		-- Who sees the banner: Everyone (a world super-event) or only the forming player. Default Everyone.
+		local audienceRow = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, LBLH + GAP + 26) })
+		rowLabel(audienceRow, "Announce to")
+		local audienceDD = dropdown({
+			parent = audienceRow,
+			size = UDim2.new(0, 140, 0, 26),
+			position = UDim2.fromOffset(0, LBLH + GAP),
+			options = { "Everyone", "Only me" },
+			value = (def and def.eventAudience == "personal") and "Only me" or "Everyone",
+		})
+
 		local saveBtn = Button.create({
 			parent = detail,
 			variant = "primary",
@@ -2520,6 +2555,36 @@ local function renderFormables()
 				if stab then
 					newDef.formBonuses = { stability = stab }
 				end
+				-- Event fields (all optional; blank => omitted so the generic fallback fires). Text is trimmed;
+				-- audio/image ids are normalized like the crest. eventAudience defaults to global (nil).
+				local function trimText(s)
+					return (tostring(s or ""):match("^%s*(.-)%s*$")) or ""
+				end
+				local descText = trimText(descBox.Text)
+				if descText ~= "" then
+					newDef.description = descText
+				end
+				local etitle = trimText(eventTitleBox.Text)
+				if etitle ~= "" then
+					newDef.eventTitle = etitle
+				end
+				local edesc = trimText(eventDescBox.Text)
+				if edesc ~= "" then
+					newDef.eventDesc = edesc
+				end
+				local ebtn = trimText(eventButtonBox.Text)
+				if ebtn ~= "" then
+					newDef.eventButton = ebtn
+				end
+				if eventAudioBox.Text ~= "" then
+					newDef.eventAudioId = normalizeAssetId(eventAudioBox.Text) or eventAudioBox.Text
+				end
+				if eventImageBox.Text ~= "" then
+					newDef.eventImageId = normalizeAssetId(eventImageBox.Text) or eventImageBox.Text
+				end
+				if audienceDD.get() == "Only me" then
+					newDef.eventAudience = "personal"
+				end
 				fireRemote("SetFormable", newTag, newDef)
 				state.selected = newTag
 				markDirty()
@@ -2527,6 +2592,42 @@ local function renderFormables()
 			end,
 		})
 		saveBtn.LayoutOrder = 98
+
+		-- Preview the formation banner with the CURRENT field values (client-only; renders the real SuperEvent
+		-- card + plays the audio once, so authors catch overflow / bad ids before publishing). {nation} resolves
+		-- to the display name in the preview.
+		local previewBtn = Button.create({
+			parent = detail,
+			variant = "ghost",
+			text = "Preview event",
+			width = 150,
+			onClick = function()
+				local SuperEvent = require(game:GetService("ReplicatedStorage").ArtOfWar.UI.Screens.SuperEvent)
+				local rgb = {}
+				for s in string.gmatch(colorBox.Text or "", "%d+") do
+					rgb[#rgb + 1] = tonumber(s)
+				end
+				local nm = (nameBox.Text ~= "" and nameBox.Text) or "New Nation"
+				local function sub(t, fallback)
+					if t == nil or t == "" then
+						return fallback
+					end
+					return (t:gsub("{(%w+)}", function(k)
+						return k == "nation" and nm or ("{" .. k .. "}")
+					end))
+				end
+				SuperEvent.show(gui, {
+					title = sub(eventTitleBox.Text, "A New Power Rises"),
+					body = sub(eventDescBox.Text, nm .. " has been forged!"),
+					buttonText = eventButtonBox.Text ~= "" and eventButtonBox.Text or "Continue",
+					imageId = normalizeAssetId(eventImageBox.Text) or normalizeAssetId(flagBox.Text),
+					audioId = normalizeAssetId(eventAudioBox.Text),
+					color = { rgb[1] or 150, rgb[2] or 150, rgb[3] or 150 },
+					tag = nm,
+				})
+			end,
+		})
+		previewBtn.LayoutOrder = 97
 
 		if tag then
 			local delBtn = Button.create({

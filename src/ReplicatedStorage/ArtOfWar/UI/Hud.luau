@@ -15,6 +15,8 @@ local Components = UI.Components
 local CountryBar = require(Screens.CountryBar)
 local TopBar = require(Screens.TopBar)
 local NotificationCard = require(Components.NotificationCard)
+local SuperEvent = require(Screens.SuperEvent)
+local WorldEventLog = require(ArtOfWar.Modules.WorldEventLog)
 -- TopbarPlus (v3) icon library, installed at ReplicatedStorage.TopbarPlus. Drives the native-look topbar
 -- Settings button that replaces the old on-screen gear. Client-only module (Hud is only required on the client).
 -- Guarded: a bare WaitForChild would YIELD FOREVER if TopbarPlus is missing from a republished place (it is
@@ -342,6 +344,18 @@ function Hud.notify(payload)
 	})
 	table.insert(notifications, card)
 	return card
+end
+
+-- Show a formation/release super-event: a prominent, non-blocking, auto-dismissing banner (crest + title +
+-- body + dismiss + optional audio) in the non-blocking Notifications layer. Also records it in the shared
+-- WorldEventLog (which the Nation screen renders as "World Events").
+function Hud.showSuperEvent(payload)
+	if not started or not layers.Notifications then
+		return
+	end
+	payload = payload or {}
+	WorldEventLog.add(payload)
+	return SuperEvent.show(layers.Notifications, payload)
 end
 
 function Hud.openScreen(name, props)

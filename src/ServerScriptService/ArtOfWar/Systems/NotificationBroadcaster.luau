@@ -233,26 +233,70 @@ local function onCountryClaimed(data)
 		"self", data.tag, "country.claimed"))
 end
 
+-- {token} substitution for authored event text: {nation}, {oldNation}. Unknown tokens are left literal.
+local function subst(template, tokens)
+	if type(template) ~= "string" then
+		return nil
+	end
+	return (template:gsub("{(%w+)}", function(k)
+		return tokens[k] or ("{" .. k .. "}")
+	end))
+end
+
+-- Fire the formation/release SUPER-EVENT: a banner broadcast (global or personal per the def) built from the
+-- formable def's authored event fields, with a generic templated fallback when unauthored. `formableTag` is
+-- the def key to read (the formable for forming; the released tag for releasing -- annexed nations carry a def
+-- under their tag, and authored releasables may too). `oldTag` names the releaser for release wording.
+local function fireSuperEvent(kind, tag, formableTag, oldTag)
+	local def = ctx.FormableSystem and ctx.FormableSystem.getDefinition and ctx.FormableSystem.getDefinition(formableTag)
+	local country = ctx.WorldState.getCountry(tag)
+	local nation = displayName(tag)
+	local tokens = { nation = nation, oldNation = oldTag and displayName(oldTag) or nation }
+
+	local genericTitle, genericBody, eventType
+	if kind == "released" then
+		genericTitle = "A Nation Rises"
+		genericBody = string.format("%s has broken free as an independent nation.", nation)
+		eventType = "nation.released"
+	else
+		genericTitle = "A New Power Rises"
+		genericBody = string.format("%s has been forged!", nation)
+		eventType = "nation.formed"
+	end
+
+	local title = (def and subst(def.eventTitle, tokens)) or genericTitle
+	local body = (def and subst(def.eventDesc, tokens)) or genericBody
+	local audience = (def and def.eventAudience == "personal") and "personal" or "global"
+	broadcast(makePayload("superevent", title, body, audience, tag, eventType, {
+		buttonText = (def and def.eventButton) or "Continue",
+		imageId = (def and def.eventImageId) or (country and country.flagAssetId) or nil,
+		audioId = def and def.eventAudioId or nil,
+		color = (def and def.color) or (country and country.color) or nil,
+		ttl = 8,
+	}))
+end
+
 -- Forming a nation (adopting a formable identity). data = { tag, formableTag }; the country's displayName is
--- already the formable's name by publish time, so displayName(tag) returns the new identity. Green success
--- toast + a rare global announcement (forming is one-time, so it is not spammy).
+-- already the formable's name by publish time. A personal celebratory toast for the former PLUS the world
+-- super-event banner (audience/text/audio/image from the def; generic fallback when unauthored).
 local function onNationFormed(data)
 	if not data or not data.tag then return end
 	broadcast(makePayload("success", "Nation Formed",
 		string.format("You have forged %s!", displayName(data.tag)),
 		"self", data.tag, "nation.formed", { ttl = 12 }))
-	broadcast(makePayload("info", "A New Power Rises",
-		string.format("The nation of %s has been forged.", displayName(data.tag)),
-		"global", nil, "nation.formed.global", { ttl = 8 }))
+	fireSuperEvent("formed", data.tag, data.formableTag, nil)
 end
 
--- Releasing a breakaway nation from your releasable cores. data = { overlordTag, subjectTag }. Notifies the
--- overlord (the releaser); the freed nation is AI today.
+-- Releasing a breakaway nation from your releasable cores. data = { overlordTag, subjectTag }. Personal toast
+-- for the overlord + the super-event banner (reuses a def for the released tag if one exists, else generic).
 local function onSubjectReleased(data)
 	if not data or not data.overlordTag then return end
 	broadcast(makePayload("success", "Nation Released",
 		string.format("%s has risen as a nation.", displayName(data.subjectTag)),
 		"self", data.overlordTag, "subject.released", { ttl = 10 }))
+	if data.subjectTag then
+		fireSuperEvent("released", data.subjectTag, data.subjectTag, data.overlordTag)
+	end
 end
 
 local function fleetOwnerOf(fleetId)

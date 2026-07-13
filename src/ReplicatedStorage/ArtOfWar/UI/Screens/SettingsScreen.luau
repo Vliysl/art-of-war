@@ -201,6 +201,15 @@ function SettingsScreen.create(ctx)
 					lp:SetAttribute("SoundMuted", not on)
 				end
 			end, 2)
+			-- Event / formation audio is a SEPARATE toggle from general UI Sound: some players want the game
+			-- audio but not the announcement stings. UISound.playAssetId reads the MuteEventAudio attribute.
+			toggleRow(body, "Formation Audio", function()
+				return not (lp and lp:GetAttribute("MuteEventAudio") == true)
+			end, function(on)
+				if lp then
+					lp:SetAttribute("MuteEventAudio", not on)
+				end
+			end, 2)
 			toggleRow(body, "Reduce Motion", function()
 				return lp and lp:GetAttribute("ReduceMotion") == true
 			end, function(on)

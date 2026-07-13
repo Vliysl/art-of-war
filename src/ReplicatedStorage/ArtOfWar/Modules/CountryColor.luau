@@ -95,4 +95,16 @@ function CountryColor.resolveFlag(tag)
 	return flag
 end
 
+-- Has this nation FORMED a formable identity (a persistent "formed power" marker, RON-style)? Reads the
+-- replicated `formedTags` set (forming sets country.formedTags[formableTag] = true). Live state only -- a
+-- static/dead tag is never "formed".
+function CountryColor.isFormed(tag)
+	if not tag then
+		return false
+	end
+	local rec = ClientStateCache.getCountry(tag)
+	local ft = rec and rec.formedTags
+	return type(ft) == "table" and next(ft) ~= nil
+end
+
 return CountryColor
