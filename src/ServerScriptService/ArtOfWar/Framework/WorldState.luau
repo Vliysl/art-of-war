@@ -462,27 +462,6 @@ function WorldState.allArmyGroups()
 	return store.armyGroups
 end
 
-function WorldState.snapshot()
-	return {
-		revision = revision,
-		provinces = store.provinces,
-		countries = store.countries,
-		markets = store.markets,
-		units = store.units,
-		fleets = store.fleets,
-		tradeRoutes = store.tradeRoutes,
-		ideologies = store.ideologies,
-		leaders = store.leaders,
-		armies = store.armies,
-		battles = store.battles,
-		wars = store.wars,
-		peaceProposals = store.peaceProposals,
-		tradeOrders = store.tradeOrders,
-		pacts = store.pacts,
-		armyGroups = store.armyGroups,
-	}
-end
-
 function WorldState.drainDirty()
 	local drained = {}
 	local removed = {}

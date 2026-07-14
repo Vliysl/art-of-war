@@ -288,7 +288,9 @@ function ClientStateCache.applyDelta(packet)
 		pruneToIdSet("armyGroups", packet.armyGroupIds)
 	end
 	if packet.revision then
-		cache.revision = packet.revision
+		-- Monotonic: a replayed / out-of-order delta must never regress the revision (mirrors the
+		-- fullSnapshot path), else a stale packet could later be re-accepted as newer than it is.
+		cache.revision = math.max(cache.revision or 0, packet.revision)
 	end
 end
 
