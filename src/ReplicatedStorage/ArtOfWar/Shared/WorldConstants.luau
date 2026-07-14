@@ -39,6 +39,9 @@ WorldConstants.EnablePeaceConference = false -- Phase 3: war-score peace confere
 WorldConstants.EnableFormables = true -- Phase 4: formable nations (Iberia is the first; no releasable defs yet)
 WorldConstants.EnableRebellions = false -- Phase 4: rebellions flip provinces
 WorldConstants.EnableNewEditor = false -- Phase 5: reserved. Both editors currently run (legacy=backtick, new=backslash)
+WorldConstants.EnablePolitics = false -- PoliticsScreen (authority/estates/policies/leaders) cut for playtest; server remotes gated, returns UPD2
+WorldConstants.EnableResearch = false -- tech tree cut; ResearchScreen is a "Coming Soon" stub; SetResearch gated until the rework ships
+WorldConstants.EnableTrade = false -- trade UI cut for playtest; legacy TradeSystem + TradeOrderSystem remotes gated, returns UPD2
 
 -- Map aesthetics: paint each land tile's Material from its province terrain (farmland→Carpet, grass
 -- family→Grass, desert→Sand, …; mapping = TERRAIN_MATERIALS in Systems/ProvinceStamper). Coast tiles

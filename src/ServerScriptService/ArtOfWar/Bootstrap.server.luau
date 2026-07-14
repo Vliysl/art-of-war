@@ -1113,6 +1113,9 @@ bindEvent("SetConsumerGoods", function(player, priorities)
 end)
 
 bindEvent("ProposeTrade", function(player, toTag, offer, request)
+	if not WorldConstants.EnableTrade then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.TradeSystem
 	if not auth or not system then
@@ -1126,6 +1129,9 @@ bindEvent("ProposeTrade", function(player, toTag, offer, request)
 end)
 
 bindEvent("AcceptTrade", function(player, tradeId)
+	if not WorldConstants.EnableTrade then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.TradeSystem
 	if not auth or not system then
@@ -1139,6 +1145,9 @@ bindEvent("AcceptTrade", function(player, tradeId)
 end)
 
 bindEvent("CancelTrade", function(player, tradeId)
+	if not WorldConstants.EnableTrade then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.TradeSystem
 	if not auth or not system then
@@ -1152,6 +1161,9 @@ bindEvent("CancelTrade", function(player, tradeId)
 end)
 
 bindEvent("PlaceTradeOrder", function(player, counterpartyTag, direction, lines, multiplier, recurring)
+	if not WorldConstants.EnableTrade then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.TradeOrderSystem
 	if not auth or not system then
@@ -1165,6 +1177,9 @@ bindEvent("PlaceTradeOrder", function(player, counterpartyTag, direction, lines,
 end)
 
 bindEvent("AcceptTradeOrder", function(player, orderId)
+	if not WorldConstants.EnableTrade then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.TradeOrderSystem
 	if not auth or not system then
@@ -1178,6 +1193,9 @@ bindEvent("AcceptTradeOrder", function(player, orderId)
 end)
 
 bindEvent("RejectTradeOrder", function(player, orderId)
+	if not WorldConstants.EnableTrade then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.TradeOrderSystem
 	if not auth or not system then
@@ -1191,6 +1209,9 @@ bindEvent("RejectTradeOrder", function(player, orderId)
 end)
 
 bindEvent("CancelTradeOrder", function(player, orderId)
+	if not WorldConstants.EnableTrade then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.TradeOrderSystem
 	if not auth or not system then
@@ -1204,6 +1225,9 @@ bindEvent("CancelTradeOrder", function(player, orderId)
 end)
 
 bindEvent("SetIdeology", function(player, ideologyId)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.IdeologySystem
 	if not auth or not system then
@@ -1217,6 +1241,9 @@ bindEvent("SetIdeology", function(player, ideologyId)
 end)
 
 bindEvent("SetGovernmentType", function(player, targetGov, targetIdeology)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	if not auth or not context.GovernmentTransitions then
 		return
@@ -1232,6 +1259,9 @@ bindEvent("SetGovernmentType", function(player, targetGov, targetIdeology)
 end)
 
 bindEvent("CancelTransition", function(player)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	if not auth or not context.GovernmentTransitions then
 		return
@@ -1244,6 +1274,9 @@ bindEvent("CancelTransition", function(player)
 end)
 
 bindEvent("EnactPolicy", function(player, policyId)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	if not auth then
 		return
@@ -1261,6 +1294,9 @@ bindEvent("EnactPolicy", function(player, policyId)
 end)
 
 bindEvent("RepealPolicy", function(player, policyId)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.PolicySystem
 	if not auth or not system then
@@ -1275,6 +1311,9 @@ end)
 
 -- Politics overhaul ("Authority & the Estates")
 bindEvent("GrantPrivilege", function(player, privilegeId)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	if not auth or not context.EstateSystem then
 		return
@@ -1287,6 +1326,9 @@ bindEvent("GrantPrivilege", function(player, privilegeId)
 end)
 
 bindEvent("RevokePrivilege", function(player, privilegeId)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	if not auth or not context.EstateSystem then
 		return
@@ -1299,6 +1341,9 @@ bindEvent("RevokePrivilege", function(player, privilegeId)
 end)
 
 bindEvent("SeizePower", function(player, estateId)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	if not auth or not context.EstateSystem then
 		return
@@ -1323,6 +1368,9 @@ bindEvent("ResolveEvent", function(player, eventId, optionId)
 end)
 
 bindEvent("SetResearch", function(player, techId)
+	if not WorldConstants.EnableResearch then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.ResearchSystem
 	if not auth or not system then
@@ -1336,6 +1384,9 @@ bindEvent("SetResearch", function(player, techId)
 end)
 
 bindEvent("CancelLaw", function(player)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.LawSystem
 	if not auth or not system then
@@ -1349,6 +1400,9 @@ bindEvent("CancelLaw", function(player)
 end)
 
 bindEvent("AppointLeader", function(player, slot, candidateIndex)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.LeaderSystem
 	if not auth or not system then
@@ -1362,6 +1416,9 @@ bindEvent("AppointLeader", function(player, slot, candidateIndex)
 end)
 
 bindEvent("DismissLeader", function(player, slot)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.LeaderSystem
 	if not auth or not system then
@@ -1813,6 +1870,29 @@ bindEvent("SplitArmy", function(player, armyId, composition)
 	armySys.splitArmy(armyId, cleaned)
 end)
 
+local TextService = game:GetService("TextService")
+-- Run a player-supplied name through Roblox text filtering before it is stored and replicated to every
+-- client (UGC-text compliance; also strips RichText injection). Returns a broadcast-safe string, or nil
+-- when the input is empty or filtering fails -- callers fall back to a safe default / keep the old name.
+local function filterBroadcastName(player, text)
+	if type(text) ~= "string" or text == "" then
+		return nil
+	end
+	local ok, result = pcall(function()
+		return TextService:FilterStringAsync(text, player.UserId)
+	end)
+	if not ok or not result then
+		return nil
+	end
+	local ok2, filtered = pcall(function()
+		return result:GetNonChatStringForBroadcastAsync()
+	end)
+	if not ok2 or type(filtered) ~= "string" then
+		return nil
+	end
+	return filtered
+end
+
 bindEvent("FormArmyGroup", function(player, name, armyIds)
 	local auth = authority()
 	local ags = loadedSystems.ArmyGroupSystem
@@ -1838,7 +1918,7 @@ bindEvent("FormArmyGroup", function(player, name, armyIds)
 	if #cleaned == 0 then
 		return
 	end
-	ags.createGroup(tag, name, cleaned)
+	ags.createGroup(tag, filterBroadcastName(player, name), cleaned)
 end)
 
 local function ownedGroup(tag, groupId)
@@ -1859,7 +1939,7 @@ bindEvent("RenameArmyGroup", function(player, groupId, name)
 	if not tag or not ownedGroup(tag, groupId) then
 		return
 	end
-	ags.renameGroup(groupId, name)
+	ags.renameGroup(groupId, filterBroadcastName(player, name))
 end)
 
 bindEvent("DisbandArmyGroup", function(player, groupId)
