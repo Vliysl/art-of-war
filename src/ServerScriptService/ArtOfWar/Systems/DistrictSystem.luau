@@ -209,6 +209,13 @@ local function buildDistrict(tag, provinceId, slotIndex, districtType)
 	if districtAt(province, slotIndex) then
 		return false, "slot_occupied"
 	end
+	-- One in-flight ticket per slot (mirrors upgradeDistrict): without this a double BuildDistrict in
+	-- one tick charges treasury twice for the same slot, and fulfil() drops the loser silently.
+	for _, t in (queuesByCountry[tag] or {}) do
+		if t.provinceId == provinceId and t.slotIndex == slotIndex then
+			return false, "already_queued"
+		end
+	end
 	if occupiedSlots(province) + pendingAt(tag, provinceId, true) >= slots then
 		return false, "no_free_slot"
 	end

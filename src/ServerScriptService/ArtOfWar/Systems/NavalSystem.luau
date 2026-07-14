@@ -616,11 +616,22 @@ local function tickMissions(dt)
 						local dipl = ctx.DiplomacySystem
 						local hostile = targetTag ~= nil and targetTag ~= fleet.ownerTag and (not dipl or not dipl.areAtWar or dipl.areAtWar(fleet.ownerTag, targetTag))
 						if hostile then
-							applyTreasuryDelta(targetTag, def.treasuryEffectPerTick)
-							if def.treasuryEffectGoesToMission then
-								local gain = -def.treasuryEffectPerTick
-								fleet.mission.treasuryGained = (fleet.mission.treasuryGained or 0) + gain
-								applyTreasuryDelta(fleet.ownerTag, gain)
+							local effect = def.treasuryEffectPerTick
+							if effect < 0 then
+								-- Floor the victim at zero: N stacked raiders share the finite treasury
+								-- instead of driving it arbitrarily negative, and the owner only ever
+								-- gains what was actually taken.
+								local targetCountry = ctx.WorldState.getCountry(targetTag)
+								local available = targetCountry and math.max(0, targetCountry.treasury or 0) or 0
+								effect = -math.min(available, -effect)
+							end
+							if effect ~= 0 then
+								applyTreasuryDelta(targetTag, effect)
+								if def.treasuryEffectGoesToMission then
+									local gain = -effect
+									fleet.mission.treasuryGained = (fleet.mission.treasuryGained or 0) + gain
+									applyTreasuryDelta(fleet.ownerTag, gain)
+								end
 							end
 						end
 					end

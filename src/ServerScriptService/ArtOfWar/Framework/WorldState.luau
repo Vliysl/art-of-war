@@ -405,6 +405,10 @@ function WorldState.allPeaceProposals()
 end
 
 function WorldState.setTradeOrder(id, record)
+	if record == nil then
+		tombstone("tradeOrders", id)
+		return
+	end
 	store.tradeOrders[id] = record
 	mark("tradeOrders", id)
 	bump()

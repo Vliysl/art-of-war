@@ -252,6 +252,30 @@ end
 
 local function fulfilTicket(ticket)
 	local tag = ticket.tag
+	local province = ctx.WorldState.getProvince(ticket.provinceId)
+	if not province or province.ownerTag ~= tag then
+		-- Ceded/annexed before recruitment completed (an ownership transfer, not an occupation the
+		-- freeze already cancels). Full refund -- treasury + manpower, as cancelTicket does -- rather
+		-- than spawn a friendly army inside now-foreign territory.
+		local country = ctx.WorldState.getCountry(tag)
+		local unit = unitOf(ticket.unitTypeId)
+		if country and unit then
+			country.treasury = (country.treasury or 0) + unit.recruitCost * ticket.count
+			local pool = poolFieldForUnit(unit)
+			country[pool] = (country[pool] or 0) + unit.recruitManpower * ticket.count
+			ctx.WorldState.setCountry(tag, country)
+		end
+		ctx.EventBus.publish(ctx.Channels.RegimentRecruitCancelled, {
+			tag = tag,
+			ticketId = ticket.id,
+			reason = "province_ceded",
+			provinceId = ticket.provinceId,
+			unitTypeId = ticket.unitTypeId,
+			count = ticket.count,
+		})
+		pruneCountryQueue(tag)
+		return
+	end
 	local army = ctx.ArmySystem.findFriendlyArmyAt(tag, ticket.provinceId)
 	if not army then
 		local composition = { [ticket.unitTypeId] = ticket.count }

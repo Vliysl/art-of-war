@@ -334,6 +334,33 @@ local function setEconomyPolicy(tag, policyId)
 	return true
 end
 
+-- Keep only known trade-good keys with finite, bounded numeric priorities. The remote schema caps the
+-- table at 256 entries but does not validate its contents, so a crafted client could otherwise inject
+-- arbitrary keys/values into a replicated country field (junk injection + payload bloat).
+local function sanitizeConsumerGoods(priorities)
+	if priorities == nil then
+		return nil
+	end
+	local goods = ctx.Bundle and ctx.Bundle.tradeGoods
+	if not goods then
+		return nil
+	end
+	local clean = {}
+	for goodId, value in pairs(priorities) do
+		if
+			type(goodId) == "string"
+			and goods[goodId] ~= nil
+			and type(value) == "number"
+			and value == value
+			and value ~= math.huge
+			and value ~= -math.huge
+		then
+			clean[goodId] = math.clamp(value, 0, 1e6)
+		end
+	end
+	return clean
+end
+
 local function setConsumerGoods(tag, priorities)
 	local country = ctx.WorldState.getCountry(tag)
 	if not country then
@@ -342,7 +369,7 @@ local function setConsumerGoods(tag, priorities)
 	if priorities ~= nil and type(priorities) ~= "table" then
 		return false
 	end
-	country.consumerGoodsPriority = priorities
+	country.consumerGoodsPriority = sanitizeConsumerGoods(priorities)
 	ctx.WorldState.setCountry(tag, country)
 	return true
 end

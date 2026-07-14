@@ -50,10 +50,12 @@ function EventBus.publish(channel, payload)
 	while queueHead <= queueTail do
 		processed += 1
 		if processed > maxDrainIterations then
-			queueHead = 1
-			queueTail = 0
-			draining = false
-			error("EventBus: drain iteration cap hit, possible event loop on '" .. channel .. "'")
+			-- Drain cap hit (runaway event loop): drop the remaining queue and bail with a warn
+			-- instead of error(). publish() runs from unprotected sites -- TickScheduler.step fires
+			-- TickStarted/DateAdvanced/TickCompleted outside pcall -- so a thrown error here would
+			-- abort the whole Heartbeat frame mid-step, skipping every later system that frame.
+			warn(string.format("[EventBus] drain iteration cap hit, dropping queue (possible event loop on '%s')", channel))
+			break
 		end
 		local entry = queue[queueHead]
 		queue[queueHead] = nil
