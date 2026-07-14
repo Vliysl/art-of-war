@@ -1361,16 +1361,30 @@ local function getIncomingProposals(tag)
 	return out
 end
 
+local DIPLO_TERMINAL_TTL_SECONDS = 60
+
 local function tickProposals()
 	local n = now()
 	for id, proposal in ctx.WorldState.allPeaceProposals() do
-		if proposal.status == "pending" and proposal.expiresAt and n >= proposal.expiresAt then
-			proposal.status = "expired"
+		if proposal.status == "pending" then
+			if proposal.expiresAt and n >= proposal.expiresAt then
+				proposal.status = "expired"
+				proposal.terminalAt = n
+				ctx.WorldState.setPeaceProposal(id, proposal)
+				ctx.EventBus.publish(ctx.Channels.PeaceProposalExpired, {
+					proposalId = id,
+					warId = proposal.warId,
+				})
+			end
+		elseif proposal.terminalAt == nil then
+			-- Resolved elsewhere (accepted / rejected / cancelled) with no stamp: mark it now.
+			proposal.terminalAt = n
 			ctx.WorldState.setPeaceProposal(id, proposal)
-			ctx.EventBus.publish(ctx.Channels.PeaceProposalExpired, {
-				proposalId = id,
-				warId = proposal.warId,
-			})
+		elseif n - proposal.terminalAt >= DIPLO_TERMINAL_TTL_SECONDS then
+			-- Terminal long enough for clients to render the outcome: drop from the store + replicated
+			-- collection so resolved offers can't accumulate (the diplomacy ticks and findActiveWar
+			-- scan these collections every cycle).
+			ctx.WorldState.setPeaceProposal(id, nil)
 		end
 	end
 end
@@ -2079,15 +2093,23 @@ end
 local function tickPacts()
 	local n = now()
 	for id, pact in ctx.WorldState.allPacts() do
-		if pact.status == "pending" and pact.expiresAt and n >= pact.expiresAt then
-			pact.status = "expired"
+		if pact.status == "pending" then
+			if pact.expiresAt and n >= pact.expiresAt then
+				pact.status = "expired"
+				pact.terminalAt = n
+				ctx.WorldState.setPact(id, pact)
+				ctx.EventBus.publish(ctx.Channels.PactExpired, {
+					pactId = id,
+					pactType = pact.type,
+					fromTag = pact.fromTag,
+					toTag = pact.toTag,
+				})
+			end
+		elseif pact.terminalAt == nil then
+			pact.terminalAt = n
 			ctx.WorldState.setPact(id, pact)
-			ctx.EventBus.publish(ctx.Channels.PactExpired, {
-				pactId = id,
-				pactType = pact.type,
-				fromTag = pact.fromTag,
-				toTag = pact.toTag,
-			})
+		elseif n - pact.terminalAt >= DIPLO_TERMINAL_TTL_SECONDS then
+			ctx.WorldState.setPact(id, nil)
 		end
 	end
 end
