@@ -141,6 +141,9 @@ WorldConstants.GuaranteeOpinionBonus = 15 -- both-ways when a guarantee is issue
 WorldConstants.GuaranteeRevokeOpinionPenalty = 15 -- protected->guarantor when a guarantee is revoked
 WorldConstants.GuaranteeCost = 40 -- B37: political-power cost to issue a guarantee (was free -> spammable opinion lever)
 WorldConstants.GuaranteeCooldownDays = 30 -- B37: per-protected-target cooldown before the guarantor can re-guarantee it
+WorldConstants.MaxArmiesPerCountry = 40 -- B22: cap on a country's army count (splitArmy rejects past this) so split-spam can't mint armies unbounded
+WorldConstants.AutoCaptureBfsNodeBudget = 400 -- B22: max provinces one AutoCapture nearest-target BFS explores before giving up
+WorldConstants.AutoCaptureMissCooldownSec = 15 -- B22: after a BFS finds no reachable target, back off this long before re-scanning
 
 -- Alliances + call-to-arms (Phase 3). Alliances reuse the pacts pipeline; call-to-arms drags a
 -- defender's allies/guarantors into linked co-belligerent wars.

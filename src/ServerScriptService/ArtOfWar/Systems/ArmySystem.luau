@@ -617,6 +617,20 @@ local function splitArmy(sourceId, splitComposition)
 	if takeTotal <= 0 then return false, "empty_split" end
 	if takeTotal >= totalRegimentCount(source.composition) then return false, "would_empty_source" end
 
+	-- B22: bound a country's army count so splitArmy (and BorderCover auto-split, which routes through it)
+	-- can't mint armies without limit -- a per-tag DoS + replication-bloat lever late game.
+	local armyCap = ctx.WorldConstants.MaxArmiesPerCountry or 40
+	local ownerBucket = armiesByOwner[source.ownerTag]
+	if ownerBucket then
+		local n = 0
+		for _ in ownerBucket do
+			n += 1
+		end
+		if n >= armyCap then
+			return false, "army_cap_reached"
+		end
+	end
+
 	-- New detached army at the same province: inherit morale; inherit org but clamp to
 	-- the new army's own baseOrganization (org <= baseOrg invariant).
 	local newArmy = createArmy(source.ownerTag, source.provinceId, take, { domain = source.domain })
