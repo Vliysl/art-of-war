@@ -118,6 +118,17 @@ if OwnPolitics and ClientStateCache then
 	end)
 end
 
+-- Fog of war: this player's own armies arrive in full detail here, stripped from the fogged shared StateSync
+-- broadcast when EnableFogOfWar is on. ClientStateCache overlays them so own armies show full, enemies fogged.
+local OwnArmies = Remotes and Remotes:WaitForChild("OwnArmies", 120)
+if OwnArmies and ClientStateCache then
+	OwnArmies.OnClientEvent:Connect(function(packet)
+		if type(packet) == "table" then
+			ClientStateCache.setOwnArmies(packet)
+		end
+	end)
+end
+
 if StateSync and ClientStateCache then
 	StateSync.OnClientEvent:Connect(function(packet)
 		ClientStateCache.applyDelta(packet)
