@@ -1485,13 +1485,34 @@ local function guaranteeIndependence(guarantorTag, protectedTag)
 	if not g or not p then
 		return false, "unknown_country"
 	end
+	local C = ctx.WorldConstants
+	-- B37: guarantees were free + instant, so guarantee->revoke->re-guarantee spam was a cheap opinion lever.
+	-- Charge political power and gate re-guaranteeing the same target behind a cooldown (mirrors improveRelations).
+	local cooldownUntil = g.guaranteeCooldown and g.guaranteeCooldown[protectedTag]
+	if cooldownUntil and cooldownUntil > now() then
+		return false, "on_cooldown"
+	end
+	local cost = C.GuaranteeCost or 40
+	if
+		not (
+			ctx.PoliticalPower
+			and ctx.PoliticalPower.spend
+			and ctx.PoliticalPower.spend(guarantorTag, cost, "guarantee")
+		)
+	then
+		return false, "insufficient_pp"
+	end
+	-- Re-fetch: the PP spend mutated + persisted the guarantor country.
+	g = ctx.WorldState.getCountry(guarantorTag)
 	g.guarantees = g.guarantees or {}
 	g.guarantees[protectedTag] = true
+	g.guaranteeCooldown = g.guaranteeCooldown or {}
+	g.guaranteeCooldown[protectedTag] = now() + dayToSeconds(C.GuaranteeCooldownDays or 30)
 	ctx.WorldState.setCountry(guarantorTag, g)
 	p.guaranteedBy = p.guaranteedBy or {}
 	p.guaranteedBy[guarantorTag] = true
 	ctx.WorldState.setCountry(protectedTag, p)
-	local bonus = ctx.WorldConstants.GuaranteeOpinionBonus or 15
+	local bonus = C.GuaranteeOpinionBonus or 15
 	addOpinion(guarantorTag, protectedTag, bonus)
 	addOpinion(protectedTag, guarantorTag, bonus)
 	ctx.EventBus.publish(ctx.Channels.GuaranteeIssued, {

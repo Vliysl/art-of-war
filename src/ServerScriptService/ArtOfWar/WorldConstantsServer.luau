@@ -139,6 +139,8 @@ WorldConstants.NapBreakOpinionPenalty = 40 -- both-ways for breaking a NAP early
 WorldConstants.NapAcceptThreshold = 0 -- AI signs a NAP when opinion >= this
 WorldConstants.GuaranteeOpinionBonus = 15 -- both-ways when a guarantee is issued
 WorldConstants.GuaranteeRevokeOpinionPenalty = 15 -- protected->guarantor when a guarantee is revoked
+WorldConstants.GuaranteeCost = 40 -- B37: political-power cost to issue a guarantee (was free -> spammable opinion lever)
+WorldConstants.GuaranteeCooldownDays = 30 -- B37: per-protected-target cooldown before the guarantor can re-guarantee it
 
 -- Alliances + call-to-arms (Phase 3). Alliances reuse the pacts pipeline; call-to-arms drags a
 -- defender's allies/guarantors into linked co-belligerent wars.

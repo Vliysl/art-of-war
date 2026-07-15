@@ -26,10 +26,15 @@ local function writeClaimField(tag, userId)
 	local country = ctx.WorldState.getCountry(tag)
 	if not country then return end
 	country.claimedBy = userId
-	-- Stamp when this player took the nation, so FormationRecordStore can measure "time to form" for the
-	-- fastest-time leaderboard. Only set on a real claim (userId present), not on release/unclaim.
+	-- Formation-leaderboard timer: stamp when a NEW claimant takes the nation, but PRESERVE the running timer
+	-- when the SAME player re-claims (leave/rejoin) so they can't rejoin to reset it and fake a fast time. A
+	-- genuinely different claimant on a released nation starts a fresh timer. Release (userId == nil) leaves
+	-- claimedAt + claimStartedBy intact so the original holder's rejoin keeps counting from their first claim.
 	if userId then
-		country.claimedAt = os.time()
+		if country.claimStartedBy ~= userId or type(country.claimedAt) ~= "number" then
+			country.claimedAt = os.time()
+			country.claimStartedBy = userId
+		end
 	end
 	ctx.WorldState.setCountry(tag, country)
 end
