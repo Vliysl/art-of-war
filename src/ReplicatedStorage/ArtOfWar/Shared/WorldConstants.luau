@@ -42,6 +42,7 @@ WorldConstants.EnableNewEditor = false -- Phase 5: reserved. Both editors curren
 WorldConstants.EnablePolitics = false -- PoliticsScreen (authority/estates/policies/leaders) cut for playtest; server remotes gated, returns UPD2
 WorldConstants.EnableResearch = false -- tech tree cut; ResearchScreen is a "Coming Soon" stub; SetResearch gated until the rework ships
 WorldConstants.EnableTrade = false -- trade UI cut for playtest; legacy TradeSystem + TradeOrderSystem remotes gated, returns UPD2
+WorldConstants.EnableFogOfWar = false -- B2: fog enemy army detail (composition/movement/officer); own armies delivered full via the OwnArmies channel. Default off (full-info) until the client overlay + a perf pass ship
 
 -- Map aesthetics: paint each land tile's Material from its province terrain (farmland→Carpet, grass
 -- family→Grass, desert→Sand, …; mapping = TERRAIN_MATERIALS in Systems/ProvinceStamper). Coast tiles

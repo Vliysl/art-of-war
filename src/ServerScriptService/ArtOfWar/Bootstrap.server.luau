@@ -2522,9 +2522,11 @@ end
 
 local stateSync = ensureEvent("StateSync")
 local ownPoliticsSync = ensureEvent("OwnPolitics")
+local ownArmiesSync = ensureEvent("OwnArmies")
 if loadedSystems.StateReplicator and context.StateReplicator then
 	context.StateReplicator.setStateSync(stateSync)
 	context.StateReplicator.setOwnPoliticsSync(ownPoliticsSync)
+	context.StateReplicator.setOwnArmiesSync(ownArmiesSync)
 end
 
 local notificationChannel = ensureEvent("NotificationChannel")
@@ -2579,6 +2581,9 @@ bindFunction("RequestFullState", function(player)
 	-- No-op until they have claimed; the claim then dirties the country and broadcast() keeps it current.
 	if player and context.StateReplicator.pushOwnPoliticsTo then
 		context.StateReplicator.pushOwnPoliticsTo(player)
+	end
+	if player and context.StateReplicator.pushOwnArmiesTo then
+		context.StateReplicator.pushOwnArmiesTo(player)
 	end
 	return snapshot
 end)
