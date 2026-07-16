@@ -624,15 +624,45 @@ end
 -- Diplomacy tick. AI-vs-AI wars never get the flag, so they still auto-resolve.
 local function stampHumanWars()
 	for id, war in ctx.WorldState.allWars() do
-		if
-			war.status == "active"
-			and not war.humanBelligerent
-			and (isClaimedTag(war.attackerTag) or isClaimedTag(war.defenderTag))
-		then
-			war.humanBelligerent = true
-			ctx.WorldState.setWar(id, war)
+		if war.status == "active" then
+			-- Per-side sticky human flags (never cleared) so proposePeace can tell a DISCONNECTED human
+			-- belligerent (whose nation must not be peaced/annexed behind their back -- B5) apart from a
+			-- genuine AI. attackerHuman/defenderHuman persist across that side disconnecting, exactly like
+			-- humanBelligerent does for the war as a whole.
+			local dirty = false
+			if not war.attackerHuman and isClaimedTag(war.attackerTag) then
+				war.attackerHuman = true
+				dirty = true
+			end
+			if not war.defenderHuman and isClaimedTag(war.defenderTag) then
+				war.defenderHuman = true
+				dirty = true
+			end
+			if not war.humanBelligerent and (war.attackerHuman or war.defenderHuman) then
+				war.humanBelligerent = true
+				dirty = true
+			end
+			if dirty then
+				ctx.WorldState.setWar(id, war)
+			end
 		end
 	end
+end
+
+-- True if `tag` is (or ever was) the human belligerent on its side of `war`. attackerHuman/defenderHuman are
+-- stamped by stampHumanWars while that side is connected and never cleared, so this stays true after the
+-- player disconnects -- letting the peace pipeline protect an offline human from having peace/annexation
+-- concluded on their behalf (B5), where the connection-only isClaimedTag would treat them as AI.
+local function isPersistentHumanSide(war, tag)
+	if not war then
+		return false
+	end
+	if tag == war.attackerTag then
+		return war.attackerHuman == true or isClaimedTag(tag)
+	elseif tag == war.defenderTag then
+		return war.defenderHuman == true or isClaimedTag(tag)
+	end
+	return false
 end
 
 local function hasPendingProposalForWar(warId, toTag)
@@ -795,7 +825,7 @@ local function applyConference(war, winnerTag, loserTag, terms, warId)
 				)
 			)
 		elseif d.type == "annex_all" then
-			if ctx.WorldConstants.EnableFullAnnex and not isClaimedTag(loserTag) then
+			if ctx.WorldConstants.EnableFullAnnex and not isPersistentHumanSide(war, loserTag) then
 				annexCountry(winnerTag, loserTag, warId)
 			else
 				applyTermsAnnexOccupied(war, winnerTag, loserTag)
@@ -809,7 +839,7 @@ local function applyConference(war, winnerTag, loserTag, terms, warId)
 	-- Zombie cleanup: an AI loser reduced to 0 provinces (and not already deleted) is removed.
 	if
 		ctx.WorldConstants.EnableFullAnnex
-		and not isClaimedTag(loserTag)
+		and not isPersistentHumanSide(war, loserTag)
 		and ctx.WorldState.getCountry(loserTag)
 		and ctx.ProvinceRegistry
 		and #ctx.ProvinceRegistry.byOwner(loserTag) == 0
@@ -850,7 +880,7 @@ local function endWar(warId, terms, opts)
 		-- linger owning un-occupied land (the old bug). Humans are never auto-deleted.
 		if
 			ctx.WorldConstants.EnableFullAnnex
-			and not isClaimedTag(loser)
+			and not isPersistentHumanSide(war, loser)
 			and ctx.ProvinceRegistry
 			and #ctx.ProvinceRegistry.byOwner(loser) == 0
 		then
@@ -861,7 +891,7 @@ local function endWar(warId, terms, opts)
 		-- loser is never deleted (fall back to taking only occupied land).
 		local winner = terms.proposerTag or war.attackerTag
 		local loser = (winner == war.attackerTag) and war.defenderTag or war.attackerTag
-		if ctx.WorldConstants.EnableFullAnnex and not isClaimedTag(loser) then
+		if ctx.WorldConstants.EnableFullAnnex and not isPersistentHumanSide(war, loser) then
 			annexCountry(winner, loser, warId)
 		else
 			applyTermsAnnexOccupied(war, winner, loser)
@@ -1226,16 +1256,25 @@ function proposePeace(fromTag, toTag, terms) -- fills the forward-declared upval
 		expiresAt = proposal.expiresAt,
 	})
 
+	-- B5: never auto-conclude a proposal to a persistent human who is currently disconnected -- hold it
+	-- pending (exactly like a connected human) so their nation can't be peaced or annexed behind their back.
+	local recipientOfflineHuman = isPersistentHumanSide(war, toTag) and not isClaimedTag(toTag)
+
+	-- B8: the full-capitulation override only applies to a proposer that actually did the beating -- holds
+	-- positive war score in this war, or occupies at least one of the target's provinces -- so a third party
+	-- can't declare war on an already-ground-down nation and instantly annex it ("capitulation sniping").
+	local proposerEarnedCapitulation = scoreInFavour(war, fromTag) > 0 or occupiedProvinceCount(fromTag, toTag) > 0
+
 	-- Full capitulation overrides the usual accept/reject path (AI willingness OR a human's
 	-- modal): a nation with nothing left surrenders on any terms the victor proposes.
-	if isFullyCapitulated(toTag) then
+	if isFullyCapitulated(toTag) and proposerEarnedCapitulation and not recipientOfflineHuman then
 		proposal.status = "accepted"
 		ctx.WorldState.setPeaceProposal(id, proposal)
 		endWar(war.id, terms, { consented = true })
 		return true, id
 	end
 
-	if not isClaimedTag(toTag) then
+	if not isClaimedTag(toTag) and not recipientOfflineHuman then
 		if terms.type == "annex_occupied" and occupiedProvinceCount(fromTag, toTag) <= 0 then
 			proposal.status = "rejected"
 			ctx.WorldState.setPeaceProposal(id, proposal)
@@ -1869,8 +1908,12 @@ local function annexSubject(overlordTag, subjectTag)
 		return false, "not_your_subject"
 	end
 	-- A human-controlled nation can never be annexed away (that would end their wars + delete their
-	-- country with no consent). Overlord annexation is an AI-subject-only mechanic.
-	if isClaimedTag(subjectTag) then
+	-- country with no consent). Overlord annexation is an AI-subject-only mechanic. Check PERSISTENT
+	-- humanity (claimStartedBy survives a disconnect/release) so an overlord can't vassalize a human, wait
+	-- for them to log off, and delete their nation behind their back (B5) -- this is the only path that can
+	-- fully delete a formerly-human nation, and it is not gated by EnableFullAnnex.
+	local subject = ctx.WorldState.getCountry(subjectTag)
+	if isClaimedTag(subjectTag) or (subject and subject.claimStartedBy ~= nil) then
 		return false, "cannot_annex_player"
 	end
 	clearSubject(overlordTag, subjectTag)
