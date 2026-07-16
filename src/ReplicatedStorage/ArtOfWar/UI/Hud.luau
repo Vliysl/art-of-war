@@ -10,6 +10,7 @@ local Spacing = DesignSystem.Spacing
 local Colors = DesignSystem.Colors
 local Icons = DesignSystem.Icons
 local Typography = DesignSystem.Typography
+local Motion = DesignSystem.Motion
 
 local Screens = UI.Screens
 local Components = UI.Components
@@ -725,16 +726,19 @@ function buildEventChip()
 	bang.ZIndex = chip.ZIndex + 1
 	bang.Parent = chip
 
-	-- gentle border pulse so the alert catches the eye
-	pcall(function()
-		game:GetService("TweenService")
-			:Create(
-				stroke,
-				TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-				{ Transparency = 0.55 }
-			)
-			:Play()
-	end)
+	-- gentle border pulse so the alert catches the eye -- skipped under Reduce Motion (the solid "!" chip still
+	-- draws attention without the looping animation).
+	if not Motion.reduced() then
+		pcall(function()
+			game:GetService("TweenService")
+				:Create(
+					stroke,
+					TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+					{ Transparency = 0.55 }
+				)
+				:Play()
+		end)
+	end
 
 	chip.MouseEnter:Connect(function()
 		bg.BackgroundColor3 = Colors.SurfaceOverlay

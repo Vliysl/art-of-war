@@ -15,6 +15,7 @@ local MapModeController = require(aow.Modules:WaitForChild("MapModeController"))
 local CameraController = require(aow.Modules:WaitForChild("CameraController"))
 local ProvincePositions = require(aow.Modules:WaitForChild("ProvincePositions"))
 local SeaNodes = require(aow:WaitForChild("Shared"):WaitForChild("SeaNodes"))
+local Motion = require(aow:WaitForChild("DesignSystem"):WaitForChild("Motion"))
 
 local STATE_ICON = {
 	idle = "",
@@ -1310,6 +1311,11 @@ local function ensurePulse(armyId, model, on)
 		local target = model:FindFirstChild("Base") or model:FindFirstChild("Shako") or model:FindFirstChild("Body")
 				or model:FindFirstChild("Cube", true) -- ship hull (nested in the mesh import, hence recursive)
 		if not target then return end
+		if Motion.reduced() then
+			-- reduced motion: hold the resting look instead of the looping selection pulse
+			target.Transparency = modeTransparency(cameraMode)
+			return
+		end
 		local tween = TweenService:Create(target,
 			TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
 			{ Transparency = 0.4 })
