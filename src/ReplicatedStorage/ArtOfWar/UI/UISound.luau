@@ -220,6 +220,11 @@ end
 function UISound.start()
 	local player = Players.LocalPlayer
 	if not player then return end
+	-- The Settings "Sound" toggle writes the SoundMuted attribute; honor it live (SFX vs Music split).
+	UISound.setMuted(player:GetAttribute("SoundMuted") == true)
+	player:GetAttributeChangedSignal("SoundMuted"):Connect(function()
+		UISound.setMuted(player:GetAttribute("SoundMuted") == true)
+	end)
 	local pg = player:WaitForChild("PlayerGui")
 	local function hook(inst)
 		if inst:IsA("ScreenGui") then UISound.attachAll(inst) end

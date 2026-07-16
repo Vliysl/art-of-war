@@ -72,6 +72,11 @@ WorldConstants.EnableGroupCards = true -- HUD army-group card strip (moves group
 WorldConstants.EnableRadialOrders = false -- Phase C: long-press radial order menu (touch); flag-gated, needs on-device tuning
 WorldConstants.EnableDragToMove = false -- Phase C: drag from a selected army to a province = move (touch); flag-gated, needs on-device tuning
 
+-- Audio
+WorldConstants.EnableMusic = false -- adaptive music (menu/peace/war/battle crossfades + regional themes); off until tracks are plugged in + playtested
+WorldConstants.MusicDefaultVolume = 0.6 -- default MusicVolume attribute on first join (session-only, no persistence)
+WorldConstants.MusicDebug = false -- log-only: print each music phase/region/track transition for tuning
+
 -- Ownership unification (single source of truth = the WorldState record). See the ownership-restructure plan.
 WorldConstants.RecordDrivenMapColoring = true -- P2: client colours the political map + nation-select highlight from the replicated record, not part attributes
 WorldConstants.RecordOwnershipChokepoint = true -- P3: server ownership mutations route through WorldState.setProvinceOwnership

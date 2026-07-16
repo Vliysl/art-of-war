@@ -61,6 +61,7 @@ local CombatView = safeRequire("CombatView")
 local SimClock = safeRequire("SimClock")
 local MoveArrowView = safeRequire("MoveArrowView")
 local CapitalMarkerView = safeRequire("CapitalMarkerView")
+local MusicController = safeRequire("MusicController")
 local WorldConstants = require(aow:WaitForChild("Shared"):WaitForChild("WorldConstants"))
 local provinceRecolorWired = false
 
@@ -214,6 +215,9 @@ if NotificationChannel then
 		if type(payload) ~= "table" then
 			return
 		end
+		if MusicController then
+			MusicController.onEvent(payload) -- one-shot music stings + ducking (no-op unless EnableMusic)
+		end
 		-- Formation/release announcements ride the same channel as toasts but render as a prominent,
 		-- non-blocking banner (crest + title + body + dismiss + audio) instead of a corner toast.
 		if payload.kind == "superevent" and Hud and Hud.showSuperEvent then
@@ -272,6 +276,10 @@ do
 			pcall(UISound.start)
 		end
 	end
+end
+
+if WorldConstants.EnableMusic then
+	safeCall(MusicController, "start")
 end
 
 task.defer(function()

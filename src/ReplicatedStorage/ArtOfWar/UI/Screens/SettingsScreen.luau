@@ -10,6 +10,7 @@ local Components = script.Parent.Parent.Components
 local Button = require(Components.Button)
 local Slider = require(Components.Slider)
 local WorldConstants = require(script.Parent.Parent.Parent.Shared.WorldConstants)
+local MusicTracks = require(script.Parent.Parent.Parent.Data.MusicTracks)
 local ClientSignals = require(script.Parent.Parent.Parent.Modules.ClientSignals)
 local ColorPicker = require(Components.ColorPicker)
 local MarketplaceService = game:GetService("MarketplaceService")
@@ -194,7 +195,7 @@ function SettingsScreen.create(ctx)
 	local renderers = {
 		general = function(body)
 			ScreenKit.section(body, "Display & Sound", 1)
-			toggleRow(body, "Sound", function()
+			toggleRow(body, "Sound Effects", function()
 				return not (lp and lp:GetAttribute("SoundMuted"))
 			end, function(on)
 				if lp then
@@ -235,6 +236,32 @@ function SettingsScreen.create(ctx)
 					lp:SetAttribute("DisableTooltips", not on)
 				end
 			end, 5)
+
+			if WorldConstants.EnableMusic then
+				ScreenKit.section(body, "Music", 6)
+				sliderRow(body, "Music Volume", function()
+					return (lp and lp:GetAttribute("MusicVolume")) or WorldConstants.MusicDefaultVolume
+				end, function(v)
+					if lp then
+						lp:SetAttribute("MusicVolume", v)
+					end
+				end, MusicTracks.VolumeMin, MusicTracks.VolumeMax, 7, function(v)
+					if v <= MusicTracks.VolumeMin then
+						return "Muted"
+					end
+					return math.floor(v * 100 + 0.5) .. "%"
+				end)
+				toggleRow(body, "Mute Music", function()
+					return lp ~= nil and lp:GetAttribute("MusicMuted") == true
+				end, function(muted)
+					if lp then
+						lp:SetAttribute("MusicMuted", muted)
+						if not muted and (lp:GetAttribute("MusicVolume") or 0) <= MusicTracks.VolumeMin then
+							lp:SetAttribute("MusicVolume", WorldConstants.MusicDefaultVolume)
+						end
+					end
+				end, 8)
+			end
 
 			ScreenKit.section(body, "Graphics", 10)
 			ScreenKit.note(
@@ -512,6 +539,31 @@ function SettingsScreen.create(ctx)
 					Hud.hideEventAlert()
 				end,
 			})
+
+			if WorldConstants.EnableMusic then
+				local MusicController = require(script.Parent.Parent.Parent.Modules.MusicController)
+				ScreenKit.section(body, "Music Audition", 50)
+				ScreenKit.note(body, "Force a music phase to preview its bed (client-only).", 51)
+				local mrow = ScreenKit.buttonRow(body, 52)
+				for _, ph in ipairs({ "menu", "loading", "peacetime", "war", "war_losing", "battle", "battle_losing" }) do
+					Button.create({
+						parent = mrow,
+						variant = "secondary",
+						text = ph,
+						onClick = function()
+							MusicController.previewPhase(ph, "default")
+						end,
+					})
+				end
+				Button.create({
+					parent = ScreenKit.buttonRow(body, 53),
+					variant = "ghost",
+					text = "Resume Live Music",
+					onClick = function()
+						MusicController.clearAudition()
+					end,
+				})
+			end
 		end,
 	}
 
