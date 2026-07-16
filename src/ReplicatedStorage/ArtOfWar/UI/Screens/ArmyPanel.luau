@@ -3,6 +3,7 @@ local Components = script.Parent.Parent.Components
 local Button = require(Components.Button)
 local CountryBadge = require(Components.CountryBadge)
 local Modal = require(Components.Modal)
+local PickerRow = require(Components.PickerRow)
 local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
 local Colors = DesignSystem.Colors
 local Typography = DesignSystem.Typography
@@ -638,33 +639,25 @@ function ArmyPanel.create(ctx)
 
 		for i, item in ipairs(pool) do
 			local locked = RecruitGate.unitNeedsMilitaryDistrict(item.def) and not hasMilitary
-			local row = ScreenKit.stat(list, {
+			-- PickerRow reserves the button's width in the text column. The old StatRow + overlaid button put
+			-- the value and the Add button in the same pixels; it only LOOKED fine because "28 gold" is short
+			-- enough to hide behind the button -- "Needs Military" was already being clipped by it.
+			PickerRow.create({
+				parent = list,
+				order = i,
 				icon = "Army",
 				label = item.def.displayName or titleCase(item.id),
-				value = locked and "Needs Military" or string.format("%s gold", commafy(item.def.recruitCost)),
-				valueColor = locked and Colors.Warning or nil,
-				mono = true,
-				layoutOrder = i,
-			})
-			if locked then
-				local lbl = row:FindFirstChild("Label")
-				if lbl then
-					lbl.TextColor3 = Colors.TextDisabled
-				end
-			end
-			local add = Button.create({
-				parent = row,
-				variant = "secondary",
-				text = "Add",
-				width = 72,
-				size = "sm",
-				disabled = locked, -- greys the button + blocks its onClick (Button.create gates on Active)
+				-- Terser than the Military screen's wording on purpose: this picker is a 300px floating modal,
+				-- so its text column is ~142px and the full sentence would truncate.
+				sub = locked and "Needs a Military district"
+					or string.format("%s gold", commafy(item.def.recruitCost)),
+				buttonText = "Add",
+				buttonWidth = 72,
+				locked = locked,
 				onClick = function()
 					ctx.fire("RecruitUnit", provinceId, item.id, 1)
 				end,
 			})
-			add.AnchorPoint = Vector2.new(1, 0.5)
-			add.Position = UDim2.fromScale(1, 0.5)
 		end
 	end
 

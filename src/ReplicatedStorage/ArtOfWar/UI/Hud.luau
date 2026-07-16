@@ -9,6 +9,7 @@ local Responsive = DesignSystem.Responsive
 local Spacing = DesignSystem.Spacing
 local Colors = DesignSystem.Colors
 local Icons = DesignSystem.Icons
+local Typography = DesignSystem.Typography
 
 local Screens = UI.Screens
 local Components = UI.Components
@@ -40,7 +41,7 @@ end
 
 local Hud = {}
 
-local LAYER_ORDER = { Hud = 10, Screens = 20, Modals = 50, Notifications = 60, Tooltips = 80 }
+local LAYER_ORDER = { Hud = 10, Screens = 20, Modals = 50, Notifications = 60, Watermark = 70, Tooltips = 80 }
 -- Court/Estates/Reforms (the PoliticsScreen) were cut ahead of the public playtest, so key 1 (which opened the
 -- standalone Politics window) is unbound and "Politics" is dropped from SCREEN_MODULES. The crest still opens
 -- the Realm window (now Diplomacy-only). Key 4 opens the standalone Diplomacy list.
@@ -119,6 +120,90 @@ local function buildCountryBar()
 	end
 end
 
+-- Build stamp. Pure white and outside the parchment palette on purpose (same kind of deliberate exception as
+-- the event chip below): it reads as an overlay on the recording, not as part of the UI. Kept on its own layer
+-- rather than layers.Hud because the whole point is that it survives into every screenshot of the alpha,
+-- including the nation-selection screen -- which disables the HUD layer. Labels only, no buttons, so it never
+-- sinks a map click.
+local WATERMARK_ATTRIBUTE = "ShowWatermark"
+local WATERMARK_COLOR = Color3.new(1, 1, 1)
+local WATERMARK_TRANSPARENCY = 0.9
+-- A stamp meant to be legible in a downscaled recording is intentionally off the type scale -- displayXl (32) is
+-- the largest role and this wants ~3x its role size -- so the sizes are derived by scaling what Typography.apply
+-- sets rather than hardcoded, and stay in step if the roles are ever retuned. title 20 -> 60, caption 11 -> 33.
+local WATERMARK_SCALE = 3
+-- Roboto Condensed Light exists only here and is deliberately NOT added to Typography: the stamp is meant to
+-- read as an overlay on the recording rather than as part of the parchment UI, and the design system shouldn't
+-- grow a face nothing else uses. The role is still what sizes the line (caption 11 -> 33); only the face is
+-- overridden.
+local WATERMARK_SUBTITLE_FONT =
+	Font.new("rbxasset://fonts/families/RobotoCondensed.json", Enum.FontWeight.Light, Enum.FontStyle.Normal)
+local WATERMARK_LINES = {
+	{ text = "ART OF WAR", role = "title" },
+	{ text = "PUBLIC ALPHA BUILD", role = "caption", font = WATERMARK_SUBTITLE_FONT },
+}
+
+local function watermarkEnabled()
+	local lp = Players.LocalPlayer
+	return lp == nil or lp:GetAttribute(WATERMARK_ATTRIBUTE) ~= false
+end
+
+local function buildWatermark()
+	local holder = Instance.new("Frame")
+	holder.Name = "Watermark"
+	holder.AnchorPoint = Vector2.new(0.5, 0)
+	holder.Size = UDim2.fromOffset(0, 0)
+	holder.AutomaticSize = Enum.AutomaticSize.XY
+	holder.BackgroundTransparency = 1
+	holder.Visible = watermarkEnabled()
+	holder.Parent = layers.Watermark
+
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Vertical
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = holder
+
+	for i, line in ipairs(WATERMARK_LINES) do
+		local label = Instance.new("TextLabel")
+		label.Name = "Line" .. i
+		label.Size = UDim2.fromOffset(0, 0)
+		label.AutomaticSize = Enum.AutomaticSize.XY
+		label.BackgroundTransparency = 1
+		label.Text = line.text
+		label.TextColor3 = WATERMARK_COLOR
+		label.TextTransparency = WATERMARK_TRANSPARENCY
+		label.LayoutOrder = i
+		Typography.apply(label, line.role)
+		if line.font then
+			label.FontFace = line.font
+		end
+		label.TextSize = math.round(label.TextSize * WATERMARK_SCALE)
+		label.Parent = holder
+	end
+
+	-- Same inset lift as placeTopBar, and for the same reason -- but it also has to keep the stamp clear of the
+	-- date capsule, which owns the top-center down to y=52. Both live on inset-respecting layers so they share a
+	-- coordinate space: Responsive's UIScale then scales the two identically and the 6px gap survives at any
+	-- scale. (Putting the stamp on an inset-IGNORING layer instead reopens that gap to scale drift -- at 0.8
+	-- scale under a 36px inset the capsule reaches y=48.8 while the stamp sits at y=46.4, and they collide.)
+	local function placeWatermark()
+		local inset = GuiService:GetGuiInset()
+		holder.Position = UDim2.new(0.5, 0, 0, 58 - inset.Y)
+	end
+	placeWatermark()
+	GuiService:GetPropertyChangedSignal("TopbarInset"):Connect(placeWatermark)
+
+	widgets.watermark = holder
+
+	local lp = Players.LocalPlayer
+	if lp then
+		lp:GetAttributeChangedSignal(WATERMARK_ATTRIBUTE):Connect(function()
+			holder.Visible = watermarkEnabled()
+		end)
+	end
+end
+
 local function mountPersistent(opts)
 	widgets.topBar = TopBar.create({
 		parent = layers.Hud,
@@ -151,6 +236,7 @@ local function mountPersistent(opts)
 	-- coloring; MapRenderer still applies it. Hud.setMapMode is now a no-op via the nil widget guard.)
 
 	buildCountryBar()
+	buildWatermark()
 
 	local holder = Instance.new("Frame")
 	holder.Name = "Notifications"
@@ -275,6 +361,7 @@ function Hud.start(opts)
 	layers.Screens = makeLayer("Screens", false, gui)
 	layers.Modals = makeLayer("Modals", true, gui)
 	layers.Notifications = makeLayer("Notifications", false, gui)
+	layers.Watermark = makeLayer("Watermark", false, gui)
 	layers.Tooltips = makeLayer("Tooltips", true, gui)
 	mountPersistent(opts)
 	bindHotkeys()
@@ -355,7 +442,10 @@ function Hud.showSuperEvent(payload)
 	end
 	payload = payload or {}
 	WorldEventLog.add(payload)
-	return SuperEvent.show(layers.Notifications, payload)
+	-- viewerTag rides in opts, NOT payload: the payload is the server's broadcast (identical for everyone, and
+	-- recorded verbatim in the shared WorldEventLog), whereas who is looking at it differs per client. It is
+	-- what puts the reader's own crest in the masthead's left corner.
+	return SuperEvent.show(layers.Notifications, payload, { viewerTag = screenContext.tag })
 end
 
 function Hud.openScreen(name, props)

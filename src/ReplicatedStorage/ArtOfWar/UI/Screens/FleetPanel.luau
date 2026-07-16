@@ -4,6 +4,7 @@ local Button = require(Components.Button)
 local Modal = require(Components.Modal)
 local Tooltip = require(Components.Tooltip)
 local CountryBadge = require(Components.CountryBadge)
+local PickerRow = require(Components.PickerRow)
 local CountryColor = require(script.Parent.Parent.Parent.Modules.CountryColor)
 
 local FleetPanel = {}
@@ -16,6 +17,14 @@ local function val(v)
 		return "\u{2014}"
 	end
 	return tostring(v)
+end
+
+-- Floor + thousands separators. Treasury is a float that accrues fractional income, so a raw tostring renders
+-- "799.0999999999999"; costs read better separated too. Mirrors ArmyPanel/MilitaryScreen.
+local function commafy(n)
+	n = math.floor(tonumber(n) or 0)
+	local out = tostring(n):reverse():gsub("(%d%d%d)", "%1,"):reverse()
+	return (out:gsub("^,", ""))
 end
 
 local function prettify(id)
@@ -180,7 +189,8 @@ function FleetPanel.create(ctx)
 		local modal = Modal.create({
 			parent = ctx.modalLayer,
 			title = "Build Ships",
-			subtitle = "Treasury " .. val(country and country.treasury),
+			-- commafy, not val: treasury accrues fractional income, so tostring renders "799.0999999999999".
+			subtitle = "Treasury " .. commafy(country and country.treasury),
 			width = 460,
 			height = 440,
 			dismissable = true,
@@ -202,32 +212,27 @@ function FleetPanel.create(ctx)
 		local order = 0
 		local function addShip(id, spec)
 			order += 1
-			local row = ScreenKit.stat(list, {
+			-- PickerRow, not StatRow + an overlaid button: StatRow right-aligns its value against the row's
+			-- right edge, so the Build button landed on top of the cost text. The old `build.ZIndex = row.ZIndex
+			-- + 5` painted the button over the collision instead of making room for it; PickerRow reserves the
+			-- button's width in the text column so nothing overlaps.
+			PickerRow.create({
+				parent = list,
+				order = order,
 				icon = "Ship",
 				label = spec.displayName or prettify(id),
-				value = string.format("%s gold  \u{00B7}  %s sailors", val(spec.hullCost), val(spec.sailorCost)),
-				mono = true,
-				layoutOrder = order,
+				sub = string.format("%s gold  \u{00B7}  %s sailors", commafy(spec.hullCost), commafy(spec.sailorCost)),
+				buttonText = "Build",
+				buttonWidth = 72,
 				height = 44,
-			})
-			if spec.description then
-				Tooltip.attach(row, function()
+				tooltip = spec.description and function()
 					return Tooltip.create({ title = spec.displayName or id, body = spec.description })
-				end)
-			end
-			local build = Button.create({
-				parent = row,
-				variant = "secondary",
-				text = "Build",
-				size = "sm",
+				end or nil,
 				onClick = function()
 					ctx.fire("RecruitShip", provinceId, id, 1)
 					modal.close()
 				end,
 			})
-			build.AnchorPoint = Vector2.new(1, 0.5)
-			build.Position = UDim2.fromScale(1, 0.5)
-			build.ZIndex = row.ZIndex + 5
 		end
 
 		local seen = {}

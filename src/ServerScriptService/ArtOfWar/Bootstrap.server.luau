@@ -1439,7 +1439,7 @@ bindEvent("SetMapMode", function(player, mode)
 	system.setMode(player, mode)
 end)
 
--- Human-readable body for a failed recruit/build. RecruitSystem returns snake_case tokens
+-- Human-readable body for a failed recruit/build/release. RecruitSystem returns snake_case tokens
 -- (insufficient_treasury, district_required:Military, ...); NavalSystem returns space-separated phrases
 -- ("no shipyard here"). Toasting this instead of dropping the click fixes the "Recruit does nothing" trap
 -- flagged in the pre-playtest ArmyPanel/FleetPanel audit.
@@ -1452,6 +1452,13 @@ local RECRUIT_REASON_TEXT = {
 	unit_locked = "That unit isn't available yet.",
 	unknown_unit = "That unit isn't available.",
 	bad_count = "Choose a valid amount.",
+	-- DiplomacySystem.releaseNation tokens. Without these the generic de-underscoring fallback would render
+	-- "no_releasable_cores" as the bare "No releasable cores.", which explains nothing to a player.
+	no_releasable_cores = "You hold no provinces that would free this nation.",
+	already_exists = "That nation already exists on the map.",
+	invalid = "That nation can't be released.",
+	unavailable = "Releasing isn't available right now.",
+	disabled = "Releasing nations is disabled.",
 }
 local function recruitFailBody(reason)
 	if type(reason) ~= "string" or reason == "" then
@@ -2491,7 +2498,12 @@ bindEvent("ReleaseNation", function(player, formableTag, asPuppet)
 	if not tag then
 		return
 	end
-	system.releaseNation(tag, formableTag, asPuppet == true)
+	-- releaseNation's rejection reason was being discarded, so a refused release looked identical to a
+	-- successful one from the client's side: nothing happened, with no explanation. Toast it like recruiting.
+	local ok, reason = system.releaseNation(tag, formableTag, asPuppet == true)
+	if not ok then
+		toastRecruitFail(tag, "Can't release", reason)
+	end
 end)
 
 bindEvent("SetFormable", function(player, tag, def)

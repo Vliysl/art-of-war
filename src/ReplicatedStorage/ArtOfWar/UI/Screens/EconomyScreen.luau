@@ -289,7 +289,9 @@ function EconomyScreen.create(ctx)
 			end,
 		})
 		table.insert(openModals, modal)
-		local content = modal.content
+		-- A nation can hold far more eligible provinces than the panel is tall, so the rows go in a scroller --
+		-- parented straight to modal.content they would stack past the panel and draw over the map.
+		local content = Modal.scrollBody(modal)
 		local layout = Instance.new("UIListLayout")
 		layout.FillDirection = Enum.FillDirection.Vertical
 		layout.SortOrder = Enum.SortOrder.LayoutOrder

@@ -1,7 +1,7 @@
 -- SuperEvent — the "a nation has formed / was released" announcement, styled as a period BROADSHEET (a
 -- Hearts-of-Iron-IV news-event front page) in Art of War's dark parchment + gold palette: an ornate framed
 -- page with a Bodoni masthead, a ruled colophon (place + in-game date), a framed headline cut with a caption,
--- a gold event kicker, a flush-left serif headline + deck + drop-capped article body, an ornate end-mark, and
+-- a gold event kicker, a flush-left serif headline + deck + serif article body, an ornate end-mark, and
 -- a single acknowledge button. Non-blocking and draggable, shown centre-screen to everyone and dismissed by
 -- its button (no auto-dismiss); it scales down to always fit the viewport so the button is never off-screen.
 -- Reusable: the game shows it via Hud.showSuperEvent (server broadcast); the Data Editor previews it locally.
@@ -13,7 +13,9 @@
 --   eventType -- "nation.formed" | "nation.released"; drives the kicker + deck when not given explicitly
 --   audioId   -- one-shot sting (blank = silent); UISound.playAssetId honours the Formation Audio mute
 --   color     -- {r,g,b} nation accent (tints the masthead rule); defaults to gold
--- opts = { parent?, onDismiss? }
+-- opts = { parent?, onDismiss?, viewerTag? }
+--   viewerTag -- the READER's own country tag -> the masthead's left crest (payload.tag supplies the right).
+--                Per-viewer, so it belongs here and not in the broadcast payload. Omitted = no left crest.
 
 local UserInputService = game:GetService("UserInputService")
 
@@ -23,6 +25,7 @@ local Typography = DesignSystem.Typography
 local Shells = DesignSystem.Shells
 local Responsive = DesignSystem.Responsive
 local CountryColor = require(script.Parent.Parent.Parent.Modules.CountryColor)
+local CountryBadge = require(script.Parent.Parent.Components.CountryBadge)
 local UISound = require(script.Parent.Parent.UISound)
 
 local SuperEvent = {}
@@ -68,22 +71,6 @@ local function toColor3(c)
 		return Color3.fromRGB(c[1], c[2] or 0, c[3] or 0)
 	end
 	return nil
-end
-
-local function toHex(c)
-	return string.format(
-		"#%02X%02X%02X",
-		math.floor(c.R * 255 + 0.5),
-		math.floor(c.G * 255 + 0.5),
-		math.floor(c.B * 255 + 0.5)
-	)
-end
-local GOLD_HEX = toHex(GOLD)
-
--- Escape RichText metacharacters so an authored body with & < > renders literally (we use RichText for the
--- drop-cap initial).
-local function escapeRich(s)
-	return (s:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
 end
 
 local function formatDate(d)
@@ -276,20 +263,87 @@ function SuperEvent.show(parentGui, payload, opts)
 	mastheadRow.LayoutOrder = 1
 	mastheadRow.ZIndex = 62
 	mastheadRow.Parent = content
+	-- Flanking crests: the READER's own nation on the left, the nation this dispatch is about on the right --
+	-- so a formation reads as "us, and them" at a glance. Either side is skipped when that nation has no crest
+	-- (resolveFlag returns nil), and the left is simply absent for an unclaimed viewer or the editor preview,
+	-- which is why the masthead is inset symmetrically rather than around whichever crests happen to exist.
+	local CORNER = 38
+	local function cornerCrest(tag, alignRight)
+		local id = tag and CountryColor.resolveFlag(tag)
+		if not id or id == "" then
+			return
+		end
+		-- CountryBadge, not a bare ImageLabel: it is what the country bar uses, so the crest is a 1:1 square
+		-- filled by a CROPPED decal (a plain ImageLabel's ScaleType.Fit letterboxes a wide flag inside the box
+		-- instead of filling it) and it carries the border. Gated on a resolved crest above, so the badge's
+		-- colour+tag fallback never renders here -- a long tag would overflow a corner this small.
+		local badge = CountryBadge.create({
+			code = tag,
+			flag = id,
+			square = true,
+			px = CORNER,
+			noFormedMarker = true, -- the modal already says FORMATION; the star would just crowd 38px
+		})
+		badge.Name = alignRight and "CrestRight" or "CrestLeft"
+		badge.AnchorPoint = Vector2.new(alignRight and 1 or 0, 0.5)
+		badge.Position = UDim2.fromScale(alignRight and 1 or 0, 0.5)
+		badge.ZIndex = 63
+		-- Retint the badge's own border from the subtle grey to the page's gold, matching the photo frame.
+		local stroke = badge:FindFirstChildOfClass("UIStroke")
+		if stroke then
+			stroke.Color = GOLD
+			stroke.Thickness = 1.5
+			stroke.Transparency = 0.25
+		end
+		badge.Parent = mastheadRow
+	end
+	cornerCrest(opts.viewerTag, false)
+	cornerCrest(payload.tag, true)
+
+	-- The masthead sits in its own centred column, inset past both crests and CLIPPED -- that clip is what
+	-- guarantees the rules can never run under a crest, however wide the paper name gets.
+	local mastCenter = Instance.new("Frame")
+	mastCenter.Name = "MastCenter"
+	mastCenter.AnchorPoint = Vector2.new(0.5, 0.5)
+	mastCenter.Position = UDim2.fromScale(0.5, 0.5)
+	mastCenter.Size = UDim2.new(1, -2 * (CORNER + 12), 1, 0)
+	mastCenter.BackgroundTransparency = 1
+	mastCenter.ClipsDescendants = true
+	mastCenter.ZIndex = 62
+	mastCenter.Parent = mastheadRow
+	-- Horizontal list so the rules hug the title and the whole "--- World News ---" group stays centred as a
+	-- unit, rather than each rule being positioned against a text width that TextScaled makes unpredictable.
+	local mastLayout = Instance.new("UIListLayout")
+	mastLayout.FillDirection = Enum.FillDirection.Horizontal
+	mastLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	mastLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	mastLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	mastLayout.Padding = UDim.new(0, 12)
+	mastLayout.Parent = mastCenter
+
+	local ruleLeft = hairline(mastCenter, 1, 2)
+	ruleLeft.Name = "MastRuleLeft"
+	ruleLeft.Size = UDim2.fromOffset(52, 2)
+
 	local masthead = Instance.new("TextLabel")
 	masthead.Name = "Title"
-	masthead.Size = UDim2.fromScale(1, 1)
+	-- Fixed size + AutomaticSize.X rather than TextScaled: the list needs a real text width to hug, and a
+	-- TextScaled label reports the full box. The root's fit-to-viewport UIScale already shrinks the whole page
+	-- on a narrow screen, so this keeps the size constraint TextScaled was providing.
+	masthead.AutomaticSize = Enum.AutomaticSize.X
+	masthead.Size = UDim2.fromOffset(0, 42)
 	masthead.BackgroundTransparency = 1
 	masthead.Text = MASTHEAD
 	masthead.TextColor3 = GOLD
 	masthead.Font = Enum.Font.Bodoni
-	masthead.TextScaled = true
+	masthead.TextSize = 38
+	masthead.LayoutOrder = 2
 	masthead.ZIndex = 62
-	masthead.Parent = mastheadRow
-	local mCon = Instance.new("UITextSizeConstraint")
-	mCon.MaxTextSize = 38
-	mCon.MinTextSize = 20
-	mCon.Parent = masthead
+	masthead.Parent = mastCenter
+
+	local ruleRight = hairline(mastCenter, 3, 2)
+	ruleRight.Name = "MastRuleRight"
+	ruleRight.Size = UDim2.fromOffset(52, 2)
 
 	-- 2) Double rule under the masthead (existing gold double-line divider, tinted with the nation colour).
 	local mastRule =
@@ -449,25 +503,24 @@ function SuperEvent.show(parentGui, payload, opts)
 		deck.TextWrapped = true
 		deck.LayoutOrder = 9
 		deck.ZIndex = 62
-		Typography.apply(deck, "title")
+		-- Set directly rather than via a role (as the colophon, caption, kicker and body all do): the deck is a
+		-- standfirst, so it should sit UNDER the body's 16 and stay out of the headline's way. The `title` role
+		-- it used before was SerifBold 20 -- larger than the article it was introducing, which is why it shouted.
+		deck.FontFace = Typography.Serif
+		deck.TextSize = 13
 		deck.Parent = content
 	end
 
-	-- 8) Article body (serif column text, flush-left, with a large gold drop-cap initial).
+	-- 8) Article body (serif column text, flush-left). Plain text, no RichText: the only thing that needed
+	-- markup here was the gold drop-capped initial, and without it an authored body containing & < > renders
+	-- literally instead of having to be escaped past a parser.
 	if payload.body and payload.body ~= "" then
 		local body = Instance.new("TextLabel")
 		body.Name = "Body"
 		body.Size = UDim2.fromScale(1, 0)
 		body.AutomaticSize = Enum.AutomaticSize.Y
 		body.BackgroundTransparency = 1
-		body.RichText = true
-		-- Split on the first full CODEPOINT (not byte) so a body starting with a multi-byte character -- e.g. a
-		-- native nation name like "Österreich" or "Éire" -- drop-caps cleanly instead of splitting the sequence.
-		local raw = payload.body
-		local second = utf8.offset(raw, 2) or (#raw + 1)
-		local first = escapeRich(string.sub(raw, 1, second - 1))
-		local rest = escapeRich(string.sub(raw, second))
-		body.Text = string.format('<font size="30" color="%s"><b>%s</b></font>%s', GOLD_HEX, first, rest)
+		body.Text = payload.body
 		body.TextColor3 = INK
 		body.TextXAlignment = Enum.TextXAlignment.Left
 		body.TextYAlignment = Enum.TextYAlignment.Top

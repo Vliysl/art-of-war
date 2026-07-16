@@ -738,7 +738,9 @@ function ProvinceOverview.create(ctx)
 			width = 340,
 			height = 300,
 		})
-		local content = modal.content
+		-- Scroller rather than modal.content: the eligible list is short today, but content neither clips nor
+		-- scrolls, so a longer list would stack past the panel and draw over the map.
+		local content = Modal.scrollBody(modal)
 		local layout = Instance.new("UIListLayout")
 		layout.Padding = UDim.new(0, 6)
 		layout.SortOrder = Enum.SortOrder.LayoutOrder

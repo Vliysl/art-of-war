@@ -12,6 +12,7 @@ local ScreenKit = require(script.Parent.ScreenKit)
 local Components = script.Parent.Parent.Components
 local Button = require(Components.Button)
 local CountryBadge = require(Components.CountryBadge)
+local Modal = require(Components.Modal)
 local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
 local Colors = DesignSystem.Colors
 local Typography = DesignSystem.Typography
@@ -37,19 +38,23 @@ end
 -- when the threshold is met. Built from primitives (not StatRow) so the progress bar and crest fit cleanly.
 local function formableRow(parent, entry, ctx, order)
 	local def = entry.def
-	-- A formable with a description gets a taller row so the flavor line has its own space above the bar.
-	local hasDesc = type(def.description) == "string" and def.description ~= ""
-	local barY, statusY = (hasDesc and 40 or 30), (hasDesc and 48 or 38)
 	local row = Instance.new("Frame")
 	row.Name = "Formable_" .. entry.tag
-	row.Size = UDim2.new(1, 0, 0, hasDesc and 64 or 54)
+	row.Size = UDim2.fromScale(1, 0)
+	row.AutomaticSize = Enum.AutomaticSize.Y
 	row.BackgroundColor3 = Colors.SurfaceSunken or Colors.SurfaceBase
 	row.BorderSizePixel = 0
 	row.LayoutOrder = order
 	row.Parent = parent
+	-- The crest sits outside the text column, so the row must never collapse shorter than it.
+	local minSize = Instance.new("UISizeConstraint")
+	minSize.MinSize = Vector2.new(0, 56)
+	minSize.Parent = row
 	local pad = Instance.new("UIPadding")
 	pad.PaddingLeft = UDim.new(0, 5)
 	pad.PaddingRight = UDim.new(0, 5)
+	pad.PaddingTop = UDim.new(0, 6)
+	pad.PaddingBottom = UDim.new(0, 6)
 	pad.Parent = row
 
 	CountryBadge.create({
@@ -59,38 +64,59 @@ local function formableRow(parent, entry, ctx, order)
 		flag = def.flag,
 		square = true,
 		px = 44,
-	}).Position = UDim2.fromScale(0, 0.08)
+	}).Position = UDim2.fromOffset(0, 0)
+
+	-- One vertical list rather than the y-offsets this row used to hand-tune per-field against a fixed height:
+	-- the old math had to branch the position of EVERY element on whether a description existed, and a wrapped
+	-- description would have overlapped the progress bar. The column grows; the row grows with it.
+	local col = Instance.new("Frame")
+	col.Name = "Column"
+	col.Position = UDim2.fromOffset(52, 0)
+	col.Size = UDim2.new(1, -52 - 110, 0, 0) -- 110 reserved for the Form button, held even when it is absent
+	col.AutomaticSize = Enum.AutomaticSize.Y
+	col.BackgroundTransparency = 1
+	col.Parent = row
+	local colLayout = Instance.new("UIListLayout")
+	colLayout.FillDirection = Enum.FillDirection.Vertical
+	colLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	colLayout.Padding = UDim.new(0, 3)
+	colLayout.Parent = col
 
 	local name = Instance.new("TextLabel")
 	name.BackgroundTransparency = 1
-	name.Position = UDim2.fromOffset(52, hasDesc and 4 or 6)
-	name.Size = UDim2.new(1, -52 - 110, 0, 18)
+	name.Size = UDim2.new(1, 0, 0, 18)
 	name.Text = def.displayName or entry.tag
 	name.TextColor3 = Colors.TextPrimary
 	name.TextXAlignment = Enum.TextXAlignment.Left
+	name.TextTruncate = Enum.TextTruncate.AtEnd
+	name.LayoutOrder = 1
 	Typography.apply(name, "bodyMd")
-	name.Parent = row
+	name.Parent = col
 
-	if hasDesc then
-		local desc = Instance.new("TextLabel")
-		desc.BackgroundTransparency = 1
-		desc.Position = UDim2.fromOffset(52, 22)
-		desc.Size = UDim2.new(1, -52 - 110, 0, 14)
-		desc.Text = def.description
-		desc.TextColor3 = Colors.TextTertiary or Colors.TextSecondary
-		desc.TextXAlignment = Enum.TextXAlignment.Left
-		desc.TextTruncate = Enum.TextTruncate.AtEnd
-		Typography.apply(desc, "bodySm")
-		desc.Parent = row
-	end
+	-- Always present. No static def authors a description today, so without this fallback the cell said nothing
+	-- about what the goal actually asks for -- catalogRow already resolves it exactly this way. Wrapped + a
+	-- fixed two-line height, so an authored description clamps with an ellipsis instead of pushing the row.
+	local desc = Instance.new("TextLabel")
+	desc.BackgroundTransparency = 1
+	desc.Size = UDim2.new(1, 0, 0, 28)
+	desc.Text = (type(def.description) == "string" and def.description ~= "" and def.description)
+		or FormableRules.requirementLabel(def)
+	desc.TextColor3 = Colors.TextTertiary or Colors.TextSecondary
+	desc.TextXAlignment = Enum.TextXAlignment.Left
+	desc.TextYAlignment = Enum.TextYAlignment.Top
+	desc.TextWrapped = true
+	desc.TextTruncate = Enum.TextTruncate.AtEnd
+	desc.LayoutOrder = 2
+	Typography.apply(desc, "bodySm")
+	desc.Parent = col
 
 	-- Progress bar: fill = held / need, clamped. Green when the threshold is met, accent while in progress.
 	local barBg = Instance.new("Frame")
-	barBg.Position = UDim2.fromOffset(52, barY)
-	barBg.Size = UDim2.new(1, -52 - 110, 0, 6)
+	barBg.Size = UDim2.new(1, 0, 0, 6)
 	barBg.BackgroundColor3 = Colors.SurfaceBase or Colors.SurfaceElevated
 	barBg.BorderSizePixel = 0
-	barBg.Parent = row
+	barBg.LayoutOrder = 3
+	barBg.Parent = col
 	local barCorner = Instance.new("UICorner")
 	barCorner.CornerRadius = UDim.new(1, 0)
 	barCorner.Parent = barBg
@@ -106,13 +132,14 @@ local function formableRow(parent, entry, ctx, order)
 
 	local status = Instance.new("TextLabel")
 	status.BackgroundTransparency = 1
-	status.Position = UDim2.fromOffset(52, statusY)
-	status.Size = UDim2.new(1, -52 - 110, 0, 14)
+	status.Size = UDim2.new(1, 0, 0, 14)
 	status.Text = entry.reason
 	status.TextColor3 = entry.ready and Colors.Positive or Colors.TextSecondary
 	status.TextXAlignment = Enum.TextXAlignment.Left
+	status.TextTruncate = Enum.TextTruncate.AtEnd
+	status.LayoutOrder = 4
 	Typography.apply(status, "bodySm")
-	status.Parent = row
+	status.Parent = col
 
 	if entry.ready then
 		local btn = Button.create({
@@ -125,8 +152,11 @@ local function formableRow(parent, entry, ctx, order)
 				ctx.fire("FormNation", entry.tag)
 			end,
 		})
-		btn.AnchorPoint = Vector2.new(1, 0.5)
-		btn.Position = UDim2.new(1, -4, 0.5, 0)
+		-- Offset-Y, not the 0.5 scale this used before: the row is AutomaticSize.Y now, so a scale-positioned
+		-- child would be resolving against a height that is itself being derived from the row's children.
+		-- 7px centres it against the common 56px row and stays put when a wrapped description grows one.
+		btn.AnchorPoint = Vector2.new(1, 0)
+		btn.Position = UDim2.new(1, -4, 0, 7)
 	end
 	return row
 end
@@ -217,6 +247,8 @@ local function collectReleasables(ctx)
 		return {}
 	end
 	local provinces = ctx.cache.allProvinces() or {}
+	-- Collect the province NAMES, not just a count: "Frees 6 provinces" never said WHICH six, and this is a
+	-- one-way handover of territory. Same single pass.
 	local ownedTags, candidate = {}, {}
 	for _, p in pairs(provinces) do
 		if p.ownerTag then
@@ -224,14 +256,20 @@ local function collectReleasables(ctx)
 		end
 		if p.ownerTag == mine and type(p.releasableCores) == "table" then
 			for _, relTag in ipairs(p.releasableCores) do
-				candidate[relTag] = (candidate[relTag] or 0) + 1
+				local bucket = candidate[relTag]
+				if not bucket then
+					bucket = {}
+					candidate[relTag] = bucket
+				end
+				bucket[#bucket + 1] = p.name or ("Province " .. tostring(p.id))
 			end
 		end
 	end
 	local out = {}
-	for relTag, count in pairs(candidate) do
+	for relTag, names in pairs(candidate) do
 		if relTag ~= mine and relTag ~= "NONE" and not ownedTags[relTag] then
-			out[#out + 1] = { tag = relTag, count = count }
+			table.sort(names)
+			out[#out + 1] = { tag = relTag, count = #names, names = names }
 		end
 	end
 	local function nameOf(tag)
@@ -244,18 +282,93 @@ local function collectReleasables(ctx)
 	return out
 end
 
+-- "Cadiz, Granada, Madrid and 4 more" — names up to a cap, then a count for the tail.
+local PREVIEW_NAMES = 3
+local function previewNames(names)
+	local total = #names
+	if total == 0 then
+		return ""
+	end
+	if total <= PREVIEW_NAMES then
+		if total == 1 then
+			return names[1]
+		end
+		return table.concat(names, ", ", 1, total - 1) .. " and " .. names[total]
+	end
+	return table.concat(names, ", ", 1, PREVIEW_NAMES) .. string.format(" and %d more", total - PREVIEW_NAMES)
+end
+
+-- Releasing hands provinces to a new nation and cannot be undone, so it gets a confirmation naming exactly what
+-- leaves and what the player gets back. Free vs Puppet used to be two unlabelled buttons; the modal is where
+-- the difference is actually stated.
+local function confirmRelease(entry, ctx, nationName, asPuppet)
+	local modal = Modal.create({
+		parent = ctx.modalLayer or ctx.parent,
+		title = (asPuppet and "Release " or "Free ") .. nationName,
+		subtitle = string.format("%d province%s", entry.count, entry.count == 1 and "" or "s"),
+		width = 380,
+		height = 260,
+	})
+	local content = Modal.scrollBody(modal)
+	local layout = Instance.new("UIListLayout")
+	layout.Padding = UDim.new(0, 8)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = content
+
+	ScreenKit.note(
+		content,
+		asPuppet
+				and string.format(
+					"%s becomes your subject: it keeps its own government but follows you into war. You lose direct control of these provinces.",
+					nationName
+				)
+			or string.format(
+				"%s becomes fully independent -- its own nation, not bound to you. You lose these provinces outright.",
+				nationName
+			),
+		1
+	)
+	ScreenKit.note(content, "Leaving your realm: " .. previewNames(entry.names or {}), 2)
+
+	local row = ScreenKit.buttonRow(content, 3)
+	Button.create({
+		parent = row,
+		variant = asPuppet and "primary" or "danger",
+		text = asPuppet and "Release as puppet" or "Free outright",
+		onClick = function()
+			ctx.fire("ReleaseNation", entry.tag, asPuppet)
+			modal.close()
+		end,
+	})
+	Button.create({
+		parent = row,
+		variant = "ghost",
+		text = "Cancel",
+		onClick = function()
+			modal.close()
+		end,
+	})
+end
+
 local function releasableRow(parent, entry, ctx, order)
 	local rec = ctx.cache and ctx.cache.getCountry(entry.tag)
+	local nationName = (rec and rec.displayName) or entry.tag
 	local row = Instance.new("Frame")
 	row.Name = "Releasable_" .. entry.tag
-	row.Size = UDim2.new(1, 0, 0, 54)
+	row.Size = UDim2.fromScale(1, 0)
+	row.AutomaticSize = Enum.AutomaticSize.Y
 	row.BackgroundColor3 = Colors.SurfaceSunken or Colors.SurfaceBase
 	row.BorderSizePixel = 0
 	row.LayoutOrder = order
 	row.Parent = parent
+	local minSize = Instance.new("UISizeConstraint")
+	minSize.MinSize = Vector2.new(0, 56)
+	minSize.Parent = row
 	local pad = Instance.new("UIPadding")
 	pad.PaddingLeft = UDim.new(0, 5)
 	pad.PaddingRight = UDim.new(0, 5)
+	pad.PaddingTop = UDim.new(0, 6)
+	pad.PaddingBottom = UDim.new(0, 6)
 	pad.Parent = row
 
 	CountryBadge.create({
@@ -265,41 +378,58 @@ local function releasableRow(parent, entry, ctx, order)
 		flag = rec and rec.flagAssetId,
 		square = true,
 		px = 44,
-	}).Position = UDim2.fromScale(0, 0.08)
+	}).Position = UDim2.fromOffset(0, 0)
+
+	local col = Instance.new("Frame")
+	col.Name = "Column"
+	col.Position = UDim2.fromOffset(52, 0)
+	col.Size = UDim2.new(1, -52 - 150, 0, 0)
+	col.AutomaticSize = Enum.AutomaticSize.Y
+	col.BackgroundTransparency = 1
+	col.Parent = row
+	local colLayout = Instance.new("UIListLayout")
+	colLayout.FillDirection = Enum.FillDirection.Vertical
+	colLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	colLayout.Padding = UDim.new(0, 3)
+	colLayout.Parent = col
 
 	local name = Instance.new("TextLabel")
 	name.BackgroundTransparency = 1
-	name.Position = UDim2.fromOffset(52, 8)
-	name.Size = UDim2.new(1, -52 - 150, 0, 18)
-	name.Text = (rec and rec.displayName) or entry.tag
+	name.Size = UDim2.new(1, 0, 0, 18)
+	name.Text = nationName
 	name.TextColor3 = Colors.TextPrimary
 	name.TextXAlignment = Enum.TextXAlignment.Left
+	name.TextTruncate = Enum.TextTruncate.AtEnd
+	name.LayoutOrder = 1
 	Typography.apply(name, "bodyMd")
-	name.Parent = row
+	name.Parent = col
 
-	-- Release "preview": how many of your provinces the breakaway would take.
+	-- Which provinces go, not just how many.
 	local status = Instance.new("TextLabel")
 	status.BackgroundTransparency = 1
-	status.Position = UDim2.fromOffset(52, 28)
-	status.Size = UDim2.new(1, -52 - 150, 0, 16)
-	status.Text = string.format("Frees %d province%s you hold", entry.count, entry.count == 1 and "" or "s")
+	status.Size = UDim2.new(1, 0, 0, 28)
+	status.Text = previewNames(entry.names or {})
 	status.TextColor3 = Colors.TextSecondary
 	status.TextXAlignment = Enum.TextXAlignment.Left
+	status.TextYAlignment = Enum.TextYAlignment.Top
+	status.TextWrapped = true
+	status.TextTruncate = Enum.TextTruncate.AtEnd
+	status.LayoutOrder = 2
 	Typography.apply(status, "bodySm")
-	status.Parent = row
+	status.Parent = col
 
 	local freeBtn = Button.create({
 		parent = row,
-		variant = "primary",
+		variant = "secondary",
 		text = "Free",
 		width = 64,
 		size = "sm",
 		onClick = function()
-			ctx.fire("ReleaseNation", entry.tag, false)
+			confirmRelease(entry, ctx, nationName, false)
 		end,
 	})
-	freeBtn.AnchorPoint = Vector2.new(1, 0.5)
-	freeBtn.Position = UDim2.new(1, -4, 0.5, 0)
+	freeBtn.AnchorPoint = Vector2.new(1, 0)
+	freeBtn.Position = UDim2.new(1, -4, 0, 7)
 
 	local puppetBtn = Button.create({
 		parent = row,
@@ -308,11 +438,11 @@ local function releasableRow(parent, entry, ctx, order)
 		width = 74,
 		size = "sm",
 		onClick = function()
-			ctx.fire("ReleaseNation", entry.tag, true)
+			confirmRelease(entry, ctx, nationName, true)
 		end,
 	})
-	puppetBtn.AnchorPoint = Vector2.new(1, 0.5)
-	puppetBtn.Position = UDim2.new(1, -72, 0.5, 0)
+	puppetBtn.AnchorPoint = Vector2.new(1, 0)
+	puppetBtn.Position = UDim2.new(1, -72, 0, 7)
 	return row
 end
 

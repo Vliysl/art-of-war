@@ -1,9 +1,21 @@
+local Players = game:GetService("Players")
+
 local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
 local Colors = DesignSystem.Colors
 local Typography = DesignSystem.Typography
 local Spacing = DesignSystem.Spacing
 
 local Tooltip = {}
+
+-- Whether this player wants tooltips at all (Settings -> Display & Sound). The attribute is absent by default,
+-- so tooltips are ON unless explicitly turned off. The game has four independent hover surfaces -- this one,
+-- ProvinceTooltip, CountryBar's bespoke chip tip and NationSelection's -- and each consults this, so the name
+-- of the attribute lives in exactly one place. MUST be read at hover time rather than when a tooltip is wired
+-- up: an attach-time check would need a UI rebuild before the setting took effect.
+function Tooltip.enabled()
+	local lp = Players.LocalPlayer
+	return not (lp and lp:GetAttribute("DisableTooltips") == true)
+end
 
 local function line(parent, str, role, color, order, wrap)
 	local l = Instance.new("TextLabel")
@@ -155,6 +167,9 @@ function Tooltip.attach(target, builder, layerOverride)
 	end
 	target.MouseEnter:Connect(function()
 		clear()
+		if not Tooltip.enabled() then
+			return
+		end
 		-- Tooltips MUST host on the dedicated AoW_Tooltips layer (IgnoreGuiInset = true), not the row's
 		-- AoW_Screens ancestor (IgnoreGuiInset = false): GetMouseLocation + the cursor math in `place` are
 		-- in true top-left pixels, so an inset-respecting host shifts the tooltip ~36px down (the reported

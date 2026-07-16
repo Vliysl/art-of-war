@@ -217,6 +217,24 @@ function SettingsScreen.create(ctx)
 					lp:SetAttribute("ReduceMotion", on)
 				end
 			end, 3)
+			-- On by default: the alpha build stamp should be present unless a player deliberately turns it off
+			-- (e.g. to record clean footage). Hud watches this attribute and shows/hides the overlay live.
+			toggleRow(body, "Build Watermark", function()
+				return lp == nil or lp:GetAttribute("ShowWatermark") ~= false
+			end, function(on)
+				if lp then
+					lp:SetAttribute("ShowWatermark", on)
+				end
+			end, 4)
+			-- Stored inverted (DisableTooltips) so absent == on, and read live by all four hover surfaces via
+			-- Tooltip.enabled(): province tips, attached tips, the country bar chips and nation selection.
+			toggleRow(body, "Tooltips", function()
+				return lp == nil or lp:GetAttribute("DisableTooltips") ~= true
+			end, function(on)
+				if lp then
+					lp:SetAttribute("DisableTooltips", not on)
+				end
+			end, 5)
 
 			ScreenKit.section(body, "Graphics", 10)
 			ScreenKit.note(
