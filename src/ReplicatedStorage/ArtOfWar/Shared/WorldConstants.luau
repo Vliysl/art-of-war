@@ -78,10 +78,12 @@ WorldConstants.MusicDefaultVolume = 0.6 -- default MusicVolume attribute on firs
 WorldConstants.MusicDebug = false -- log-only: print each music phase/region/track transition for tuning
 
 -- Client settings persistence (per-user DataStore; see Systems/SettingsStore + Modules/SettingsSync). Off =
--- every SettingsScreen toggle/slider is session-only and resets each join (today's behavior). On = the
--- allowlisted attributes (volume/mute/render-distance/tooltips/...) load on join and save on change. Note
--- RenderDistance persists globally, not per-device, once this is on. Default off until playtested.
-WorldConstants.PersistClientSettings = false
+-- every SettingsScreen toggle/slider is session-only and resets each join. On = the allowlisted attributes
+-- (volume/mute/render-distance/tooltips/reduce-motion/...) load on join and save on change. A NEW player still
+-- starts at the defaults (nothing is written until they change a setting), so e.g. Reduce Motion stays OFF
+-- until opted in, then that choice sticks across sessions. Note RenderDistance persists globally, not
+-- per-device. Kill-switch: flip false to revert to session-only.
+WorldConstants.PersistClientSettings = true
 
 -- Ownership unification (single source of truth = the WorldState record). See the ownership-restructure plan.
 WorldConstants.RecordDrivenMapColoring = true -- P2: client colours the political map + nation-select highlight from the replicated record, not part attributes
