@@ -191,7 +191,7 @@ local altInspecting = false
 -- Multi-province selection cap (server-side batch remotes reject larger lists; the panel
 -- title surfaces the cap). Touch has no modifier keys: multiSelectMode makes plain taps
 -- toggle provinces instead (on-screen toggle in HudWiring).
-local MULTI_SELECT_MAX = 25
+local MULTI_SELECT_MAX = 200
 local multiSelectMode = false
 -- Phase C touch-gesture state (flag-gated). dragMoveProbe: fn(screenPos,maxPx)->selected army provinceId near
 -- the point (set by ArmyView) for drag-to-move; dragMoveFrom: province the current drag started on. Long-press

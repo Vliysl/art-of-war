@@ -1519,7 +1519,7 @@ end)
 -- C6: apply a batched action per province, count successes, and toast the partial result
 -- ("Queued in 4/7 provinces"). Validation stays entirely per-province inside enqueue, so
 -- partial application (owner decision) is automatic -- it deducts until broke/ineligible.
-local MULTI_PROVINCE_CAP = 25
+local MULTI_PROVINCE_CAP = 200
 
 local function applyMulti(tag, provinceIds, applyFn, title, verb)
 	local applied, total, firstReason = 0, 0, nil

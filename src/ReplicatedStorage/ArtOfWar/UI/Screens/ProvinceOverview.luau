@@ -416,7 +416,7 @@ local function createMulti(ctx)
 		name = "ProvinceOverview",
 		shell = "panel_medium_shell",
 		title = string.format("%d provinces selected", #ids),
-		subtitle = string.format("%d owned  \u{00B7}  total dev %d  \u{00B7}  max 25", #ownedIds, totalDev),
+		subtitle = string.format("%d owned  \u{00B7}  total dev %d  \u{00B7}  max 200", #ownedIds, totalDev),
 		anchorPoint = Vector2.new(1, 1),
 		position = UDim2.new(1, -16, 1, -16),
 		size = UDim2.fromOffset(360, 620),
