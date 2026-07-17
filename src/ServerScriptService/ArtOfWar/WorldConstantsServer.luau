@@ -11,6 +11,12 @@ local WorldConstants = {}
 -- ignores this flag entirely (see Framework/BakedWorld.isActive).
 WorldConstants.UseBakedWorldData = false
 
+-- B27: whether a Studio session OFF the Map Editor place may edit the shared :edit draft world. Default false
+-- => Studio is treated as the editor world ONLY on the Map Editor place, so a main/experimental-place Studio
+-- playtest reads the LIVE world players see (and DataOverlay.writeBlocked stops it persisting live keys). Set
+-- true to restore the old behavior (any Studio session edits the :edit draft). Server-only; DataOverlay reads it.
+WorldConstants.AllowMainPlaceStudioEditing = false
+
 -- B9: enforce structural validation of owner-authored custom formable defs in FormableStore.set (asset-id
 -- allowlist + string/array caps + JSON size backstop). Kill-switch: flip false to bypass if it ever rejects a
 -- legitimate editor def. Server-only -- FormableStore is server-side and clients never read it.
