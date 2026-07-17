@@ -11,6 +11,11 @@ local WorldConstants = {}
 -- ignores this flag entirely (see Framework/BakedWorld.isActive).
 WorldConstants.UseBakedWorldData = false
 
+-- B9: enforce structural validation of owner-authored custom formable defs in FormableStore.set (asset-id
+-- allowlist + string/array caps + JSON size backstop). Kill-switch: flip false to bypass if it ever rejects a
+-- legitimate editor def. Server-only -- FormableStore is server-side and clients never read it.
+WorldConstants.EnforceFormableDefValidation = true
+
 WorldConstants.MultiplierCapEconomy = 10
 WorldConstants.MultiplierCapCombatStat = 2
 WorldConstants.MultiplierCapTechPerBranch = 3
