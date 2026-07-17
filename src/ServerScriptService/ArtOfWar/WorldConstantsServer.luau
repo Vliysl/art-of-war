@@ -192,6 +192,11 @@ WorldConstants.PeaceAIExhaustionWeight = 0.5 -- each exhaustion point adds this 
 WorldConstants.PeaceAIAcceptMargin = 0 -- accept when willingness - cost >= this
 WorldConstants.PeaceVassalizeCost = 90 -- vassalize peace term: very high war-score cost (AI only when crushed)
 WorldConstants.ReleaseSubjectOpinionBonus = 30 -- a freed subject's opinion of its former overlord
+-- B14: prune ended wars a short grace after endWar stamps endedAt (mirrors the shipped peaceProposal/pact
+-- prune) so the wars collection + every findActiveWar scan stay bounded. Kill-switch: PruneEndedWars=false
+-- restores the old never-prune behavior.
+WorldConstants.PruneEndedWars = true
+WorldConstants.EndedWarTTLSeconds = 60 -- grace before an ended war drops; >> the ~6s diplomacy tick so the client's "war concluded" delta lands first
 -- =====================================================================
 -- ATTRITION (spec B.10 / 6.9, Phase 5) - see Systems.AttritionSystem.
 -- Monthly: provinces with stacked armies over supply bleed manpower (crowding);

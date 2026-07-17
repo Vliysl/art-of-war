@@ -2178,6 +2178,31 @@ local function tickPacts()
 	end
 end
 
+-- Prune ended wars the same way tickProposals/tickPacts prune resolved offers: a war lingers for a short
+-- grace after endWar stamps `endedAt` (so the client's "war concluded" delta lands), then drops from the
+-- store + replicated collection. Without this, ended wars accumulate forever and every findActiveWar scan +
+-- per-tick war loop grows unbounded. Gated by a server-only kill-switch so it can be reverted to the old
+-- never-prune behavior instantly.
+local function tickWars()
+	if ctx.WorldConstants.PruneEndedWars == false then
+		return
+	end
+	local n = now()
+	local ttl = ctx.WorldConstants.EndedWarTTLSeconds or DIPLO_TERMINAL_TTL_SECONDS
+	for id, war in ctx.WorldState.allWars() do
+		if war.status ~= "active" then
+			local terminalAt = war.endedAt or war.terminalAt
+			if terminalAt == nil then
+				-- Ended with no stamp (defensive; endWar always stamps endedAt): start the grace now.
+				war.terminalAt = n
+				ctx.WorldState.setWar(id, war)
+			elseif n - terminalAt >= ttl then
+				ctx.WorldState.setWar(id, nil)
+			end
+		end
+	end
+end
+
 -- Call-to-arms dispatch: an AI ally/guarantor honors the call immediately; a player gets a pending
 -- call_to_arms pact (which pops the DiplomaticOffer modal via the existing pacts hook).
 local function proposeCallToArms(callerTag, helperTag, conflictId, aggressorTag, obligation)
@@ -2357,6 +2382,7 @@ function DiplomacySystem.register(context)
 			tickProposals()
 			tickPacts()
 			stampHumanWars()
+			tickWars()
 			local gd = (sysCtx and sysCtx.gameDate)
 				or (context.TickScheduler.getGameDate and context.TickScheduler.getGameDate())
 			if gd then

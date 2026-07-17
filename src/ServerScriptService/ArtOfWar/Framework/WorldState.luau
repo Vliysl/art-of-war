@@ -377,6 +377,10 @@ function WorldState.allBattles()
 end
 
 function WorldState.setWar(id, record)
+	if record == nil then
+		tombstone("wars", id)
+		return
+	end
 	store.wars[id] = record
 	mark("wars", id)
 	bump()
