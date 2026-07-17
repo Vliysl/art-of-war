@@ -77,6 +77,12 @@ WorldConstants.EnableMusic = false -- adaptive music (menu/peace/war/battle cros
 WorldConstants.MusicDefaultVolume = 0.6 -- default MusicVolume attribute on first join (session-only, no persistence)
 WorldConstants.MusicDebug = false -- log-only: print each music phase/region/track transition for tuning
 
+-- Client settings persistence (per-user DataStore; see Systems/SettingsStore + Modules/SettingsSync). Off =
+-- every SettingsScreen toggle/slider is session-only and resets each join (today's behavior). On = the
+-- allowlisted attributes (volume/mute/render-distance/tooltips/...) load on join and save on change. Note
+-- RenderDistance persists globally, not per-device, once this is on. Default off until playtested.
+WorldConstants.PersistClientSettings = false
+
 -- Ownership unification (single source of truth = the WorldState record). See the ownership-restructure plan.
 WorldConstants.RecordDrivenMapColoring = true -- P2: client colours the political map + nation-select highlight from the replicated record, not part attributes
 WorldConstants.RecordOwnershipChokepoint = true -- P3: server ownership mutations route through WorldState.setProvinceOwnership

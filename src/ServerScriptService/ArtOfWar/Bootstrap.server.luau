@@ -901,6 +901,10 @@ InputValidator.register("RemoveFormable", {
 	schema = { { name = "tag", type = "string" } },
 	rate = { count = 20, window = 30 },
 })
+InputValidator.register("SaveClientSettings", {
+	schema = { { name = "settings", type = "shallowTable" } },
+	rate = { count = 20, window = 10 },
+})
 
 local function bindEvent(name, handler)
 	local remote = ensureEvent(name)
@@ -955,6 +959,12 @@ bindEvent("ReleaseCountry", function(player)
 	auth.release(player)
 	if context.StateReplicator and context.StateReplicator.broadcast then
 		context.StateReplicator.broadcast()
+	end
+end)
+
+bindEvent("SaveClientSettings", function(player, settings)
+	if context.SettingsStore then
+		context.SettingsStore.save(player, settings)
 	end
 end)
 

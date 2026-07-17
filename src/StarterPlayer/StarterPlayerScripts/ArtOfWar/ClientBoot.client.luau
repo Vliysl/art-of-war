@@ -62,6 +62,7 @@ local SimClock = safeRequire("SimClock")
 local MoveArrowView = safeRequire("MoveArrowView")
 local CapitalMarkerView = safeRequire("CapitalMarkerView")
 local MusicController = safeRequire("MusicController")
+local SettingsSync = safeRequire("SettingsSync")
 local WorldConstants = require(aow:WaitForChild("Shared"):WaitForChild("WorldConstants"))
 local provinceRecolorWired = false
 
@@ -265,6 +266,11 @@ do
 	end
 end
 
+-- Apply any DataStore-persisted client settings BEFORE the first controller reads an attribute (UISound just
+-- below, then MusicController; RenderDistanceController later), so a restored value wins over a seeded default.
+-- Bounded, and a no-op unless WorldConstants.PersistClientSettings is on.
+safeCall(SettingsSync, "awaitLoaded")
+
 -- Wire default UI sounds to EVERY ScreenGui (the HUD builds its own ScreenGuis outside UIRoot,
 -- so UIRoot.attachAll alone missed them -> no click/hover sounds).
 do
@@ -281,6 +287,10 @@ end
 if WorldConstants.EnableMusic then
 	safeCall(MusicController, "start")
 end
+
+-- Now that the controllers have applied/seeded their attributes, start persisting changes to them. A no-op
+-- unless WorldConstants.PersistClientSettings is on.
+safeCall(SettingsSync, "start")
 
 task.defer(function()
 	-- Cinematic intro: start zoomed in (behind the loading screen) so the reveal is a smooth zoom-out
