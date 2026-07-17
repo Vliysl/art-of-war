@@ -2,7 +2,20 @@ local DataStoreService = game:GetService("DataStoreService")
 local HttpService = game:GetService("HttpService")
 local ServerStorage = game:GetService("ServerStorage")
 
-local RelayConfig = require(ServerStorage:WaitForChild("Dev"):WaitForChild("RelayConfig"))
+-- RelayConfig is gitignored + place-only (not in default.project.json), and DATASTORE_NAME/SCOPE select which
+-- DataStore the live world reads/writes. Bound the wait so a place that lacks it (a fresh rojo build, CI, a new
+-- place, an accidental delete) fails LOUD instead of yielding forever inside require() -- pcall can't return
+-- past an infinite WaitForChild, so the old unbounded wait silently WEDGED boot. Never substitute a placeholder
+-- name (it would misdirect the live game to the wrong/empty store); fail loud. See Dev/RelayConfig.template.luau.
+local relayInst = ServerStorage:WaitForChild("Dev"):WaitForChild("RelayConfig", 10)
+if not relayInst then
+	error(
+		"[DataOverlay] RelayConfig missing: it is a gitignored, place-only module (not in "
+			.. "default.project.json), so a from-scratch build lacks it. Copy Dev/RelayConfig.template.luau to "
+			.. "Dev/RelayConfig.luau with the real DATASTORE_NAME/SCOPE. Refusing to boot on a placeholder datastore."
+	)
+end
+local RelayConfig = require(relayInst)
 local RunService = game:GetService("RunService")
 
 -- ── Editor vs Live world isolation ───────────────────────────────────────────────────────────────

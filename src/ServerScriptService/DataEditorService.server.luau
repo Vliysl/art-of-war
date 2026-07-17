@@ -7,7 +7,15 @@ local Editor = require(ServerStorage:WaitForChild("Dev"):WaitForChild("DataEdito
 local EditorAdmins = require(ServerStorage:WaitForChild("Dev"):WaitForChild("EditorAdmins"))
 local DataStoreService = game:GetService("DataStoreService")
 local HttpService = game:GetService("HttpService")
-local RelayConfig = require(ServerStorage:WaitForChild("Dev"):WaitForChild("RelayConfig"))
+-- Bounded so a missing place-only RelayConfig fails loud instead of yielding forever inside require (B24).
+local relayInst = ServerStorage:WaitForChild("Dev"):WaitForChild("RelayConfig", 10)
+if not relayInst then
+	error(
+		"[DataEditorService] RelayConfig missing: gitignored, place-only module absent from a from-scratch "
+			.. "build. Copy Dev/RelayConfig.template.luau to Dev/RelayConfig.luau with the real DATASTORE_NAME/SCOPE."
+	)
+end
+local RelayConfig = require(relayInst)
 local DataOverlay = require(ServerStorage:WaitForChild("Services"):WaitForChild("DataOverlay"))
 
 local STAGING_ENABLED = true
