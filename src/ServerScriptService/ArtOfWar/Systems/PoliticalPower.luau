@@ -23,6 +23,11 @@ local function generateFor(tag, country)
 	if country.transition then
 		gen *= (ctx.WorldConstants.TransitionPpGenerationPenalty or 0.5)
 	end
+	-- Technology: political_power_gain (capped +100%, gated by EnableTechTree; 0 while off).
+	local rs = ctx.ResearchSystem
+	if rs and rs.bonus then
+		gen *= (1 + rs.bonus(tag, "political_power_gain"))
+	end
 	return gen
 end
 

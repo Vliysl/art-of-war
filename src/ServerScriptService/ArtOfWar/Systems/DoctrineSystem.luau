@@ -41,7 +41,13 @@ local function switchCostFor(country, slotDef)
 	local mult = ctx.WorldConstants.DoctrineCostMultiplierPerHigherTier or 1.6
 	local floor = ctx.WorldConstants.DoctrineSwitchCostFloor or 10
 	local n = higherTierCount(country, slotDef.tier)
-	return math.max(floor, math.floor(base * (mult ^ n) + 0.5))
+	local cost = base * (mult ^ n)
+	-- Technology: doctrine_cost_reduction (capped -30%, gated by EnableTechTree; 0 while off).
+	local rs = ctx.ResearchSystem
+	if rs and rs.bonus and country.tag then
+		cost *= (1 - rs.bonus(country.tag, "doctrine_cost_reduction"))
+	end
+	return math.max(floor, math.floor(cost + 0.5))
 end
 
 local function currentDoctrines(tag)

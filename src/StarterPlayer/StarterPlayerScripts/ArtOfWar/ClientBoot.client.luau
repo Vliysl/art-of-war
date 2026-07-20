@@ -131,6 +131,17 @@ if OwnArmies and ClientStateCache then
 	end)
 end
 
+-- Technology tree: this player's own tech state (levels + research slots) arrives here, stripped from the shared
+-- StateSync broadcast (COUNTRY_DROP). ResearchScreen overlays it onto the own-country record.
+local OwnResearch = Remotes and Remotes:WaitForChild("OwnResearch", 120)
+if OwnResearch and ClientStateCache then
+	OwnResearch.OnClientEvent:Connect(function(packet)
+		if type(packet) == "table" then
+			ClientStateCache.setOwnResearch(packet)
+		end
+	end)
+end
+
 if StateSync and ClientStateCache then
 	StateSync.OnClientEvent:Connect(function(packet)
 		ClientStateCache.applyDelta(packet)

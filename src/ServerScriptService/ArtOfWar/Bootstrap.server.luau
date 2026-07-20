@@ -532,7 +532,11 @@ InputValidator.register("EnactPolicy", {
 	rate = { count = 3, window = 15 },
 })
 InputValidator.register("SetResearch", {
-	schema = { { name = "techId", type = "policyId" } },
+	schema = { { name = "slot", type = "integer" }, { name = "techId", type = "policyId" } },
+	rate = { count = 4, window = 10 },
+})
+InputValidator.register("ClearResearch", {
+	schema = { { name = "slot", type = "integer" } },
 	rate = { count = 4, window = 10 },
 })
 InputValidator.register("RepealPolicy", {
@@ -1377,8 +1381,8 @@ bindEvent("ResolveEvent", function(player, eventId, optionId)
 	context.EventSystem.resolveEvent(tag, eventId, optionId, false)
 end)
 
-bindEvent("SetResearch", function(player, techId)
-	if not WorldConstants.EnableResearch then
+bindEvent("SetResearch", function(player, slot, techId)
+	if not WorldConstants.EnableTechTree then
 		return
 	end
 	local auth = authority()
@@ -1390,7 +1394,23 @@ bindEvent("SetResearch", function(player, techId)
 	if not tag then
 		return
 	end
-	system.startResearch(tag, techId)
+	system.startResearch(tag, slot, techId)
+end)
+
+bindEvent("ClearResearch", function(player, slot)
+	if not WorldConstants.EnableTechTree then
+		return
+	end
+	local auth = authority()
+	local system = loadedSystems.ResearchSystem
+	if not auth or not system then
+		return
+	end
+	local tag = auth.tagFor(player)
+	if not tag then
+		return
+	end
+	system.clearSlot(tag, slot)
 end)
 
 bindEvent("CancelLaw", function(player)
@@ -2545,10 +2565,12 @@ end
 local stateSync = ensureEvent("StateSync")
 local ownPoliticsSync = ensureEvent("OwnPolitics")
 local ownArmiesSync = ensureEvent("OwnArmies")
+local ownResearchSync = ensureEvent("OwnResearch")
 if loadedSystems.StateReplicator and context.StateReplicator then
 	context.StateReplicator.setStateSync(stateSync)
 	context.StateReplicator.setOwnPoliticsSync(ownPoliticsSync)
 	context.StateReplicator.setOwnArmiesSync(ownArmiesSync)
+	context.StateReplicator.setOwnResearchSync(ownResearchSync)
 end
 
 local notificationChannel = ensureEvent("NotificationChannel")
@@ -2606,6 +2628,10 @@ bindFunction("RequestFullState", function(player)
 	end
 	if player and context.StateReplicator.pushOwnArmiesTo then
 		context.StateReplicator.pushOwnArmiesTo(player)
+	end
+	-- Deliver this player their own country's tech state (levels + research slots), stripped from the shared snapshot.
+	if player and context.StateReplicator.pushOwnResearchTo then
+		context.StateReplicator.pushOwnResearchTo(player)
 	end
 	return snapshot
 end)

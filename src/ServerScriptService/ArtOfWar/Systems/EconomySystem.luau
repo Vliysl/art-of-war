@@ -51,6 +51,9 @@ local function recomputeProductionFor(tag)
 			and ctx.ModifierStack.resolveAdditive
 			and ctx.ModifierStack.resolveAdditive(tag, "country_production")
 		or 0
+	-- tech: mining_output (capped +TechCapMining; 0 while EnableTechTree off) -> productionOf Mining branch
+	local rs = ctx.ResearchSystem
+	local miningBonus = (rs and rs.bonus and rs.bonus(tag, "mining_output")) or 0
 
 	local provinceIds = (ctx.ProvinceRegistry and ctx.ProvinceRegistry.byOwner(tag)) or {}
 	local dailyTax = 0
@@ -60,7 +63,7 @@ local function recomputeProductionFor(tag)
 		if province then
 			local cap = isCapital(country, province)
 			dailyTax += EconomyPreview.taxOf(province, country, ctx.WorldConstants, ctx.Bundle, cap, taxAdd)
-			local prod = EconomyPreview.productionOf(province, country, ctx.WorldConstants, ctx.Bundle, prodAdd)
+			local prod = EconomyPreview.productionOf(province, country, ctx.WorldConstants, ctx.Bundle, prodAdd, miningBonus)
 			for goodId, amount in prod do
 				dailyProduction[goodId] = (dailyProduction[goodId] or 0) + amount
 			end
@@ -248,6 +251,12 @@ local function applyDays(daysAdvanced, commit)
 				end
 				expenseBreakdown[id] = amount
 				totalExpenses += amount
+			end
+
+			-- tech: government_spending_reduction (capped -TechCapGovSpend; 0 while EnableTechTree off) on the whole expense total
+			local rs = ctx.ResearchSystem
+			if rs and rs.bonus then
+				totalExpenses *= (1 - rs.bonus(tag, "government_spending_reduction"))
 			end
 
 			local netDaily = totalIncome - totalExpenses

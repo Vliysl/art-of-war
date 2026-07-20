@@ -66,6 +66,7 @@ local ctx
 local stateSync
 local ownPoliticsSync
 local ownArmiesSync
+local ownResearchSync
 
 -- perf: cached snapshot + the os.clock() time it was built (nil = stale)
 local cachedSnapshot = nil
@@ -89,6 +90,12 @@ local COUNTRY_DROP = {
 	-- OwnPolitics channel instead (buildOwnPolitics + pushOwnPoliticsTo below).
 	leaders = true,
 	factions = true,
+	-- Technology tree: leveled per-tech state is large (all seeded countries) and only the OWNING player's UI
+	-- reads it. Stripped from the shared broadcast, delivered per-player via OwnResearch. Server-side reads use
+	-- the real WorldState record, not the wire.
+	techs = true,
+	techLevel = true,
+	research = true,
 }
 
 local function slimLeader(l)
@@ -235,6 +242,21 @@ local function buildOwnPolitics(tag)
 		out.factions = F
 	end
 	return out
+end
+
+-- Technology tree: the owning player's per-tech levels + research slots/progress, stripped from the shared
+-- broadcast (COUNTRY_DROP) and delivered here so the tree UI reads its own state (ResearchScreen overlays it,
+-- mirroring PoliticsScreen with OwnPolitics).
+local function buildOwnResearch(tag)
+	local rec = ctx.WorldState.getCountry(tag)
+	if type(rec) ~= "table" then
+		return nil
+	end
+	return {
+		tag = tag,
+		techLevel = rec.techLevel or {},
+		research = rec.research or {},
+	}
 end
 
 local function buildDeltaFrom(drained)
@@ -462,6 +484,22 @@ local function pushOwnPoliticsTo(player)
 	end
 end
 
+-- Push a player their own country's tech state (levels + slots). No-op until they claim (the claim dirties
+-- the country, so broadcast() delivers it next tick), mirroring pushOwnPoliticsTo.
+local function pushOwnResearchTo(player)
+	if not ownResearchSync or not player then
+		return
+	end
+	local tag = ctx.PlayerAuthority and ctx.PlayerAuthority.tagFor(player)
+	if not tag then
+		return
+	end
+	local packet = buildOwnResearch(tag)
+	if packet then
+		ownResearchSync:FireClient(player, packet)
+	end
+end
+
 -- Fog of war: deliver a joiner the FULL detail of their own armies (the shared army stream was fogged).
 local function pushOwnArmiesTo(player)
 	if not ownArmiesSync or not player or not fogEnabled() then
@@ -557,6 +595,22 @@ local function broadcast()
 			end
 		end
 	end
+	-- Technology tree: per-tech state is stripped from the shared broadcast (COUNTRY_DROP); push the owning
+	-- player their own tech state whenever their country changed this tick (mirrors OwnPolitics above).
+	if ownResearchSync and ctx.PlayerAuthority then
+		local dirtyCountries = drained.countries
+		if type(dirtyCountries) == "table" then
+			for _, tag in ipairs(dirtyCountries) do
+				local owner = ctx.PlayerAuthority.playerFor(tag)
+				if owner then
+					local res = buildOwnResearch(tag)
+					if res then
+						ownResearchSync:FireClient(owner, res)
+					end
+				end
+			end
+		end
+	end
 	-- Fog of war: enemy armies were fogged in the shared delta above. Deliver each owning player the FULL
 	-- detail of THEIR dirty armies on the OwnArmies channel so the client can overlay it (mirrors OwnPolitics).
 	if ownArmiesSync and fogEnabled() and ctx.PlayerAuthority then
@@ -613,6 +667,7 @@ function StateReplicator.register(context)
 		pushArmyGroupsTo = pushArmyGroupsTo,
 		pushOwnPoliticsTo = pushOwnPoliticsTo,
 		pushOwnArmiesTo = pushOwnArmiesTo,
+		pushOwnResearchTo = pushOwnResearchTo,
 		setStateSync = function(remote)
 			stateSync = remote
 		end,
@@ -621,6 +676,9 @@ function StateReplicator.register(context)
 		end,
 		setOwnArmiesSync = function(remote)
 			ownArmiesSync = remote
+		end,
+		setOwnResearchSync = function(remote)
+			ownResearchSync = remote
 		end,
 	}
 	ctx.TickScheduler.register({

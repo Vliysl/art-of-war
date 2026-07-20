@@ -158,6 +158,9 @@ local function targetUnrest(tag, country)
 	relief += math.max(0, stab) * wc.UnrestStabilityReliefWeight
 	relief += authority01(country) * wc.UnrestAuthorityReliefWeight
 
+	-- tech: unrest_reduction — scale total relief so more relief lowers the unrest target (pressure untouched)
+	relief *= 1 + (ctx.ResearchSystem and ctx.ResearchSystem.bonus and ctx.ResearchSystem.bonus(tag, "unrest_reduction") or 0)
+
 	return clampUnrest(pressure - relief)
 end
 

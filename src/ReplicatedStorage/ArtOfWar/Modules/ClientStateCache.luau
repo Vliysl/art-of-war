@@ -429,6 +429,16 @@ end
 function ClientStateCache.getOwnPolitics()
 	return cache.ownPolitics
 end
+-- Technology tree: this player's OWN country's tech state (techLevel + research slots/progress) arrives on the
+-- per-player OwnResearch channel and is stored HERE (not merged into cache.countries[tag], which a later shared
+-- delta would replace). ResearchScreen overlays getOwnResearch() onto its own country record.
+function ClientStateCache.setOwnResearch(packet)
+	cache.ownResearch = packet
+	notify("ownResearch", packet)
+end
+function ClientStateCache.getOwnResearch()
+	return cache.ownResearch
+end
 -- Fog of war: this player's OWN armies in FULL detail (keyed by armyId), delivered on the per-player OwnArmies
 -- channel and stored SEPARATELY so a later fogged shared army delta can't wipe it. Overlaid onto cache.armies here
 -- AND in mergeEntry, so the two channels can arrive in either order and still settle to full-detail own armies.

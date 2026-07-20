@@ -30,7 +30,13 @@ local function enact(tag, policyId, trigger)
 	if country.activePolicies[policyId] then return false, "already_active" end
 
 	if trigger ~= "transition" and trigger ~= "revolution" and trigger ~= "event" and trigger ~= "law_passed" then
-		if not ctx.PoliticalPower or not ctx.PoliticalPower.spend(tag, policy.ppCost, "policy_enact") then
+		local ppCost = policy.ppCost
+		-- Technology: policy_efficiency (capped reduction, gated by EnableTechTree; 0 while off).
+		local rs = ctx.ResearchSystem
+		if rs and rs.bonus then
+			ppCost *= (1 - rs.bonus(tag, "policy_efficiency"))
+		end
+		if not ctx.PoliticalPower or not ctx.PoliticalPower.spend(tag, ppCost, "policy_enact") then
 			return false, "insufficient_pp"
 		end
 	end
@@ -64,6 +70,11 @@ local function countryUpkeep(country)
 	for policyId in country.activePolicies do
 		local policy = bundle.policies[policyId]
 		if policy then total += (policy.ppUpkeep or 0) end
+	end
+	-- Technology: policy_efficiency (capped reduction, gated by EnableTechTree; 0 while off).
+	local rs = ctx.ResearchSystem
+	if rs and rs.bonus and country.tag then
+		total *= (1 - rs.bonus(country.tag, "policy_efficiency"))
 	end
 	return total
 end

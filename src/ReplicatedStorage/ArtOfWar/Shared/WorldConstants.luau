@@ -41,6 +41,7 @@ WorldConstants.EnableRebellions = false -- Phase 4: rebellions flip provinces
 WorldConstants.EnableNewEditor = false -- Phase 5: reserved. Both editors currently run (legacy=backtick, new=backslash)
 WorldConstants.EnablePolitics = false -- PoliticsScreen (authority/estates/policies/leaders) cut for playtest; server remotes gated, returns UPD2
 WorldConstants.EnableResearch = false -- tech tree cut; ResearchScreen is a "Coming Soon" stub; SetResearch gated until the rework ships
+WorldConstants.EnableTechTree = false -- HOI4-style leveled tech tree rework (multi-slot research, capped multiplicative effects) that supersedes the flat EnableResearch list. Server slot-advance + client tree window gate on this; false = seeding still runs (starting techs/gates) but no slot progresses and the tree window is inert
 WorldConstants.EnableTrade = false -- trade UI cut for playtest; legacy TradeSystem + TradeOrderSystem remotes gated, returns UPD2
 WorldConstants.EnableFogOfWar = false -- B2: fog enemy army detail (composition/movement/officer); own armies delivered full via the OwnArmies channel. Default off (full-info) until the client overlay + a perf pass ship
 
@@ -222,6 +223,14 @@ WorldConstants.DoctrineSwitchCostFloor = 10
 WorldConstants.DoctrineTierCount = 3
 WorldConstants.ArmyTrainingTierMax = 5
 WorldConstants.TerrainSpecializationMax = 3
+
+-- Technology tree (2026-07 rework; gated by EnableTechTree). Research Power is a FLAT base per filled slot
+-- (not economy-derived), scaled by research_power_gain / discounted by research_efficiency tech. Slots unlock
+-- over the game via Research-tab nodes. Era on a tech drives left->right layout + starting distribution only;
+-- it is NOT a hard year-lock in Phase 1 (that would soft-lock 1850+ nodes inside the 1750-1849 scenario window).
+WorldConstants.ResearchPointsPerDay = 8 -- base points a filled research slot accrues per in-game day
+WorldConstants.ResearchSlotsStart = 2 -- research slots a nation has at game start
+WorldConstants.ResearchSlotsMax = 5 -- hard ceiling on unlockable research slots
 
 WorldConstants.NavalMoraleMax = 100
 WorldConstants.NavalMoraleMin = 0

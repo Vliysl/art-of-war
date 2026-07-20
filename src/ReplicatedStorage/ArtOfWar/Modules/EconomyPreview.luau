@@ -129,7 +129,7 @@ end
 -- Daily resource production for a single province. Reads province.goods (the
 -- canonical multi-resource field) and falls back to province.tradeGood for
 -- provinces that haven't been migrated yet. Returns { [goodId] = amount }.
-function EconomyPreview.productionOf(province, country, wc, bundle, addStack)
+function EconomyPreview.productionOf(province, country, wc, bundle, addStack, miningBonus)
 	local out = {}
 	if not province or not country then
 		return out
@@ -155,15 +155,17 @@ function EconomyPreview.productionOf(province, country, wc, bundle, addStack)
 		if not (baseAmount and baseAmount > 0) then
 			return
 		end
+		-- tech: mining_output -- scale Mining-district goods only (1x when tree off or good is non-Mining)
+		local miningMult = (DistrictTypes.extractionDistrictFor(goodId) == "Mining") and (1 + (miningBonus or 0)) or 1
 		if gate then
 			local exLevel = EconomyPreview.extractionLevelFor(province, goodId)
 			if exLevel <= 0 then
 				return -- no matching extraction district -> no output
 			end
 			local districtScale = (1 + levelBonusPer * (exLevel - 1)) * productionMult * stack
-			out[goodId] = (out[goodId] or 0) + baseAmount * districtScale
+			out[goodId] = (out[goodId] or 0) + baseAmount * districtScale * miningMult
 		else
-			out[goodId] = (out[goodId] or 0) + baseAmount * scale
+			out[goodId] = (out[goodId] or 0) + baseAmount * scale * miningMult
 		end
 	end
 

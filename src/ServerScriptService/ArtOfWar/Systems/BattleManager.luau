@@ -574,6 +574,22 @@ end
 
 -- ===== Round resolution (drives CombatEngine) ===============================
 
+-- Per-unit-CLASS technology multiplier (infantry/cavalry/artillery attack/defense). Gated by EnableTechTree so
+-- the live game is byte-identical until the tree ships. Deterministic (a pure function of the owner's tech
+-- levels) and clamped to its branch cap inside ResearchSystem.factor (3x land, 2x artillery), so it composes
+-- multiplicatively on top of the whole statMultiplier chain without touching the pure CombatEngine. Unlike
+-- atkMult/defMult (per-formation, army-wide), this is per unit-class -- which the formation scalar cannot express.
+local function techClassFactor(ownerTag, role, stat)
+	if not (ctx.WorldConstants and ctx.WorldConstants.EnableTechTree) then
+		return 1
+	end
+	local rs = ctx.ResearchSystem
+	if rs and rs.factor and ownerTag then
+		return rs.factor(ownerTag, role .. "_" .. stat)
+	end
+	return 1
+end
+
 -- Build an engine side input from live armies. atkMult/defMult fold the static
 -- multipliers; the engine applies terrain/morale/discipline/org/fort itself.
 -- record/sideRole (optional, C9): an army standing on a sea node is a TRANSPORT and fights
@@ -591,11 +607,12 @@ local function buildSideInput(armyIds, terrain, record, sideRole)
 				if count and count > 0 then
 					local u = unitOf(typeId)
 					if u then
+						local role = ctx.CombatEngine.classifyRole(u, "ground")
 						table.insert(units, {
 							typeId = typeId,
 							count = count,
-							attack = u.attack or 0,
-							defense = u.defense or 0,
+							attack = (u.attack or 0) * techClassFactor(army.ownerTag, role, "attack"),
+							defense = (u.defense or 0) * techClassFactor(army.ownerTag, role, "defense"),
 							combatWidth = u.combatWidth or 2,
 							discipline = u.discipline,
 							tags = u.tags,

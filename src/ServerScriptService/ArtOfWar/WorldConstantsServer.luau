@@ -27,6 +27,46 @@ WorldConstants.MultiplierCapCombatStat = 2
 WorldConstants.MultiplierCapTechPerBranch = 3
 WorldConstants.MultiplierCapArtillerySubStat = 2
 
+-- Technology tree per-branch effect caps (2026-07). Combat per-unit-class buffs are MULTIPLICATIVE products of
+-- per-level (1+bonus), clamped to the reserved MultiplierCapTechPerBranch (3x) / MultiplierCapArtillerySubStat
+-- (2x) above. The caps below are ADDITIVE-fraction ceilings for the non-combat branches; each consumer applies
+-- them as (1 +/- clamp(sum, 0, cap)). Domain->capKey wiring lives in Shared/TechDomains.
+WorldConstants.TechCapFactoryOutput = 1.0 -- +100% manufactory/factory output
+WorldConstants.TechCapGovSpend = 0.30 -- -30% government spending (all expense types)
+WorldConstants.TechCapFuel = 0.50 -- +50% fuel efficiency (fuel-input reduction)
+WorldConstants.TechCapMining = 0.80 -- +80% mining extraction
+WorldConstants.TechCapBuildingCost = 0.30 -- -30% building/district cost
+WorldConstants.TechCapBuildingSpeed = 0.50 -- -50% building/district time
+WorldConstants.TechCapTaxIncome = 0.75 -- +75% tax (city-tier + infrastructure branches combined)
+WorldConstants.TechCapPPGain = 1.0 -- +100% political power gain
+WorldConstants.TechCapPolicyEff = 0.50 -- -50% policy cost/upkeep
+WorldConstants.TechCapUnrestReduction = 0.80 -- +80% unrest relief
+WorldConstants.TechCapUnrestBuild = 0.20 -- -20% unrest build penalty
+WorldConstants.TechCapStability = 1.0 -- +100% raw stability gain (Phase 2 stability tick)
+WorldConstants.TechCapIntegration = 1.5 -- +150% integration speed (Phase 2 integration timer)
+WorldConstants.TechCapFortDefense = 0.50 -- +50% fortification defense (Phase 2)
+WorldConstants.TechCapDoctrineCost = 0.30 -- -30% doctrine/operation cost
+WorldConstants.TechCapResearchEfficiency = 0.30 -- -30% research cost
+WorldConstants.TechCapResearchPower = 1.20 -- +120% research power gain
+
+-- Per-country tech-group starting era: seedAll grants each node the highest level whose era <= this year, so a
+-- less-advanced group begins the scenario further left in the tree ("some tribes lack the 1600s techs"). Unknown
+-- groups fall back to TechGroupStartYearDefault. Keys match country.technologyGroup values in Data/Countries.
+WorldConstants.TechGroupStartYearDefault = 1750
+WorldConstants.TechGroupStartYear = {
+	western = 1750,
+	eastern = 1730,
+	ottoman = 1720,
+	muslim = 1710,
+	indian = 1700,
+	chinese = 1710,
+	nomad = 1660,
+	sub_saharan = 1650,
+	north_american = 1630,
+	south_american = 1630,
+	oceanian = 1600,
+}
+
 WorldConstants.EntrenchedDefense = 1.5
 WorldConstants.TrainingTierStep = 1.1
 WorldConstants.TerrainSpecializationFlat = 1.2

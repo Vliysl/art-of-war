@@ -74,9 +74,25 @@ local function refreshFleetOrg(fleet)
 	end
 end
 
+-- Per-fleet naval technology multiplier (ship attack/defense), gated by EnableTechTree. Deterministic and
+-- clamped to its branch cap in ResearchSystem.factor; authored low ("nerfed RON"). Naval combat applied NO
+-- country multiplier before this (fleetSide set none), so this is the first technology -> naval wire.
+local function techShipFactor(ownerTag, stat)
+	if not (ctx.WorldConstants and ctx.WorldConstants.EnableTechTree) then
+		return 1
+	end
+	local rs = ctx.ResearchSystem
+	if rs and rs.factor and ownerTag then
+		return rs.factor(ownerTag, "ship_" .. stat)
+	end
+	return 1
+end
+
 -- Group a fleet's ships by typeId into CombatEngine unit records. count = sum of hullFraction
 -- so that (count * typeStrength) == that type's live hull pool -> sideStrength == fleetHullPool.
 local function shipsToUnits(fleet)
+	local atkF = techShipFactor(fleet.ownerTag, "attack")
+	local defF = techShipFactor(fleet.ownerTag, "defense")
 	local byType, order = {}, {}
 	for _, ship in ipairs(fleet.ships or {}) do
 		local spec = shipSpec(ship.typeId)
@@ -86,8 +102,8 @@ local function shipsToUnits(fleet)
 				g = {
 					typeId = ship.typeId,
 					count = 0,
-					attack = spec.attack or (spec.gunpower or 0) / 10,
-					defense = spec.defense or (spec.hullStrength or 0) / 20,
+					attack = (spec.attack or (spec.gunpower or 0) / 10) * atkF,
+					defense = (spec.defense or (spec.hullStrength or 0) / 20) * defF,
 					combatWidth = spec.combatWidth or 3,
 					discipline = spec.discipline or 1,
 					role = spec.combatRole,
