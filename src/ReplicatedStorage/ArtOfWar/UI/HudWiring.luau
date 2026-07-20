@@ -159,16 +159,42 @@ function HudWiring.start(modules)
 	-- that existed solely to build the nation-selection payload nothing ever read.)
 
 	-- Active tech + progress %, for the Research button tooltip (e.g. "Field Howitzers  62%").
-	local function researchLabel(c)
-		local rec = c.research
-		local techId = rec and rec.active
-		if not techId then
+	-- Per-level tech cost (Technologies.cost is a per-level list under the leveled tree rework).
+	local function techCostForLevel(def, level)
+		local co = def.cost
+		if type(co) == "table" then
+			if co.base then
+				return co.base * (co.growth or 1) ^ (level - 1)
+			end
+			return co[level] or co[#co] or 0
+		elseif type(co) == "number" then
+			return co
+		end
+		return 0
+	end
+
+	-- Active-research label for the top bar. Research is delivered on the per-owner OwnResearch channel (stripped
+	-- from the shared broadcast), so read it from there and show the first researching slot + its progress %.
+	local function researchLabel()
+		local own = ClientStateCache.getOwnResearch and ClientStateCache.getOwnResearch()
+		local research = own and own.research
+		local slots = research and research.slots
+		local activeId, slot
+		if type(slots) == "table" then
+			for _, s in slots do
+				if s and s.active then
+					activeId, slot = s.active, s
+					break
+				end
+			end
+		end
+		if not activeId then
 			return "No active research"
 		end
-		local def = Technologies[techId]
-		local name = (def and def.name) or techId
-		local cost = (def and def.cost) or 0
-		local prog = (rec.progress and rec.progress[techId]) or 0
+		local def = Technologies[activeId]
+		local name = (def and def.name) or activeId
+		local cost = def and techCostForLevel(def, (slot and slot.targetLevel) or 1) or 0
+		local prog = (research.progress and research.progress[activeId]) or 0
 		if cost <= 0 then
 			return name .. "  100%"
 		end
@@ -203,7 +229,7 @@ function HudWiring.start(modules)
 				legitimacy = tostring(math.floor((c.legitimacy or 0) + 0.5)),
 				prestige = tostring(math.floor((c.prestige or 0) + 0.5)),
 				manpowerCap = c.manpowerCap and abbreviate(c.manpowerCap) or nil,
-				research = researchLabel(c),
+				research = researchLabel(),
 			},
 		}
 	end
@@ -475,6 +501,7 @@ function HudWiring.start(modules)
 	ClientStateCache.onChangePrefix("countries", scheduleCountryRefresh)
 	ClientStateCache.onChangePrefix("armies", scheduleCountryRefresh)
 	ClientStateCache.onChange("snapshot", scheduleCountryRefresh)
+	ClientStateCache.onChange("ownResearch", scheduleCountryRefresh)
 
 	-- Peace proposals: (1) pop the offer modal once for an incoming proposal addressed to the player,
 	-- now with war standing + a clear per-term breakdown; (2) notify on our OWN proposals'

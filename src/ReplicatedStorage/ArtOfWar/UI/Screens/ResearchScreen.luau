@@ -5,7 +5,6 @@
 -- fire SetResearch/ClearResearch (server-gated by EnableTechTree). Replaces the "coming soon" stub.
 
 local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
 
 local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
 local Colors = DesignSystem.Colors
@@ -131,6 +130,26 @@ local function costForLevel(def, level)
 		return c
 	end
 	return 0
+end
+
+-- Resolve a per-tech banner image id (bare number or rbxassetid://). "0"/"rbxassetid://0"/empty -> nil
+-- (generative banner). Mirrors the DataEditor normalizeFlag convention so authored ids just work.
+local function bannerImage(banner)
+	if type(banner) ~= "string" and type(banner) ~= "number" then
+		return nil
+	end
+	local s = tostring(banner):gsub("%s", "")
+	if s == "" or s == "0" or s == "rbxassetid://0" then
+		return nil
+	end
+	if s:match("^rbxassetid://%d+$") or s:match("^rbxthumb://") or s:match("^http") then
+		return s
+	end
+	local digits = s:match("^(%d+)$")
+	if digits and digits ~= "0" then
+		return "rbxassetid://" .. digits
+	end
+	return nil
 end
 
 local function stroke(inst, color, thickness)
@@ -395,7 +414,7 @@ function ResearchScreen.create(ctx)
 		local l = Instance.new("TextLabel")
 		l.BackgroundTransparency = 1
 		l.AutomaticSize = Enum.AutomaticSize.Y
-		l.Size = UDim2.new(1, 0, 0, 0)
+		l.Size = UDim2.fromScale(1, 0)
 		l.Text = text
 		l.TextColor3 = color or Colors.TextPrimary
 		l.TextXAlignment = Enum.TextXAlignment.Left
@@ -461,7 +480,7 @@ function ResearchScreen.create(ctx)
 		local levels = Instance.new("Frame")
 		levels.BackgroundTransparency = 1
 		levels.AutomaticSize = Enum.AutomaticSize.Y
-		levels.Size = UDim2.new(1, 0, 0, 0)
+		levels.Size = UDim2.fromScale(1, 0)
 		levels.LayoutOrder = 5
 		levels.Parent = detail
 		local ll = Instance.new("UIListLayout")
@@ -473,7 +492,7 @@ function ResearchScreen.create(ctx)
 			local row = Instance.new("Frame")
 			row.BackgroundTransparency = 1
 			row.AutomaticSize = Enum.AutomaticSize.Y
-			row.Size = UDim2.new(1, 0, 0, 0)
+			row.Size = UDim2.fromScale(1, 0)
 			row.LayoutOrder = L
 			row.Parent = levels
 			local rowLayout = Instance.new("UIListLayout")
@@ -531,10 +550,10 @@ function ResearchScreen.create(ctx)
 
 		if state == "maxed" then
 			local b = actionButton("Fully researched", false, function() end)
-			b.Size = UDim2.new(1, 0, 1, 0)
+			b.Size = UDim2.fromScale(1, 1)
 		elseif state == "locked" then
 			local b = actionButton("Prerequisites not met", false, function() end)
-			b.Size = UDim2.new(1, 0, 1, 0)
+			b.Size = UDim2.fromScale(1, 1)
 			b.Active = false
 		else
 			local slotCount = (ownState.research and ownState.research.slotCount)
@@ -547,7 +566,7 @@ function ResearchScreen.create(ctx)
 						ctx.fire("ClearResearch", slotIdx)
 					end
 				end)
-				b.Size = UDim2.new(1, 0, 1, 0)
+				b.Size = UDim2.fromScale(1, 1)
 			else
 				actionButton("Research Lv " .. (lvl + 1) .. " ▸ Slot 1", true, function()
 					if ctx.fire then
@@ -604,13 +623,24 @@ function ResearchScreen.create(ctx)
 		bg.Color = ColorSequence.new(bc, Colors.SurfaceSunken)
 		bg.Transparency = NumberSequence.new(0.35, 0.85)
 		bg.Parent = banner
-		local watermark =
-			Icons.create((TAB_META[pillar.id] and TAB_META[pillar.id].icon) or "Research", 40, Colors.TextPrimary)
-		watermark.AnchorPoint = Vector2.new(1, 0.5)
-		watermark.Position = UDim2.new(1, -8, 0.5, -4)
-		watermark.ImageTransparency = 0.7
-		watermark.ZIndex = 4
-		watermark.Parent = banner
+		local bImg = bannerImage(def.banner)
+		if bImg then
+			local pic = Instance.new("ImageLabel")
+			pic.BackgroundTransparency = 1
+			pic.Size = UDim2.fromScale(1, 1)
+			pic.Image = bImg
+			pic.ScaleType = Enum.ScaleType.Crop
+			pic.ZIndex = 4
+			pic.Parent = banner
+		else
+			local watermark =
+				Icons.create((TAB_META[pillar.id] and TAB_META[pillar.id].icon) or "Research", 40, Colors.TextPrimary)
+			watermark.AnchorPoint = Vector2.new(1, 0.5)
+			watermark.Position = UDim2.new(1, -8, 0.5, -4)
+			watermark.ImageTransparency = 0.7
+			watermark.ZIndex = 4
+			watermark.Parent = banner
+		end
 		local scrim = Instance.new("Frame")
 		scrim.BackgroundColor3 = Colors.SurfaceOverlay
 		scrim.BorderSizePixel = 0
@@ -644,7 +674,7 @@ function ResearchScreen.create(ctx)
 		footer.Parent = card
 		local eraLbl = Instance.new("TextLabel")
 		eraLbl.BackgroundTransparency = 1
-		eraLbl.Size = UDim2.new(0.5, 0, 1, 0)
+		eraLbl.Size = UDim2.fromScale(0.5, 1)
 		eraLbl.Text = def.era and tostring(def.era) or "MODERN"
 		eraLbl.TextColor3 = Colors.TextTertiary
 		eraLbl.TextXAlignment = Enum.TextXAlignment.Left
@@ -804,7 +834,7 @@ function ResearchScreen.create(ctx)
 			col.BackgroundTransparency = 0.7
 			col.BorderSizePixel = 0
 			col.Position = UDim2.fromOffset(gx, 0)
-			col.Size = UDim2.new(0, 1, 0, PAD_Y + pillar.rowCount * ROW_H)
+			col.Size = UDim2.fromOffset(1, PAD_Y + pillar.rowCount * ROW_H)
 			col.ZIndex = 2
 			col.Parent = world
 		end
