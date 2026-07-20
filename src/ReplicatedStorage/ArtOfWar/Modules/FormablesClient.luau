@@ -50,6 +50,33 @@ function FormablesClient.progress(cache, tag, def)
 	return held, total, FormableRules.threshold(def), FormableRules.ready(held, def)
 end
 
+-- The global fastest-time-to-form leaderboard, replicated by FormationRecordStore as JSON on a StringValue.
+-- Returns { [formableTag] = { seconds, holder, holderTag, at } } (empty until any record exists).
+function FormablesClient.getRecords()
+	local sv = aow:FindFirstChild("FormationRecordsRuntime")
+	if not sv or sv.Value == nil or sv.Value == "" then
+		return {}
+	end
+	local ok, decoded = pcall(function()
+		return HttpService:JSONDecode(sv.Value)
+	end)
+	return (ok and type(decoded) == "table") and decoded or {}
+end
+
+-- "m:ss"-ish human label for a formation time in seconds (e.g. 750 -> "12m 30s").
+function FormablesClient.formatDuration(seconds)
+	seconds = math.max(0, math.floor(tonumber(seconds) or 0))
+	local h = math.floor(seconds / 3600)
+	local m = math.floor((seconds % 3600) / 60)
+	local s = seconds % 60
+	if h > 0 then
+		return string.format("%dh %dm", h, m)
+	elseif m > 0 then
+		return string.format("%dm %ds", m, s)
+	end
+	return string.format("%ds", s)
+end
+
 -- Fire `fn` whenever the replicated custom set changes (formable authored/removed mid-session).
 function FormablesClient.onChanged(fn)
 	local sv = aow:WaitForChild("FormablesRuntime", 10)

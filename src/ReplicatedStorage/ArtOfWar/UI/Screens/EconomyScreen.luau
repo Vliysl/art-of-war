@@ -8,15 +8,6 @@ local WorldConstants = require(script.Parent.Parent.Parent.Shared.WorldConstants
 
 -- Economy rework: hide district-absorbed + manufactory buildings from the legacy catalog when the district
 -- system is on (they are managed as districts in the province grid).
-local DISTRICT_ABSORBED = {
-	marketplace = true,
-	workshop = true,
-	granary = true,
-	tax_office = true,
-	barracks = true,
-	stables = true,
-	trading_port = true,
-}
 
 local EconomyScreen = {}
 
@@ -298,7 +289,9 @@ function EconomyScreen.create(ctx)
 			end,
 		})
 		table.insert(openModals, modal)
-		local content = modal.content
+		-- A nation can hold far more eligible provinces than the panel is tall, so the rows go in a scroller --
+		-- parented straight to modal.content they would stack past the panel and draw over the map.
+		local content = Modal.scrollBody(modal)
 		local layout = Instance.new("UIListLayout")
 		layout.FillDirection = Enum.FillDirection.Vertical
 		layout.SortOrder = Enum.SortOrder.LayoutOrder
@@ -421,7 +414,7 @@ function EconomyScreen.create(ctx)
 
 		local groups = {}
 		for id, def in types do
-			if not (districtsOn and (DISTRICT_ABSORBED[id] or def.manufactoryId ~= nil)) then
+			if not (districtsOn and def.absorbedByDistrict) then
 				local cat = def.category or "other"
 				groups[cat] = groups[cat] or {}
 				table.insert(groups[cat], { id = id, def = def })

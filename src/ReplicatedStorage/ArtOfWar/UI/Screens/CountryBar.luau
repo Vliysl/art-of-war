@@ -8,6 +8,8 @@ local Responsive = DesignSystem.Responsive
 local CountryBadge = require(script.Parent.Parent.Components.CountryBadge)
 local HeroButton = require(script.Parent.Parent.Components.HeroButton)
 local Tooltip = require(script.Parent.Parent.Components.Tooltip)
+-- Read live crest/formed state so the bar can tell when its crest actually needs rebuilding (see `update`).
+local CountryColor = require(script.Parent.Parent.Parent.Modules.CountryColor)
 
 local CountryBar = {}
 
@@ -179,6 +181,9 @@ function CountryBar.create(config)
 			current.Position = UDim2.fromOffset(x / scale, y / scale)
 		end
 		local function showTip()
+			if not Tooltip.enabled() then
+				return
+			end
 			local tip = provider()
 			if not tip then
 				return
@@ -267,6 +272,7 @@ function CountryBar.create(config)
 		value = r.treasury or "0",
 		delta = "",
 		caption = "Economy",
+		clickSound = "economy",
 		onClick = function()
 			openMenu("Economy")
 		end,
@@ -291,6 +297,7 @@ function CountryBar.create(config)
 		iconPosition = "left",
 		value = r.manpower or "0",
 		caption = "Manpower",
+		clickSound = "military",
 		onClick = function()
 			openMenu("Military")
 		end,
@@ -425,16 +432,44 @@ function CountryBar.create(config)
 		end
 	end
 
-	-- In-place update on economy/army deltas: mutate values; rebuild the crest only on a country switch.
+	-- In-place update on economy/army deltas: mutate values; rebuild the crest when what it DRAWS changes.
+	--
+	-- This used to gate on `cfg.code ~= currentCode` -- "rebuild only on a country switch" -- which silently
+	-- broke forming. Forming a formable deliberately KEEPS your tag and swaps the identity underneath it
+	-- (FormableSystem.formNation sets displayName / color / flagAssetId on the existing country), so the code
+	-- never changes and a formed nation wore its old crest for the rest of the session. The crest is not a
+	-- function of the tag: CountryBadge resolves the decal AND the formed star off live replicated state when
+	-- it is built, so the signature has to include those, not just the code.
 	local currentCode = config.code
+	local currentColor = config.color
+	local function colorKey(c)
+		if typeof(c) == "Color3" then
+			return string.format("%d_%d_%d", math.floor(c.R * 255), math.floor(c.G * 255), math.floor(c.B * 255))
+		elseif type(c) == "table" and c[1] then
+			return string.format("%s_%s_%s", tostring(c[1]), tostring(c[2]), tostring(c[3]))
+		end
+		return "nil"
+	end
+	local function crestSignature(code, color)
+		return table.concat({
+			tostring(code),
+			colorKey(color),
+			tostring(CountryColor.resolveFlag(code)),
+			tostring(CountryColor.isFormed(code)),
+		}, "|")
+	end
+	local currentCrest = crestSignature(config.code, config.color)
 	local function update(cfg)
 		cfg = cfg or {}
 		latestName = cfg.name or latestName
 		latestGov = cfg.government or latestGov
 		latestCulture = cfg.culture or latestCulture
-		if cfg.code and cfg.code ~= currentCode then
-			currentCode = cfg.code
-			buildCrest(cfg.code, cfg.color)
+		local code = cfg.code or currentCode
+		local color = cfg.color or currentColor
+		local sig = crestSignature(code, color)
+		if sig ~= currentCrest then
+			currentCode, currentColor, currentCrest = code, color, sig
+			buildCrest(code, color)
 		end
 		setResources(cfg.resources)
 	end

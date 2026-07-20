@@ -155,6 +155,23 @@ end
 local function fulfilBuilding(ticket)
 	local province = ctx.WorldState.getProvince(ticket.provinceId)
 	if not province then return end
+	if province.ownerTag ~= ticket.tag then
+		-- Ceded/annexed to another tag before completion (a peace/annex ownership transfer, which
+		-- doesn't pause the ticket the way occupation does). Refund the manual-cancel 50% and drop,
+		-- rather than grant the building -- and its devTier/fortTier -- to now-foreign land.
+		local building = buildingOf(ticket.buildingId)
+		local country = ctx.WorldState.getCountry(ticket.tag)
+		if country and building then
+			country.treasury = (country.treasury or 0) + math.floor((building.cost or 0) * 0.5)
+			ctx.WorldState.setCountry(ticket.tag, country)
+		end
+		ctx.EventBus.publish(ctx.Channels.BuildingCancelled, {
+			tag = ticket.tag, ticketId = ticket.id,
+			buildingId = ticket.buildingId, provinceId = ticket.provinceId,
+			reason = "province_ceded",
+		})
+		return
+	end
 	if alreadyBuilt(province, ticket.buildingId) then return end
 	local building = buildingOf(ticket.buildingId)
 	if not (building and building.repeatable) then
@@ -210,6 +227,14 @@ end
 local function enqueue(tag, provinceId, buildingId)
 	local building = buildingOf(buildingId)
 	if not building then return false, "unknown_building" end
+
+	-- Economy rework: district-absorbed buildings (base buildings + manufactories, flagged in
+	-- Data/BuildingTypes with absorbedByDistrict) are built as districts now, not through this system.
+	-- Reject them at the remote so a crafted client call can't construct a phased-out building while
+	-- DistrictsPlayable is on. Districts are seeded/placed directly, never via enqueue, so this is safe.
+	if ctx.WorldConstants.DistrictsPlayable and building.absorbedByDistrict then
+		return false, "absorbed_into_district"
+	end
 
 	local province = ctx.WorldState.getProvince(provinceId)
 	local ok, reason = provinceSupportsBuild(province, building, tag)

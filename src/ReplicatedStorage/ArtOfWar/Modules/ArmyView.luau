@@ -15,6 +15,11 @@ local MapModeController = require(aow.Modules:WaitForChild("MapModeController"))
 local CameraController = require(aow.Modules:WaitForChild("CameraController"))
 local ProvincePositions = require(aow.Modules:WaitForChild("ProvincePositions"))
 local SeaNodes = require(aow:WaitForChild("Shared"):WaitForChild("SeaNodes"))
+-- Read Motion from the required DesignSystem aggregator (NOT a WaitForChild on the Motion child instance):
+-- the child ModuleScript can replicate late/intermittently on the client, and waiting on the instance
+-- directly here infinite-yielded and stalled the entire client boot (character stuck mid-air). require()'s
+-- cached value is immune to that.
+local Motion = require(aow:WaitForChild("DesignSystem")).Motion
 
 local STATE_ICON = {
 	idle = "",
@@ -241,6 +246,7 @@ local heartbeatConn = nil
 local renderConn = nil
 local stateSub, battleSub, countriesSub, snapshotSub, provinceSub, hideColorConn
 local lastCountryColor = {} -- [tag] = last resolved display Color3; the countries sub reconciles armies only on a real colour change
+local lastCountryFlag = {} -- [tag] = last resolved crest decal ("" when none); paired with the above so a crest swap also reconciles
 local cameraSub
 -- perf: coalesce machinery (gated by WorldConstants.UseArmyViewCoalesce).
 -- reconcileQueued collapses multiple same-frame snapshots into ONE deferred reconcileAll() pass.
@@ -1309,6 +1315,11 @@ local function ensurePulse(armyId, model, on)
 		local target = model:FindFirstChild("Base") or model:FindFirstChild("Shako") or model:FindFirstChild("Body")
 				or model:FindFirstChild("Cube", true) -- ship hull (nested in the mesh import, hence recursive)
 		if not target then return end
+		if Motion.reduced() then
+			-- reduced motion: hold the resting look instead of the looping selection pulse
+			target.Transparency = modeTransparency(cameraMode)
+			return
+		end
 		local tween = TweenService:Create(target,
 			TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
 			{ Transparency = 0.4 })
@@ -1387,11 +1398,28 @@ end
 local function reconcileOne(armyId)
 	local army = ClientStateCache.allArmies()[armyId]
 	if not army then
-		-- The army record is gone (destroyed/annexed/disbanded) -- ragdoll the model with the
-		-- oof instead of instantly deleting it. Stack-hide and model-kind-change removals below
-		-- keep the plain destroy (the army still exists; only its rendered model is swapped).
+		-- The army record is gone. Distinguish a MERGE (silent) from a death/annex/disband (ragdoll + "oof"):
+		-- a merged army vanishes but leaves a friendly army standing on its tile (the merge target), whereas a
+		-- killed/disbanded army usually does not. Suppress the death FX when a same-owner army still holds the
+		-- vanished army's last province. (Read lastKnownState BEFORE cleanupTracking, which clears it.)
+		local last = lastKnownState[armyId]
+		local merged = false
+		if last and last.provinceId then
+			for otherId, other in pairs(ClientStateCache.allArmies()) do
+				if otherId ~= armyId and other.ownerTag == last.ownerTag and other.provinceId == last.provinceId then
+					merged = true
+					break
+				end
+			end
+		end
 		local model = cleanupTracking(armyId)
-		if model then playDeathFx(model) end
+		if model then
+			if merged then
+				model:Destroy() -- silent: this army merged into a friendly stack, it didn't die
+			else
+				playDeathFx(model)
+			end
+		end
 		return
 	end
 
@@ -1449,8 +1477,12 @@ local function reconcileOne(armyId)
 		or (model:FindFirstChild("Anchor") and model.Anchor:FindFirstChild("Label"))
 	local bg = label and label:FindFirstChild("Bg")
 
-	-- Recolor on owner change or first build
-	if newlyCreated or last.ownerTag ~= army.ownerTag or last.color ~= color then
+	-- Recolour on owner change, crest change, or first build. The crest decal is written inside this block but
+	-- is NOT a function of the colour: forming swaps flagAssetId and colour independently, so gating on colour
+	-- alone left a formed nation's banners wearing the old crest permanently (banners are session-lifetime --
+	-- unlike a screen there is no reopen to heal it). `ownerFlag` is memoed below purely to drive this.
+	local ownerFlag = getOwnerFlag(army.ownerTag)
+	if newlyCreated or last.ownerTag ~= army.ownerTag or last.color ~= color or last.flag ~= ownerFlag then
 		local tint = TINT_BY_STATE[state]
 		local applied = tint and color:Lerp(tint, 0.4) or color
 		-- Banner-pin parts
@@ -1484,7 +1516,7 @@ local function reconcileOne(armyId)
 			-- Match the province-panel CountryBadge: HSV-darkened country colour.
 			local h, s, v = Color3.toHSV(color)
 			crest.BackgroundColor3 = Color3.fromHSV(h, math.min(s, 0.6), math.min(v, 0.35))
-			local crestFlag = getOwnerFlag(army.ownerTag)
+			local crestFlag = ownerFlag
 			local tagLbl = crest:FindFirstChild("CrestTag")
 			if tagLbl then
 				tagLbl.Text = string.upper(tostring(army.ownerTag or ""))
@@ -1647,6 +1679,7 @@ local function reconcileOne(armyId)
 		provinceId = army.provinceId,
 		ownerTag = army.ownerTag,
 		color = color,
+		flag = ownerFlag, -- memoed so the recolour block fires on a crest swap, and only once per swap
 		count = count,
 		men = men,
 		unitName = nameText,
@@ -1981,11 +2014,17 @@ function ArmyView.init()
 			if not tag then
 				return
 			end
+			-- Colour is NOT the only thing a banner draws from the country: the crest decal is too. Forming a
+			-- formable keeps the tag and swaps displayName/color/flagAssetId independently, so a def that sets
+			-- a flag without moving the colour would never mark the armies dirty here and the banner would
+			-- wear the old crest for the rest of the session. Compare both.
 			local newColor = CountryColor.resolve(tag)
-			if newColor == lastCountryColor[tag] then
+			local newFlag = getOwnerFlag(tag)
+			if newColor == lastCountryColor[tag] and newFlag == lastCountryFlag[tag] then
 				return
 			end
 			lastCountryColor[tag] = newColor
+			lastCountryFlag[tag] = newFlag
 			for aid, army in pairs(ClientStateCache.allArmies()) do
 				if army.ownerTag == tag then
 					dirtyArmies[aid] = true

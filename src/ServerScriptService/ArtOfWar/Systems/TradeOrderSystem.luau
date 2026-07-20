@@ -14,6 +14,7 @@ local gameDayCounter = 0
 
 local PENDING_TTL_SECONDS = 120
 local SWEEP_INTERVAL_SECONDS = 15
+local TERMINAL_TTL_SECONDS = 60
 
 local function allocId()
 	local id = nextId
@@ -217,6 +218,7 @@ local function cancelOrder(order, reason, notifyTags)
 	order.state = "Cancelled"
 	order.reason = reason
 	order.cancelledAt = ctx.TickScheduler.getSimTime()
+	order.terminalAt = order.cancelledAt
 	persist(order)
 	publish("TradeOrderCancelled", order, { reason = reason })
 	if notifyTags then
@@ -241,6 +243,7 @@ local function activate(order)
 	else
 		order.state = "Completed"
 		order.completedAt = ctx.TickScheduler.getSimTime()
+		order.terminalAt = order.completedAt
 		persist(order)
 		publish("TradeOrderActivated", order)
 		notify(order.initiatorTag, "good", "Trade Complete", "The trade was completed.")
@@ -266,6 +269,12 @@ local function place(initiatorTag, counterpartyTag, direction, rawLines, multipl
 		multiplier = 1
 	end
 	multiplier = math.clamp(multiplier, const("TradeOrderMultiplierMin", 0.25), const("TradeOrderMultiplierMax", 4))
+	-- AI / unclaimed counterparties auto-accept unconditionally (below), so an initiator-chosen
+	-- off-market multiplier would be a pure gold/goods pump. Against a non-player the price is always
+	-- fair base (x1); the negotiable range is only meaningful between two consenting players.
+	if not isPlayer(counterpartyTag) then
+		multiplier = 1
+	end
 	local lines = buildLines(rawLines)
 	if not lines then
 		return nil
@@ -340,6 +349,7 @@ local function reject(orderId, actingTag)
 	end
 	order.state = "Rejected"
 	order.reason = "rejected"
+	order.terminalAt = ctx.TickScheduler.getSimTime()
 	persist(order)
 	publish("TradeOrderRejected", order)
 	notify(
@@ -399,13 +409,20 @@ end
 
 local function sweep()
 	local now = ctx.TickScheduler.getSimTime()
-	for _, order in orders do
+	for id, order in orders do
 		if order.state == "Pending" and order.expiresAt and now >= order.expiresAt then
 			order.state = "Rejected"
 			order.reason = "expired"
+			order.terminalAt = now
 			persist(order)
 			publish("TradeOrderRejected", order)
 			notify(order.initiatorTag, "warn", "Trade Expired", "A trade offer expired with no response.")
+		elseif order.terminalAt and now - order.terminalAt >= TERMINAL_TTL_SECONDS then
+			-- Terminal orders (completed / rejected / cancelled) linger only briefly so the client can
+			-- render the final state, then drop from both the server table and the replicated collection
+			-- so trade history can't grow without bound or slow the per-tick scans.
+			orders[id] = nil
+			ctx.WorldState.setTradeOrder(id, nil)
 		end
 	end
 end

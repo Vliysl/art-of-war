@@ -78,6 +78,17 @@ local function doctrineSlotProduct(bundle, country, domain)
 	return product, applied
 end
 
+-- 7th source: technology. Folds the CAPPED additive tech bonus for a domain (multiplicative per-unit-class
+-- combat domains return 0 here -- those are applied directly in BattleManager/NavalSystem, not via the stack).
+-- Read through the ResearchSystem API so the cap + aggregate logic lives in one place.
+local function techModifier(tag, domain)
+	local rs = ctx and ctx.ResearchSystem
+	if rs and rs.additiveFold then
+		return rs.additiveFold(tag, domain)
+	end
+	return 0
+end
+
 local function doctrineSlotSum(bundle, country, domain)
 	local sum = 0
 	if not bundle.doctrines then return sum end
@@ -130,7 +141,7 @@ function ModifierStack.resolveAdditive(tag, domain)
 	local privilegeSum = privilegeModifierSum(bundle, country, domain)
 	local leaderSum = leaderModifierSum(bundle, country, domain)
 	local doctrineSum = doctrineSlotSum(bundle, country, domain)
-	return ideologyMod + govMod + policySum + privilegeSum + leaderSum + doctrineSum
+	return ideologyMod + govMod + policySum + privilegeSum + leaderSum + doctrineSum + techModifier(tag, domain)
 end
 
 function ModifierStack.register(context)

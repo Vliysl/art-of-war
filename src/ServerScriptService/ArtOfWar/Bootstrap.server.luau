@@ -532,7 +532,11 @@ InputValidator.register("EnactPolicy", {
 	rate = { count = 3, window = 15 },
 })
 InputValidator.register("SetResearch", {
-	schema = { { name = "techId", type = "policyId" } },
+	schema = { { name = "slot", type = "integer" }, { name = "techId", type = "policyId" } },
+	rate = { count = 4, window = 10 },
+})
+InputValidator.register("ClearResearch", {
+	schema = { { name = "slot", type = "integer" } },
 	rate = { count = 4, window = 10 },
 })
 InputValidator.register("RepealPolicy", {
@@ -806,6 +810,14 @@ InputValidator.register("SetAutoCapture", {
 	rate = { count = 20, window = 10 },
 })
 
+InputValidator.register("SetMerge", {
+	schema = {
+		{ name = "armyId", type = "string" },
+		{ name = "enabled", type = "boolean" },
+	},
+	rate = { count = 20, window = 10 },
+})
+
 InputValidator.register("SetReinforce", {
 	schema = {
 		{ name = "armyId", type = "string" },
@@ -893,6 +905,10 @@ InputValidator.register("RemoveFormable", {
 	schema = { { name = "tag", type = "string" } },
 	rate = { count = 20, window = 30 },
 })
+InputValidator.register("SaveClientSettings", {
+	schema = { { name = "settings", type = "shallowTable" } },
+	rate = { count = 20, window = 10 },
+})
 
 local function bindEvent(name, handler)
 	local remote = ensureEvent(name)
@@ -947,6 +963,12 @@ bindEvent("ReleaseCountry", function(player)
 	auth.release(player)
 	if context.StateReplicator and context.StateReplicator.broadcast then
 		context.StateReplicator.broadcast()
+	end
+end)
+
+bindEvent("SaveClientSettings", function(player, settings)
+	if context.SettingsStore then
+		context.SettingsStore.save(player, settings)
 	end
 end)
 
@@ -1105,6 +1127,9 @@ bindEvent("SetConsumerGoods", function(player, priorities)
 end)
 
 bindEvent("ProposeTrade", function(player, toTag, offer, request)
+	if not WorldConstants.EnableTrade then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.TradeSystem
 	if not auth or not system then
@@ -1118,6 +1143,9 @@ bindEvent("ProposeTrade", function(player, toTag, offer, request)
 end)
 
 bindEvent("AcceptTrade", function(player, tradeId)
+	if not WorldConstants.EnableTrade then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.TradeSystem
 	if not auth or not system then
@@ -1131,6 +1159,9 @@ bindEvent("AcceptTrade", function(player, tradeId)
 end)
 
 bindEvent("CancelTrade", function(player, tradeId)
+	if not WorldConstants.EnableTrade then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.TradeSystem
 	if not auth or not system then
@@ -1144,6 +1175,9 @@ bindEvent("CancelTrade", function(player, tradeId)
 end)
 
 bindEvent("PlaceTradeOrder", function(player, counterpartyTag, direction, lines, multiplier, recurring)
+	if not WorldConstants.EnableTrade then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.TradeOrderSystem
 	if not auth or not system then
@@ -1157,6 +1191,9 @@ bindEvent("PlaceTradeOrder", function(player, counterpartyTag, direction, lines,
 end)
 
 bindEvent("AcceptTradeOrder", function(player, orderId)
+	if not WorldConstants.EnableTrade then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.TradeOrderSystem
 	if not auth or not system then
@@ -1170,6 +1207,9 @@ bindEvent("AcceptTradeOrder", function(player, orderId)
 end)
 
 bindEvent("RejectTradeOrder", function(player, orderId)
+	if not WorldConstants.EnableTrade then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.TradeOrderSystem
 	if not auth or not system then
@@ -1183,6 +1223,9 @@ bindEvent("RejectTradeOrder", function(player, orderId)
 end)
 
 bindEvent("CancelTradeOrder", function(player, orderId)
+	if not WorldConstants.EnableTrade then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.TradeOrderSystem
 	if not auth or not system then
@@ -1196,6 +1239,9 @@ bindEvent("CancelTradeOrder", function(player, orderId)
 end)
 
 bindEvent("SetIdeology", function(player, ideologyId)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.IdeologySystem
 	if not auth or not system then
@@ -1209,6 +1255,9 @@ bindEvent("SetIdeology", function(player, ideologyId)
 end)
 
 bindEvent("SetGovernmentType", function(player, targetGov, targetIdeology)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	if not auth or not context.GovernmentTransitions then
 		return
@@ -1224,6 +1273,9 @@ bindEvent("SetGovernmentType", function(player, targetGov, targetIdeology)
 end)
 
 bindEvent("CancelTransition", function(player)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	if not auth or not context.GovernmentTransitions then
 		return
@@ -1236,6 +1288,9 @@ bindEvent("CancelTransition", function(player)
 end)
 
 bindEvent("EnactPolicy", function(player, policyId)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	if not auth then
 		return
@@ -1253,6 +1308,9 @@ bindEvent("EnactPolicy", function(player, policyId)
 end)
 
 bindEvent("RepealPolicy", function(player, policyId)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.PolicySystem
 	if not auth or not system then
@@ -1267,6 +1325,9 @@ end)
 
 -- Politics overhaul ("Authority & the Estates")
 bindEvent("GrantPrivilege", function(player, privilegeId)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	if not auth or not context.EstateSystem then
 		return
@@ -1279,6 +1340,9 @@ bindEvent("GrantPrivilege", function(player, privilegeId)
 end)
 
 bindEvent("RevokePrivilege", function(player, privilegeId)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	if not auth or not context.EstateSystem then
 		return
@@ -1291,6 +1355,9 @@ bindEvent("RevokePrivilege", function(player, privilegeId)
 end)
 
 bindEvent("SeizePower", function(player, estateId)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	if not auth or not context.EstateSystem then
 		return
@@ -1314,7 +1381,10 @@ bindEvent("ResolveEvent", function(player, eventId, optionId)
 	context.EventSystem.resolveEvent(tag, eventId, optionId, false)
 end)
 
-bindEvent("SetResearch", function(player, techId)
+bindEvent("SetResearch", function(player, slot, techId)
+	if not WorldConstants.EnableTechTree then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.ResearchSystem
 	if not auth or not system then
@@ -1324,10 +1394,29 @@ bindEvent("SetResearch", function(player, techId)
 	if not tag then
 		return
 	end
-	system.startResearch(tag, techId)
+	system.startResearch(tag, slot, techId)
+end)
+
+bindEvent("ClearResearch", function(player, slot)
+	if not WorldConstants.EnableTechTree then
+		return
+	end
+	local auth = authority()
+	local system = loadedSystems.ResearchSystem
+	if not auth or not system then
+		return
+	end
+	local tag = auth.tagFor(player)
+	if not tag then
+		return
+	end
+	system.clearSlot(tag, slot)
 end)
 
 bindEvent("CancelLaw", function(player)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.LawSystem
 	if not auth or not system then
@@ -1341,6 +1430,9 @@ bindEvent("CancelLaw", function(player)
 end)
 
 bindEvent("AppointLeader", function(player, slot, candidateIndex)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.LeaderSystem
 	if not auth or not system then
@@ -1354,6 +1446,9 @@ bindEvent("AppointLeader", function(player, slot, candidateIndex)
 end)
 
 bindEvent("DismissLeader", function(player, slot)
+	if not WorldConstants.EnablePolitics then
+		return
+	end
 	local auth = authority()
 	local system = loadedSystems.LeaderSystem
 	if not auth or not system then
@@ -1374,7 +1469,7 @@ bindEvent("SetMapMode", function(player, mode)
 	system.setMode(player, mode)
 end)
 
--- Human-readable body for a failed recruit/build. RecruitSystem returns snake_case tokens
+-- Human-readable body for a failed recruit/build/release. RecruitSystem returns snake_case tokens
 -- (insufficient_treasury, district_required:Military, ...); NavalSystem returns space-separated phrases
 -- ("no shipyard here"). Toasting this instead of dropping the click fixes the "Recruit does nothing" trap
 -- flagged in the pre-playtest ArmyPanel/FleetPanel audit.
@@ -1387,6 +1482,13 @@ local RECRUIT_REASON_TEXT = {
 	unit_locked = "That unit isn't available yet.",
 	unknown_unit = "That unit isn't available.",
 	bad_count = "Choose a valid amount.",
+	-- DiplomacySystem.releaseNation tokens. Without these the generic de-underscoring fallback would render
+	-- "no_releasable_cores" as the bare "No releasable cores.", which explains nothing to a player.
+	no_releasable_cores = "You hold no provinces that would free this nation.",
+	already_exists = "That nation already exists on the map.",
+	invalid = "That nation can't be released.",
+	unavailable = "Releasing isn't available right now.",
+	disabled = "Releasing nations is disabled.",
 }
 local function recruitFailBody(reason)
 	if type(reason) ~= "string" or reason == "" then
@@ -1437,7 +1539,7 @@ end)
 -- C6: apply a batched action per province, count successes, and toast the partial result
 -- ("Queued in 4/7 provinces"). Validation stays entirely per-province inside enqueue, so
 -- partial application (owner decision) is automatic -- it deducts until broke/ineligible.
-local MULTI_PROVINCE_CAP = 25
+local MULTI_PROVINCE_CAP = 200
 
 local function applyMulti(tag, provinceIds, applyFn, title, verb)
 	local applied, total, firstReason = 0, 0, nil
@@ -1663,6 +1765,23 @@ bindEvent("SetAutoCapture", function(player, armyId, enabled)
 	system.setAutoCapture(armyId, enabled)
 end)
 
+bindEvent("SetMerge", function(player, armyId, enabled)
+	local auth = authority()
+	local system = loadedSystems.ArmySystem
+	if not auth or not system then
+		return
+	end
+	local tag = auth.tagFor(player)
+	if not tag then
+		return
+	end
+	local army = context.WorldState.getArmy(armyId)
+	if not army or army.ownerTag ~= tag then
+		return
+	end
+	system.setMerge(armyId, enabled)
+end)
+
 -- Per-army toggle for the manpower-fed reinforcement pass (ArmySystem.regenTick honours
 -- army.reinforceEnabled ~= false). Mirrors SetAutoCapture.
 bindEvent("SetReinforce", function(player, armyId, enabled)
@@ -1788,6 +1907,29 @@ bindEvent("SplitArmy", function(player, armyId, composition)
 	armySys.splitArmy(armyId, cleaned)
 end)
 
+local TextService = game:GetService("TextService")
+-- Run a player-supplied name through Roblox text filtering before it is stored and replicated to every
+-- client (UGC-text compliance; also strips RichText injection). Returns a broadcast-safe string, or nil
+-- when the input is empty or filtering fails -- callers fall back to a safe default / keep the old name.
+local function filterBroadcastName(player, text)
+	if type(text) ~= "string" or text == "" then
+		return nil
+	end
+	local ok, result = pcall(function()
+		return TextService:FilterStringAsync(text, player.UserId)
+	end)
+	if not ok or not result then
+		return nil
+	end
+	local ok2, filtered = pcall(function()
+		return result:GetNonChatStringForBroadcastAsync()
+	end)
+	if not ok2 or type(filtered) ~= "string" then
+		return nil
+	end
+	return filtered
+end
+
 bindEvent("FormArmyGroup", function(player, name, armyIds)
 	local auth = authority()
 	local ags = loadedSystems.ArmyGroupSystem
@@ -1813,7 +1955,7 @@ bindEvent("FormArmyGroup", function(player, name, armyIds)
 	if #cleaned == 0 then
 		return
 	end
-	ags.createGroup(tag, name, cleaned)
+	ags.createGroup(tag, filterBroadcastName(player, name), cleaned)
 end)
 
 local function ownedGroup(tag, groupId)
@@ -1834,7 +1976,7 @@ bindEvent("RenameArmyGroup", function(player, groupId, name)
 	if not tag or not ownedGroup(tag, groupId) then
 		return
 	end
-	ags.renameGroup(groupId, name)
+	ags.renameGroup(groupId, filterBroadcastName(player, name))
 end)
 
 bindEvent("DisbandArmyGroup", function(player, groupId)
@@ -2386,7 +2528,12 @@ bindEvent("ReleaseNation", function(player, formableTag, asPuppet)
 	if not tag then
 		return
 	end
-	system.releaseNation(tag, formableTag, asPuppet == true)
+	-- releaseNation's rejection reason was being discarded, so a refused release looked identical to a
+	-- successful one from the client's side: nothing happened, with no explanation. Toast it like recruiting.
+	local ok, reason = system.releaseNation(tag, formableTag, asPuppet == true)
+	if not ok then
+		toastRecruitFail(tag, "Can't release", reason)
+	end
 end)
 
 bindEvent("SetFormable", function(player, tag, def)
@@ -2417,9 +2564,13 @@ end
 
 local stateSync = ensureEvent("StateSync")
 local ownPoliticsSync = ensureEvent("OwnPolitics")
+local ownArmiesSync = ensureEvent("OwnArmies")
+local ownResearchSync = ensureEvent("OwnResearch")
 if loadedSystems.StateReplicator and context.StateReplicator then
 	context.StateReplicator.setStateSync(stateSync)
 	context.StateReplicator.setOwnPoliticsSync(ownPoliticsSync)
+	context.StateReplicator.setOwnArmiesSync(ownArmiesSync)
+	context.StateReplicator.setOwnResearchSync(ownResearchSync)
 end
 
 local notificationChannel = ensureEvent("NotificationChannel")
@@ -2474,6 +2625,13 @@ bindFunction("RequestFullState", function(player)
 	-- No-op until they have claimed; the claim then dirties the country and broadcast() keeps it current.
 	if player and context.StateReplicator.pushOwnPoliticsTo then
 		context.StateReplicator.pushOwnPoliticsTo(player)
+	end
+	if player and context.StateReplicator.pushOwnArmiesTo then
+		context.StateReplicator.pushOwnArmiesTo(player)
+	end
+	-- Deliver this player their own country's tech state (levels + research slots), stripped from the shared snapshot.
+	if player and context.StateReplicator.pushOwnResearchTo then
+		context.StateReplicator.pushOwnResearchTo(player)
 	end
 	return snapshot
 end)

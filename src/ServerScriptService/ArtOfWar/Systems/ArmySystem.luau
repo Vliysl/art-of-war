@@ -563,6 +563,29 @@ local function mergeArmies(primaryId, otherIds)
 	return true
 end
 
+-- Per-army "auto-merge on arrival" flag, DEFAULT ON. Stored as `false` ONLY when a player turns it off
+-- (nil = default ON, so the common case replicates no noise) -- mirrors reinforceEnabled's `~= false`
+-- semantics. "Is merge on for this army" is `army.mergeEnabled ~= false` everywhere.
+local function setMerge(armyId, enabled)
+	local army = ctx.WorldState.getArmy(armyId)
+	if not army then return false end
+	-- nil = default ON, false = explicitly OFF. (NOT `enabled and nil or false` -- that idiom yields false
+	-- even when enabled is true, since `true and nil` is nil then `nil or false` is false -- which is why
+	-- merge could be turned off but never back on.)
+	if enabled then
+		army.mergeEnabled = nil
+	else
+		army.mergeEnabled = false
+	end
+	ctx.WorldState.setArmy(armyId, army)
+	ctx.EventBus.publish(ctx.Channels.ArmyStateChanged, {
+		armyId = armyId,
+		tag = army.ownerTag,
+		state = army.state or "idle",
+	})
+	return true
+end
+
 -- Split: detach a sub-composition into a NEW army at the same province (inverse of
 -- mergeArmies). The new army inherits the source's morale; its organization is
 -- inherited too but capped at its own baseOrganization (which its composition sets),
@@ -593,6 +616,20 @@ local function splitArmy(sourceId, splitComposition)
 	end
 	if takeTotal <= 0 then return false, "empty_split" end
 	if takeTotal >= totalRegimentCount(source.composition) then return false, "would_empty_source" end
+
+	-- B22: bound a country's army count so splitArmy (and BorderCover auto-split, which routes through it)
+	-- can't mint armies without limit -- a per-tag DoS + replication-bloat lever late game.
+	local armyCap = ctx.WorldConstants.MaxArmiesPerCountry or 40
+	local ownerBucket = armiesByOwner[source.ownerTag]
+	if ownerBucket then
+		local n = 0
+		for _ in ownerBucket do
+			n += 1
+		end
+		if n >= armyCap then
+			return false, "army_cap_reached"
+		end
+	end
 
 	-- New detached army at the same province: inherit morale; inherit org but clamp to
 	-- the new army's own baseOrganization (org <= baseOrg invariant).
@@ -826,6 +863,7 @@ function ArmySystem.register(context)
 		setState = setState,
 		setOriginProvinceId = setOriginProvinceId,
 		mergeArmies = mergeArmies,
+		setMerge = setMerge,
 		splitArmy = splitArmy,
 		reassignOfficer = reassignOfficer,
 		regenTick = regenTick,

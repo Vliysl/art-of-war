@@ -577,6 +577,181 @@ function DataEditor.listProvinces()
 	end
 end
 
+-- ── B16 / B15: editor-write field allowlist + validation ──────────────────────
+-- updateCountry/updateProvince historically copied opts verbatim into the record, so any config-listed
+-- editor ("Historian") could inject arbitrary fields -- treasury = 1e18, garbage nested tables (aggregate
+-- bloat), or keys that collide with runtime derivations -- which then persist to DataStore and survive every
+-- boot. The specs below restrict writes to known design fields with per-field type + range validation;
+-- unknown fields are warn-dropped. Flip STRICT_EDITOR_FIELDS off to restore the legacy verbatim copy.
+local STRICT_EDITOR_FIELDS = true
+
+local MAX_FIELD_STRING = 128
+local MAX_TAG_ARRAY = 512
+
+local function isFiniteNumber(n)
+	return type(n) == "number" and n == n and n ~= math.huge and n ~= -math.huge
+end
+
+local function coerceString(v)
+	if type(v) ~= "string" then
+		return nil, false
+	end
+	if #v > MAX_FIELD_STRING then
+		v = string.sub(v, 1, MAX_FIELD_STRING)
+	end
+	return v, true
+end
+
+local function coerceBoolean(v)
+	if type(v) == "boolean" then
+		return v, true
+	end
+	return nil, false
+end
+
+local function coerceNumber(minV, maxV)
+	return function(v)
+		local n = tonumber(v)
+		if not isFiniteNumber(n) then
+			return nil, false
+		end
+		return math.clamp(n, minV, maxV), true
+	end
+end
+
+local function coerceInteger(minV, maxV)
+	return function(v)
+		local n = tonumber(v)
+		if not isFiniteNumber(n) then
+			return nil, false
+		end
+		return math.clamp(math.floor(n + 0.5), minV, maxV), true
+	end
+end
+
+local function coerceColor(v)
+	if type(v) ~= "table" then
+		return nil, false
+	end
+	local r, g, b = tonumber(v[1]), tonumber(v[2]), tonumber(v[3])
+	if not (isFiniteNumber(r) and isFiniteNumber(g) and isFiniteNumber(b)) then
+		return nil, false
+	end
+	return {
+		math.clamp(math.floor(r + 0.5), 0, 255),
+		math.clamp(math.floor(g + 0.5), 0, 255),
+		math.clamp(math.floor(b + 0.5), 0, 255),
+	}, true
+end
+
+-- A bounded array of country tags (cores/claims/rivals/...). Keeps only non-empty string entries and caps the
+-- length; deliberately does NOT require each tag to exist (partial edit states are legal, and DataLoader's
+-- heal + removeCountry strip dangling tags).
+local function coerceTagArray(v)
+	if type(v) ~= "table" then
+		return nil, false
+	end
+	local out = {}
+	for _, tag in ipairs(v) do
+		if type(tag) == "string" and tag ~= "" then
+			out[#out + 1] = tag
+			if #out >= MAX_TAG_ARRAY then
+				break
+			end
+		end
+	end
+	return out, true
+end
+
+-- ownerTag / controllerTag must be "NONE" or an existing country; an unknown tag is rejected (dropped) so a
+-- crafted payload can't plant a dangling owner.
+local function coerceOwnerTag(v)
+	if type(v) ~= "string" then
+		return nil, false
+	end
+	if v == "NONE" or countries[v] then
+		return v, true
+	end
+	return nil, false
+end
+
+local COUNTRY_FIELD_SPECS = {
+	displayName = coerceString,
+	primaryCulture = coerceString,
+	stateReligion = coerceString,
+	governmentForm = coerceString,
+	ideology = coerceString,
+	technologyGroup = coerceString,
+	acceptedCultures = coerceTagArray,
+	historicalRivals = coerceTagArray,
+	historicalFriends = coerceTagArray,
+	color = coerceColor,
+	stability = coerceNumber(-100, 100),
+	legitimacy = coerceNumber(0, 100),
+	treasury = coerceNumber(0, 1e9),
+	manpower = coerceNumber(0, 1e9),
+	politicalPower = coerceNumber(0, 1e9),
+	-- capitalProvinceId and flagAssetId are validated specially in updateCountry.
+}
+
+local PROVINCE_FIELD_SPECS = {
+	name = coerceString,
+	displayCityName = coerceString,
+	areaId = coerceString,
+	regionId = coerceString,
+	superRegionId = coerceString,
+	terrain = coerceString,
+	climate = coerceString,
+	culture = coerceString,
+	religion = coerceString,
+	tradeGood = coerceString,
+	ownerTag = coerceOwnerTag,
+	controllerTag = coerceOwnerTag,
+	cores = coerceTagArray,
+	defaultCores = coerceTagArray,
+	releasableCores = coerceTagArray,
+	claims = coerceTagArray,
+	isCity = coerceBoolean,
+	coastal = coerceBoolean,
+	hasShipyard = coerceBoolean,
+	centerOfTrade = coerceNumber(0, 100),
+	devTier = coerceInteger(0, 100),
+	infraTier = coerceInteger(0, 100),
+	fortTier = coerceInteger(0, 100),
+	baseTax = coerceNumber(0, 1e6),
+	baseProduction = coerceNumber(0, 1e6),
+	baseManpower = coerceNumber(0, 1e6),
+	population = coerceInteger(0, 1e12),
+	unrest = coerceNumber(0, 100),
+	autonomy = coerceNumber(0, 100),
+	-- goods is normalized by normalizeGoods in updateProvince.
+}
+
+-- B15: a country's capital must be a province it OWNS. Reject a capitalProvinceId that resolves to a province
+-- owned by a different real tag (allow NONE / self) so a crafted capital can't set up the boot-time heal to
+-- transfer a rival's province. Missing/foreign capitals are also relocated defensively at load (DataLoader).
+local function assertCapitalNotForeign(tag, capId)
+	local prov = provinces[capId]
+	if prov then
+		local owner = prov.ownerTag
+		if owner and owner ~= "NONE" and owner ~= tag then
+			error(("Country %q capitalProvinceId %d is owned by %s"):format(tostring(tag), capId, tostring(owner)))
+		end
+	end
+end
+
+local function resolveCapitalId(tag, v)
+	local capId = tonumber(v)
+	if not capId or capId ~= math.floor(capId) then
+		error(("Country %q capitalProvinceId must be an integer"):format(tostring(tag)))
+	end
+	if not provinces[capId] then
+		error(("Country %q capitalProvinceId %d does not exist"):format(tostring(tag), capId))
+	end
+	assertCapitalNotForeign(tag, capId)
+	return capId
+end
+
 function DataEditor.addCountry(tag, opts)
 	ensureLoaded()
 	assert(type(tag) == "string" and #tag >= 2, "tag must be a string of 2+ chars")
@@ -591,6 +766,7 @@ function DataEditor.addCountry(tag, opts)
 	if not provinces[capId] then
 		error(("Country %q capitalProvinceId %d does not exist"):format(tag, capId))
 	end
+	assertCapitalNotForeign(tag, capId)
 	if type(opts.primaryCulture) ~= "string" or opts.primaryCulture == "" then
 		error(("Country %q requires primaryCulture"):format(tag))
 	end
@@ -600,7 +776,11 @@ function DataEditor.addCountry(tag, opts)
 	if type(opts.governmentForm) ~= "string" or opts.governmentForm == "" then
 		error(("Country %q requires governmentForm"):format(tag))
 	end
-	pushHistory("addCountry " .. tag)
+	-- addCountry writes exactly one record (countries[tag]) and nothing else, so the record fast-path is
+	-- sufficient and avoids deep-cloning all ~5.7k provinces for a one-country add. Undo captures the nil
+	-- before-image and deletes the record. (removeCountry stays on the full snapshot: it also rewrites every
+	-- province that referenced the tag.)
+	pushRecordHistory("countries", tag, "addCountry " .. tag)
 	countries[tag] = {
 		tag = tag,
 		displayName = opts.displayName or tag,
@@ -628,15 +808,36 @@ end
 function DataEditor.updateCountry(tag, opts)
 	ensureLoaded()
 	requireKey(countries, tag, "Country")
+	-- Validate the capital up front (resolveCapitalId is the only field that can error) so a rejected
+	-- capitalProvinceId can't leave a partial field write on the live record.
+	local newCapital
+	if opts.capitalProvinceId ~= nil then
+		newCapital = resolveCapitalId(tag, opts.capitalProvinceId)
+	end
 	pushRecordHistory("countries", tag, "updateCountry " .. tag)
+	local record = countries[tag]
 	for k, v in pairs(opts) do
-		if k == "flagAssetId" then
-			countries[tag][k] = normalizeFlag(v)
+		if k == "capitalProvinceId" then
+			record.capitalProvinceId = newCapital
+		elseif k == "flagAssetId" then
+			record.flagAssetId = normalizeFlag(v)
+		elseif not STRICT_EDITOR_FIELDS then
+			record[k] = v
 		else
-			countries[tag][k] = v
+			local spec = COUNTRY_FIELD_SPECS[k]
+			if spec then
+				local clean, ok = spec(v)
+				if ok then
+					record[k] = clean
+				else
+					warn(string.format("[DataEditor] updateCountry %s: rejected field %q", tostring(tag), tostring(k)))
+				end
+			else
+				warn(string.format("[DataEditor] updateCountry %s: dropped unknown field %q", tostring(tag), tostring(k)))
+			end
 		end
 	end
-	return countries[tag]
+	return record
 end
 
 -- Per-country starting technologies. techMap is a { [techId] = true } set; every id is validated
@@ -663,7 +864,7 @@ function DataEditor.setCountryStartingTechs(tag, techMap)
 			end
 		end
 	end
-	pushHistory("setStartingTechs " .. tag)
+	pushRecordHistory("countries", tag, "setStartingTechs " .. tag)
 	countries[tag].startingTechs = validated
 	return countries[tag]
 end
@@ -785,20 +986,38 @@ function DataEditor.updateProvince(id, opts)
 	id = tonumber(id)
 	requireKey(provinces, id, "Province")
 	pushRecordHistory("provinces", id, string.format("updateProvince %d", id))
+	local record = provinces[id]
 	for k, v in pairs(opts) do
-		provinces[id][k] = v
-	end
-	if opts.goods ~= nil then
-		local goods = normalizeGoods(opts, provinces[id].tradeGood, provinces[id].baseProduction)
-		provinces[id].goods = goods
-		local primary = primaryGood(goods)
-		if primary then
-			provinces[id].tradeGood = primary
-		elseif next(goods) == nil then
-			provinces[id].tradeGood = "none"
+		-- goods is normalized after the loop (via normalizeGoods); skip the raw copy here.
+		if k ~= "goods" then
+			if not STRICT_EDITOR_FIELDS then
+				record[k] = v
+			else
+				local spec = PROVINCE_FIELD_SPECS[k]
+				if spec then
+					local clean, ok = spec(v)
+					if ok then
+						record[k] = clean
+					else
+						warn(string.format("[DataEditor] updateProvince %d: rejected field %q", id, tostring(k)))
+					end
+				else
+					warn(string.format("[DataEditor] updateProvince %d: dropped unknown field %q", id, tostring(k)))
+				end
+			end
 		end
 	end
-	return provinces[id]
+	if opts.goods ~= nil then
+		local goods = normalizeGoods(opts, record.tradeGood, record.baseProduction)
+		record.goods = goods
+		local primary = primaryGood(goods)
+		if primary then
+			record.tradeGood = primary
+		elseif next(goods) == nil then
+			record.tradeGood = "none"
+		end
+	end
+	return record
 end
 
 local PAINT_TAG_FIELDS = { defaultCore = "defaultCores", releasableCore = "releasableCores", claim = "claims" }
@@ -1165,7 +1384,7 @@ function DataEditor.setTileOwner(partName, ownerTag)
 	if not clearing and not countries[ownerTag] then
 		error(string.format("Country %q does not exist", ownerTag))
 	end
-	pushHistory("setTileOwner " .. partName)
+	pushRecordHistory("tileOwners", partName, "setTileOwner " .. partName)
 	if clearing then
 		tileOwners[partName] = nil
 	else
@@ -2102,7 +2321,11 @@ function DataEditor.addCulture(id, opts)
 	if cultures[id] then
 		error(("Culture %q already exists"):format(id))
 	end
-	pushHistory("addCulture " .. id)
+	-- Identity registry edits (cultures/religions/ideologies/governments) each touch exactly one record in one
+	-- collection: add/update write the single record, and remove only deletes it after a read-only ref-check
+	-- (the loops over provinces/countries just count references and error; they never mutate). So all of them
+	-- use the record fast-path instead of a whole-world snapshot per edit.
+	pushRecordHistory("cultures", id, "addCulture " .. id)
 	cultures[id] = {
 		id = id,
 		displayName = opts.displayName or id,
@@ -2114,7 +2337,7 @@ end
 function DataEditor.updateCulture(id, opts)
 	ensureLoaded()
 	requireKey(cultures, id, "Culture")
-	pushHistory("updateCulture " .. id)
+	pushRecordHistory("cultures", id, "updateCulture " .. id)
 	for k, v in pairs(opts) do
 		cultures[id][k] = v
 	end
@@ -2146,7 +2369,7 @@ function DataEditor.removeCulture(id)
 	if refs > 0 then
 		error(string.format("Culture %q is still referenced by %d record(s) — reassign them first", id, refs))
 	end
-	pushHistory("removeCulture " .. id)
+	pushRecordHistory("cultures", id, "removeCulture " .. id)
 	cultures[id] = nil
 	return true
 end
@@ -2158,7 +2381,7 @@ function DataEditor.addReligion(id, opts)
 	if religions[id] then
 		error(("Religion %q already exists"):format(id))
 	end
-	pushHistory("addReligion " .. id)
+	pushRecordHistory("religions", id, "addReligion " .. id)
 	religions[id] = {
 		id = id,
 		displayName = opts.displayName or id,
@@ -2170,7 +2393,7 @@ end
 function DataEditor.updateReligion(id, opts)
 	ensureLoaded()
 	requireKey(religions, id, "Religion")
-	pushHistory("updateReligion " .. id)
+	pushRecordHistory("religions", id, "updateReligion " .. id)
 	for k, v in pairs(opts) do
 		religions[id][k] = v
 	end
@@ -2195,7 +2418,7 @@ function DataEditor.removeReligion(id)
 	if refs > 0 then
 		error(string.format("Religion %q is still referenced by %d record(s) — reassign them first", id, refs))
 	end
-	pushHistory("removeReligion " .. id)
+	pushRecordHistory("religions", id, "removeReligion " .. id)
 	religions[id] = nil
 	return true
 end
@@ -2207,7 +2430,7 @@ function DataEditor.addIdeology(id, opts)
 	if ideologies[id] then
 		error(("Ideology %q already exists"):format(id))
 	end
-	pushHistory("addIdeology " .. id)
+	pushRecordHistory("ideologies", id, "addIdeology " .. id)
 	ideologies[id] = {
 		id = id,
 		displayName = opts.displayName or id,
@@ -2220,7 +2443,7 @@ end
 function DataEditor.updateIdeology(id, opts)
 	ensureLoaded()
 	requireKey(ideologies, id, "Ideology")
-	pushHistory("updateIdeology " .. id)
+	pushRecordHistory("ideologies", id, "updateIdeology " .. id)
 	for k, v in pairs(opts) do
 		if k == "modifiers" or k == "color" then
 			ideologies[id][k] = type(v) == "table" and deepClone(v) or v
@@ -2254,7 +2477,7 @@ function DataEditor.removeIdeology(id)
 	if refs > 0 then
 		error(string.format("Ideology %q is still referenced by %d record(s) — reassign them first", id, refs))
 	end
-	pushHistory("removeIdeology " .. id)
+	pushRecordHistory("ideologies", id, "removeIdeology " .. id)
 	ideologies[id] = nil
 	return true
 end
@@ -2266,7 +2489,7 @@ function DataEditor.addGovernmentType(id, opts)
 	if governments[id] then
 		error(("Government %q already exists"):format(id))
 	end
-	pushHistory("addGovernmentType " .. id)
+	pushRecordHistory("governments", id, "addGovernmentType " .. id)
 	governments[id] = {
 		id = id,
 		displayName = opts.displayName or id,
@@ -2282,7 +2505,7 @@ end
 function DataEditor.updateGovernmentType(id, opts)
 	ensureLoaded()
 	requireKey(governments, id, "Government")
-	pushHistory("updateGovernmentType " .. id)
+	pushRecordHistory("governments", id, "updateGovernmentType " .. id)
 	for k, v in pairs(opts) do
 		if k == "allowedIdeologies" or k == "modifiers" or k == "transitions" then
 			governments[id][k] = type(v) == "table" and deepClone(v) or v
@@ -2319,7 +2542,7 @@ function DataEditor.removeGovernmentType(id)
 			)
 		)
 	end
-	pushHistory("removeGovernmentType " .. id)
+	pushRecordHistory("governments", id, "removeGovernmentType " .. id)
 	governments[id] = nil
 	return true
 end

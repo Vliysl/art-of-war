@@ -209,6 +209,13 @@ local function buildDistrict(tag, provinceId, slotIndex, districtType)
 	if districtAt(province, slotIndex) then
 		return false, "slot_occupied"
 	end
+	-- One in-flight ticket per slot (mirrors upgradeDistrict): without this a double BuildDistrict in
+	-- one tick charges treasury twice for the same slot, and fulfil() drops the loser silently.
+	for _, t in (queuesByCountry[tag] or {}) do
+		if t.provinceId == provinceId and t.slotIndex == slotIndex then
+			return false, "already_queued"
+		end
+	end
 	if occupiedSlots(province) + pendingAt(tag, provinceId, true) >= slots then
 		return false, "no_free_slot"
 	end
@@ -224,6 +231,8 @@ local function buildDistrict(tag, provinceId, slotIndex, districtType)
 		return false, "unknown_country"
 	end
 	local price = districtCost(1, districtType)
+	-- [tech] building_cost_reduction (REDUCTION, cap WorldConstants.TechCapBuildingCost)
+	price = math.floor(price * (1 - (ctx.ResearchSystem and ctx.ResearchSystem.bonus and ctx.ResearchSystem.bonus(tag, "building_cost_reduction") or 0)) + 0.5)
 	if (country.treasury or 0) < price then
 		return false, "insufficient_treasury"
 	end
@@ -240,7 +249,8 @@ local function buildDistrict(tag, provinceId, slotIndex, districtType)
 		targetLevel = 1,
 		isUpgrade = false,
 		startedAt = now,
-		completesAt = now + districtBuildDays(1) * secondsPerDay(),
+		-- [tech] building_speed (REDUCTION of days = faster, cap WorldConstants.TechCapBuildingSpeed)
+		completesAt = now + districtBuildDays(1) * (1 - (ctx.ResearchSystem and ctx.ResearchSystem.bonus and ctx.ResearchSystem.bonus(tag, "building_speed") or 0)) * secondsPerDay(),
 	}
 	local q = queuesByCountry[tag] or {}
 	table.insert(q, ticket)
@@ -287,6 +297,8 @@ local function upgradeDistrict(tag, provinceId, slotIndex)
 		return false, "unknown_country"
 	end
 	local price = districtCost(targetLevel, d.type)
+	-- [tech] building_cost_reduction (REDUCTION, cap WorldConstants.TechCapBuildingCost)
+	price = math.floor(price * (1 - (ctx.ResearchSystem and ctx.ResearchSystem.bonus and ctx.ResearchSystem.bonus(tag, "building_cost_reduction") or 0)) + 0.5)
 	if (country.treasury or 0) < price then
 		return false, "insufficient_treasury"
 	end
@@ -303,7 +315,8 @@ local function upgradeDistrict(tag, provinceId, slotIndex)
 		targetLevel = targetLevel,
 		isUpgrade = true,
 		startedAt = now,
-		completesAt = now + districtBuildDays(targetLevel) * secondsPerDay(),
+		-- [tech] building_speed (REDUCTION of days = faster, cap WorldConstants.TechCapBuildingSpeed)
+		completesAt = now + districtBuildDays(targetLevel) * (1 - (ctx.ResearchSystem and ctx.ResearchSystem.bonus and ctx.ResearchSystem.bonus(tag, "building_speed") or 0)) * secondsPerDay(),
 	}
 	local q = queuesByCountry[tag] or {}
 	table.insert(q, ticket)

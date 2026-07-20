@@ -99,6 +99,17 @@ end
 local function mergeEntry(collection, key, record, basePath)
 	key = provKey(collection, key)
 	cache[collection][key] = record
+	-- Fog of war: the shared broadcast delivers OWN armies fogged too (one packet for everyone), so overlay this
+	-- player's own-army detail (delivered separately on OwnArmies) to restore full detail. Enemy armies have no
+	-- overlay entry and stay fogged. No-op with EnableFogOfWar off (ownArmies stays empty).
+	if collection == "armies" and cache.ownArmies then
+		local detail = cache.ownArmies[key]
+		if type(detail) == "table" and type(record) == "table" then
+			for k, v in detail do
+				record[k] = v
+			end
+		end
+	end
 	if WorldConstants.OwnershipReplicationDebug and collection == "provinces" then
 		print(
 			"[CSC merge] prov",
@@ -201,6 +212,9 @@ local function applyRemovals(removed)
 				for _, key in ipairs(list) do
 					local k = provKey(name, key)
 					bucket[k] = nil
+					if name == "armies" and cache.ownArmies then
+						cache.ownArmies[k] = nil
+					end
 					notify(name .. "." .. tostring(k), nil)
 				end
 			end
@@ -288,7 +302,9 @@ function ClientStateCache.applyDelta(packet)
 		pruneToIdSet("armyGroups", packet.armyGroupIds)
 	end
 	if packet.revision then
-		cache.revision = packet.revision
+		-- Monotonic: a replayed / out-of-order delta must never regress the revision (mirrors the
+		-- fullSnapshot path), else a stale packet could later be re-accepted as newer than it is.
+		cache.revision = math.max(cache.revision or 0, packet.revision)
 	end
 end
 
@@ -413,6 +429,42 @@ end
 function ClientStateCache.getOwnPolitics()
 	return cache.ownPolitics
 end
+-- Technology tree: this player's OWN country's tech state (techLevel + research slots/progress) arrives on the
+-- per-player OwnResearch channel and is stored HERE (not merged into cache.countries[tag], which a later shared
+-- delta would replace). ResearchScreen overlays getOwnResearch() onto its own country record.
+function ClientStateCache.setOwnResearch(packet)
+	cache.ownResearch = packet
+	notify("ownResearch", packet)
+end
+function ClientStateCache.getOwnResearch()
+	return cache.ownResearch
+end
+-- Fog of war: this player's OWN armies in FULL detail (keyed by armyId), delivered on the per-player OwnArmies
+-- channel and stored SEPARATELY so a later fogged shared army delta can't wipe it. Overlaid onto cache.armies here
+-- AND in mergeEntry, so the two channels can arrive in either order and still settle to full-detail own armies.
+function ClientStateCache.setOwnArmies(packet)
+	if type(packet) ~= "table" or type(packet.armies) ~= "table" then
+		return
+	end
+	local store = cache.ownArmies
+	if not store then
+		store = {}
+		cache.ownArmies = store
+	end
+	for id, detail in packet.armies do
+		store[id] = detail
+		local rec = cache.armies[id]
+		if type(rec) == "table" and type(detail) == "table" then
+			for k, v in detail do
+				rec[k] = v
+			end
+			notify("armies." .. tostring(id), rec)
+		end
+	end
+end
+function ClientStateCache.getOwnArmies()
+	return cache.ownArmies
+end
 function ClientStateCache.getMarket(id)
 	return cache.markets[id]
 end
@@ -524,6 +576,7 @@ function ClientStateCache.clear()
 	cache.pacts = {}
 	cache.armyGroups = {}
 	cache.ownPolitics = nil
+	cache.ownArmies = {}
 	initialized = false
 end
 

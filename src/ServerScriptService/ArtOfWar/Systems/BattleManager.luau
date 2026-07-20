@@ -397,23 +397,35 @@ local function endBattle(record, winnerSide, reason)
 				ctx.WorldState.setArmy(armyId, army)
 				ctx.ArmySystem.setState(armyId, "idle")
 				if isAttacker then
-					ctx.ArmySystem.relocateArmy(armyId, provinceId)
-					-- relocateArmy publishes no arrival event (and no-ops when the winner already
-					-- stands on the tile). Route through onArmyArrival explicitly: it instant-
-					-- captures the won tile, and if an at-war straggler somehow still stands there
-					-- it starts the follow-up battle instead of leaving hostile armies co-located.
-					-- Safe re-entrancy-wise: this record was removed before side processing.
-					if ctx.CombatSystem and ctx.CombatSystem.onArmyArrival then
-						ctx.CombatSystem.onArmyArrival(armyId, provinceId)
+					-- Adjacent-engagement victory: the winner fought from its OWN tile while the enemy held
+					-- `provinceId`, and must now advance into the vacated tile. Previously it TELEPORTED in
+					-- (relocateArmy, 0 movement time) then instantly re-captured + re-attacked, letting one
+					-- unit chain-grab provinces. Now it MARCHES: beginMove takes normal movement time, and the
+					-- existing pipeline runs on real arrival (ArmyMoveCompleted -> onArmyArrival captures the
+					-- tile; finishMove -> continuePath resumes any queued order). beginMove preserves
+					-- movementPath, and adjacency + the war gate are satisfied (winner on the adjacent origin,
+					-- target still enemy-owned).
+					local winner = ctx.WorldState.getArmy(armyId)
+					local alreadyThere = winner and winner.provinceId == provinceId
+					local marched = false
+					if not alreadyThere and ctx.MovementSystem and ctx.MovementSystem.beginMove then
+						marched = ctx.MovementSystem.beginMove(armyId, provinceId) == true
 					end
-					-- Adjacent engagement: a queued multi-tile order paused for this battle;
-					-- resume it through the just-won tile.
-					if ctx.WorldConstants.EnableAdjacentEngagement
-						and ctx.MovementSystem and ctx.MovementSystem.continuePath then
-						local refreshed = ctx.WorldState.getArmy(armyId)
-						if refreshed and refreshed.movementPath
-							and not refreshed.battleId and not refreshed.retreating then
-							ctx.MovementSystem.continuePath(refreshed)
+					if not marched then
+						-- Winner already stands on the contested tile (moved directly onto it and fought there),
+						-- or the march couldn't start: keep the immediate capture + path resume so it still
+						-- holds/advances (relocateArmy no-ops when already there).
+						ctx.ArmySystem.relocateArmy(armyId, provinceId)
+						if ctx.CombatSystem and ctx.CombatSystem.onArmyArrival then
+							ctx.CombatSystem.onArmyArrival(armyId, provinceId)
+						end
+						if ctx.WorldConstants.EnableAdjacentEngagement
+							and ctx.MovementSystem and ctx.MovementSystem.continuePath then
+							local refreshed = ctx.WorldState.getArmy(armyId)
+							if refreshed and refreshed.movementPath
+								and not refreshed.battleId and not refreshed.retreating then
+								ctx.MovementSystem.continuePath(refreshed)
+							end
 						end
 					end
 				end
@@ -562,6 +574,22 @@ end
 
 -- ===== Round resolution (drives CombatEngine) ===============================
 
+-- Per-unit-CLASS technology multiplier (infantry/cavalry/artillery attack/defense). Gated by EnableTechTree so
+-- the live game is byte-identical until the tree ships. Deterministic (a pure function of the owner's tech
+-- levels) and clamped to its branch cap inside ResearchSystem.factor (3x land, 2x artillery), so it composes
+-- multiplicatively on top of the whole statMultiplier chain without touching the pure CombatEngine. Unlike
+-- atkMult/defMult (per-formation, army-wide), this is per unit-class -- which the formation scalar cannot express.
+local function techClassFactor(ownerTag, role, stat)
+	if not (ctx.WorldConstants and ctx.WorldConstants.EnableTechTree) then
+		return 1
+	end
+	local rs = ctx.ResearchSystem
+	if rs and rs.factor and ownerTag then
+		return rs.factor(ownerTag, role .. "_" .. stat)
+	end
+	return 1
+end
+
 -- Build an engine side input from live armies. atkMult/defMult fold the static
 -- multipliers; the engine applies terrain/morale/discipline/org/fort itself.
 -- record/sideRole (optional, C9): an army standing on a sea node is a TRANSPORT and fights
@@ -579,11 +607,12 @@ local function buildSideInput(armyIds, terrain, record, sideRole)
 				if count and count > 0 then
 					local u = unitOf(typeId)
 					if u then
+						local role = ctx.CombatEngine.classifyRole(u, "ground")
 						table.insert(units, {
 							typeId = typeId,
 							count = count,
-							attack = u.attack or 0,
-							defense = u.defense or 0,
+							attack = (u.attack or 0) * techClassFactor(army.ownerTag, role, "attack"),
+							defense = (u.defense or 0) * techClassFactor(army.ownerTag, role, "defense"),
 							combatWidth = u.combatWidth or 2,
 							discipline = u.discipline,
 							tags = u.tags,

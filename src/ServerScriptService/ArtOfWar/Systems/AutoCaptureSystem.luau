@@ -46,6 +46,10 @@ end
 local function nearestCapturable(owner, fromId)
 	local adj = ctx.AdjacencyGraph
 	if not adj or not adj.getNeighbors then return nil end
+	-- B22: cap how many provinces one BFS explores. If no capturable tile is within budget the army is deep
+	-- in safe territory anyway; bailing bounds the late-game hot path (this ran the whole graph every tick).
+	local budget = ctx.WorldConstants.AutoCaptureBfsNodeBudget or 400
+	local explored = 0
 	local visited = { [fromId] = true }
 	local frontier = { fromId }
 	while #frontier > 0 do
@@ -54,6 +58,10 @@ local function nearestCapturable(owner, fromId)
 			for _, n in ipairs(adj.getNeighbors(cur)) do
 				if not visited[n] then
 					visited[n] = true
+					explored += 1
+					if explored > budget then
+						return nil
+					end
 					local p = ctx.WorldState.getProvince(n)
 					if canCapture(owner, p) then
 						return n
@@ -109,9 +117,19 @@ local function tick()
 						ctx.CombatSystem.captureIfUndefended(armyId, army.provinceId)
 					end
 				else
-					local target = nearestCapturable(owner, army.provinceId)
-					if target then
-						ctx.MovementSystem.beginMovePath(armyId, target)
+					-- B22: nearestCapturable is a graph BFS; if the last one found no reachable target, back
+					-- off before re-scanning instead of running it every tick for every idle/encircled army.
+					local missCooldown = ctx.WorldConstants.AutoCaptureMissCooldownSec or 15
+					local backingOff = army.lastAutoCaptureMissAt ~= nil
+						and (now - army.lastAutoCaptureMissAt) < missCooldown
+					if not backingOff then
+						local target = nearestCapturable(owner, army.provinceId)
+						if target then
+							ctx.MovementSystem.beginMovePath(armyId, target)
+						else
+							army.lastAutoCaptureMissAt = now
+							ctx.WorldState.setArmy(armyId, army)
+						end
 					end
 				end
 			end

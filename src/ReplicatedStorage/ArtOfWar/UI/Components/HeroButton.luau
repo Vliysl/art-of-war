@@ -48,6 +48,10 @@ function HeroButton.create(config)
 	btn.ZIndex = z + 4
 	btn.LayoutOrder = config.layoutOrder or 0
 	btn:SetAttribute("AoWInputSink", true)
+	-- Optional per-button click sound (UISound.attachButton reads AoWClickSound on click).
+	if config.clickSound then
+		btn:SetAttribute("AoWClickSound", config.clickSound)
+	end
 
 	-- Procedural body (no UICorner). Correct on the first frame, no texture race.
 	local bg = Instance.new("Frame")

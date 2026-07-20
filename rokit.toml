@@ -1,5 +1,5 @@
 [tools]
-rojo = "rojo-rbx/rojo@7.6.1"
+rojo = "rojo-rbx/rojo@7.7.0"
 lune = "lune-org/lune@0.10.4"
 stylua = "JohnnyMorganz/stylua@2.5.2"
 selene = "Kampfkarren/selene@0.31.0"

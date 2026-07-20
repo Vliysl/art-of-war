@@ -39,6 +39,11 @@ WorldConstants.EnablePeaceConference = false -- Phase 3: war-score peace confere
 WorldConstants.EnableFormables = true -- Phase 4: formable nations (Iberia is the first; no releasable defs yet)
 WorldConstants.EnableRebellions = false -- Phase 4: rebellions flip provinces
 WorldConstants.EnableNewEditor = false -- Phase 5: reserved. Both editors currently run (legacy=backtick, new=backslash)
+WorldConstants.EnablePolitics = false -- PoliticsScreen (authority/estates/policies/leaders) cut for playtest; server remotes gated, returns UPD2
+WorldConstants.EnableResearch = false -- tech tree cut; ResearchScreen is a "Coming Soon" stub; SetResearch gated until the rework ships
+WorldConstants.EnableTechTree = false -- HOI4-style leveled tech tree rework (multi-slot research, capped multiplicative effects) that supersedes the flat EnableResearch list. Server slot-advance + client tree window gate on this; false = seeding still runs (starting techs/gates) but no slot progresses and the tree window is inert
+WorldConstants.EnableTrade = false -- trade UI cut for playtest; legacy TradeSystem + TradeOrderSystem remotes gated, returns UPD2
+WorldConstants.EnableFogOfWar = false -- B2: fog enemy army detail (composition/movement/officer); own armies delivered full via the OwnArmies channel. Default off (full-info) until the client overlay + a perf pass ship
 
 -- Map aesthetics: paint each land tile's Material from its province terrain (farmland→Carpet, grass
 -- family→Grass, desert→Sand, …; mapping = TERRAIN_MATERIALS in Systems/ProvinceStamper). Coast tiles
@@ -67,6 +72,19 @@ WorldConstants.EnableBorderCover = true -- Combat depth D: "Cover Border vs Nati
 WorldConstants.EnableGroupCards = true -- HUD army-group card strip (moves group functions off the unit panel); off -> old ArmyPanel group bar
 WorldConstants.EnableRadialOrders = false -- Phase C: long-press radial order menu (touch); flag-gated, needs on-device tuning
 WorldConstants.EnableDragToMove = false -- Phase C: drag from a selected army to a province = move (touch); flag-gated, needs on-device tuning
+
+-- Audio
+WorldConstants.EnableMusic = false -- adaptive music (menu/peace/war/battle crossfades + regional themes); off until tracks are plugged in + playtested
+WorldConstants.MusicDefaultVolume = 0.6 -- default MusicVolume attribute on first join (session-only, no persistence)
+WorldConstants.MusicDebug = false -- log-only: print each music phase/region/track transition for tuning
+
+-- Client settings persistence (per-user DataStore; see Systems/SettingsStore + Modules/SettingsSync). Off =
+-- every SettingsScreen toggle/slider is session-only and resets each join. On = the allowlisted attributes
+-- (volume/mute/render-distance/tooltips/reduce-motion/...) load on join and save on change. A NEW player still
+-- starts at the defaults (nothing is written until they change a setting), so e.g. Reduce Motion stays OFF
+-- until opted in, then that choice sticks across sessions. Note RenderDistance persists globally, not
+-- per-device. Kill-switch: flip false to revert to session-only.
+WorldConstants.PersistClientSettings = true
 
 -- Ownership unification (single source of truth = the WorldState record). See the ownership-restructure plan.
 WorldConstants.RecordDrivenMapColoring = true -- P2: client colours the political map + nation-select highlight from the replicated record, not part attributes
@@ -205,6 +223,14 @@ WorldConstants.DoctrineSwitchCostFloor = 10
 WorldConstants.DoctrineTierCount = 3
 WorldConstants.ArmyTrainingTierMax = 5
 WorldConstants.TerrainSpecializationMax = 3
+
+-- Technology tree (2026-07 rework; gated by EnableTechTree). Research Power is a FLAT base per filled slot
+-- (not economy-derived), scaled by research_power_gain / discounted by research_efficiency tech. Slots unlock
+-- over the game via Research-tab nodes. Era on a tech drives left->right layout + starting distribution only;
+-- it is NOT a hard year-lock in Phase 1 (that would soft-lock 1850+ nodes inside the 1750-1849 scenario window).
+WorldConstants.ResearchPointsPerDay = 8 -- base points a filled research slot accrues per in-game day
+WorldConstants.ResearchSlotsStart = 2 -- research slots a nation has at game start
+WorldConstants.ResearchSlotsMax = 5 -- hard ceiling on unlockable research slots
 
 WorldConstants.NavalMoraleMax = 100
 WorldConstants.NavalMoraleMin = 0

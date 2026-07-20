@@ -1,24 +1,143 @@
+local RunService = game:GetService("RunService")
+
 local ScreenKit = require(script.Parent.ScreenKit)
 local Button = require(script.Parent.Parent.Components.Button)
+local Modal = require(script.Parent.Parent.Components.Modal)
+local PickerRow = require(script.Parent.Parent.Components.PickerRow)
+local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
+local Colors = DesignSystem.Colors
+local Typography = DesignSystem.Typography
 local WorldConstants = require(script.Parent.Parent.Parent.Shared.WorldConstants)
 local LeaderTraits = require(script.Parent.Parent.Parent.Data.LeaderTraits)
 -- Selecting a group's members on the map is a client-only view op; ArmyView isn't in the screen ctx
 -- (which only carries data/fire), so require it directly like ProvinceOverview requires SimClock.
 local ArmyView = require(script.Parent.Parent.Parent.Modules.ArmyView)
+-- Recruit tab: the client mirror of the server's Military-district rule, and sim-time for queue progress.
+local RecruitGate = require(script.Parent.Parent.Parent.Modules.RecruitGate)
+local SimClock = require(script.Parent.Parent.Parent.Modules.SimClock)
 
 local MilitaryScreen = {}
 
 local TABS = {
 	{ key = "army", label = "Army" },
+	{ key = "recruit", label = "Recruit" },
 	{ key = "navy", label = "Navy" },
 	{ key = "doctrines", label = "Doctrines" },
 }
+
+-- How many production lines a province can run at once. Mirrors RecruitSystem's `cap = max(1, devTier)`, which
+-- the UI never surfaced -- the click was just rejected with `production_lines_full` and nothing explained why.
+local function lineCapOf(province)
+	return math.max(1, (province and province.devTier) or 1)
+end
+
+-- Counts the SAME queues the server's RecruitSystem.totalLinesAt does: recruit + buildings + ships. Note it
+-- deliberately does NOT count districtQueue -- the server doesn't either, so counting it here would show a
+-- province as full while the server happily accepts another regiment.
+--
+-- One unavoidable gap: NavalSystem keeps its build queue in a module-local `buildQueueByProvince` and never
+-- publishes it to the country record, so a client cannot see ship lines. This can therefore UNDER-count in a
+-- port that is building ships. It's a hint, not a gate -- the server's `production_lines_full` toast is the
+-- authority, and the recruit button stays live rather than being disabled on a number we can't fully know.
+local function linesUsedAt(country, provinceId)
+	local n = 0
+	for _, queueName in ipairs({ "recruitQueue", "buildQueue" }) do
+		for _, t in ipairs((country and country[queueName]) or {}) do
+			if t.provinceId == provinceId then
+				n += 1
+			end
+		end
+	end
+	return n
+end
 
 local function val(v)
 	if v == nil or v == "" then
 		return "\u{2014}"
 	end
 	return tostring(v)
+end
+
+-- Treasury is a float that accrues fractional income, so a raw tostring renders "799.0999999999999". Floor +
+-- thousands separators, as ArmyPanel does for its recruit costs.
+local function commafy(n)
+	n = math.floor(tonumber(n) or 0)
+	local out = tostring(n):reverse():gsub("(%d%d%d)", "%1,"):reverse()
+	return (out:gsub("^,", ""))
+end
+
+-- Tickets are stamped in server SIM-time, so progress must be read off SimClock (speed- and pause-aware)
+-- rather than a wall clock, which would race to 100% while the game is paused. Mirrors ProvinceOverview.
+local function progressOf(startedAt, completesAt)
+	if startedAt and completesAt and completesAt > startedAt then
+		local now = SimClock.now() or startedAt
+		return math.clamp((now - startedAt) / (completesAt - startedAt), 0, 1)
+	end
+	return 0
+end
+
+-- A production-queue row: name + where + a bar advanced in place, and a cancel. Built from plain frames like
+-- ProvinceOverview's actionRow rather than StatRow's progress, because that bar is driven by an inner "Clip"
+-- and exposes no live setter -- resizing its "Fill" would stretch the texture instead of the bar. Returns the
+-- fill so the caller's Heartbeat ticker can advance it without rebuilding the row.
+local function queueRow(parent, cfg)
+	local row = Instance.new("Frame")
+	row.Name = "QueueRow"
+	row.Size = UDim2.new(1, 0, 0, 44)
+	row.BackgroundTransparency = 1
+	row.LayoutOrder = cfg.order or 0
+	row.Parent = parent
+
+	local name = Instance.new("TextLabel")
+	name.Position = UDim2.fromOffset(0, 2)
+	name.Size = UDim2.new(1, -140, 0, 18)
+	name.BackgroundTransparency = 1
+	name.Text = cfg.label or ""
+	name.TextColor3 = Colors.TextPrimary
+	name.TextXAlignment = Enum.TextXAlignment.Left
+	name.TextTruncate = Enum.TextTruncate.AtEnd
+	Typography.apply(name, "bodyMd")
+	name.Parent = row
+
+	local sub = Instance.new("TextLabel")
+	sub.AnchorPoint = Vector2.new(1, 0)
+	sub.Position = UDim2.new(1, -40, 0, 2)
+	sub.Size = UDim2.fromOffset(96, 18)
+	sub.BackgroundTransparency = 1
+	sub.Text = cfg.sub or ""
+	sub.TextColor3 = Colors.TextSecondary
+	sub.TextXAlignment = Enum.TextXAlignment.Right
+	sub.TextTruncate = Enum.TextTruncate.AtEnd
+	Typography.apply(sub, "bodySm")
+	sub.Parent = row
+
+	-- Sharp corners (no UICorner) per house style.
+	local track = Instance.new("Frame")
+	track.Name = "Track"
+	track.AnchorPoint = Vector2.new(0, 1)
+	track.Position = UDim2.new(0, 0, 1, -6)
+	track.Size = UDim2.new(1, -40, 0, 6)
+	track.BackgroundColor3 = Colors.SurfaceSunken
+	track.BorderSizePixel = 0
+	track.Parent = row
+	local fill = Instance.new("Frame")
+	fill.Name = "Fill"
+	fill.Size = UDim2.fromScale(math.clamp(cfg.live and cfg.live() or 0, 0, 1), 1)
+	fill.BackgroundColor3 = Colors.Accent
+	fill.BorderSizePixel = 0
+	fill.Parent = track
+
+	local cancel = Button.create({
+		parent = row,
+		variant = "danger",
+		text = "\u{00D7}",
+		width = 32,
+		size = "sm",
+		onClick = cfg.onCancel,
+	})
+	cancel.AnchorPoint = Vector2.new(1, 0.5)
+	cancel.Position = UDim2.fromScale(1, 0.5)
+	return row, fill
 end
 
 -- Compact "domain +X  ·  domain2 +Y" line for a modifiers table (doctrine effects preview).
@@ -148,6 +267,12 @@ function MilitaryScreen.create(ctx)
 	local registries = ctx.registries
 	local conns = {}
 	local handle
+	-- Recruit-tab state. `render`/`activeTab` are forward-declared because the recruit renderer re-renders
+	-- itself after the province picker resolves, and the renderers table is built above their definitions --
+	-- without these, that call would resolve to a nil global at runtime rather than the local below.
+	local render, activeTab
+	local selectedProvinceId = nil
+	local liveBars = {} -- { fill, live } advanced in place by the Heartbeat ticker, so bars move between rebuilds
 
 	local function ownArmies()
 		local out = {}
@@ -221,7 +346,219 @@ function MilitaryScreen.create(ctx)
 		return btn
 	end
 
+	-- ── Recruit tab ─────────────────────────────────────────────────────────────────────────────────────
+	-- Orders go through the SAME RecruitUnit remote the province panel and army panel already use; this screen
+	-- adds the two things HOI4 has and the game did not: one place to see the whole production queue, and the
+	-- per-province line cap that silently rejected orders.
+
+	-- Owned AND controlled -- mirrors RecruitSystem.provinceSupportsRecruit (city/infra requirements were lifted).
+	local function recruitProvinces()
+		local out = {}
+		for id, prov in ctx.cache.allProvinces() do
+			prov.id = prov.id or id
+			if prov.ownerTag == ctx.tag and prov.controllerTag == ctx.tag then
+				out[#out + 1] = prov
+			end
+		end
+		table.sort(out, function(a, b)
+			return (a.name or "") < (b.name or "")
+		end)
+		return out
+	end
+
+	local function provinceLabel(prov)
+		return (prov and (prov.name or ("Province " .. tostring(prov.id)))) or "\u{2014}"
+	end
+
+	-- The recruit pool: every unit with a recruitCost, levy first (RecruitGate.sortPool), as ArmyPanel builds it.
+	local function recruitPool()
+		local types = (registries and registries.UnitTypes) or {}
+		local pool = {}
+		for id, def in pairs(types) do
+			if def.recruitCost ~= nil then
+				pool[#pool + 1] = { id = id, def = def }
+			end
+		end
+		RecruitGate.sortPool(pool)
+		return pool
+	end
+
+	local function openProvincePicker(onPick)
+		local list = recruitProvinces()
+		local modal = Modal.create({
+			parent = ctx.modalLayer or ctx.parent,
+			title = "Recruit in",
+			subtitle = #list .. " eligible province" .. (#list == 1 and "" or "s"),
+			width = 360,
+			height = 420,
+		})
+		-- Scroller: a large nation has hundreds of eligible provinces.
+		local content = Modal.scrollBody(modal)
+		local layout = Instance.new("UIListLayout")
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
+		layout.Padding = UDim.new(0, 6)
+		layout.Parent = content
+		if #list == 0 then
+			ScreenKit.note(content, "You control no provinces that can raise troops.", 1)
+			return
+		end
+		local country = ctx.cache.getCountry(ctx.tag)
+		for i, prov in ipairs(list) do
+			local used, cap = linesUsedAt(country, prov.id), lineCapOf(prov)
+			local row = ScreenKit.buttonRow(content, i)
+			Button.create({
+				parent = row,
+				variant = "secondary",
+				text = string.format("%s   (%d/%d lines)", provinceLabel(prov), used, cap),
+				onClick = function()
+					onPick(prov.id)
+					modal.close()
+				end,
+			})
+		end
+	end
+
 	local renderers = {
+		recruit = function(body)
+			local country = ctx.cache.getCountry(ctx.tag)
+			if not country then
+				ScreenKit.note(body, "Claim a nation to raise troops.", 1)
+				return
+			end
+
+			-- Levy and professional units draw from DIFFERENT pools, so both are shown: a full manpower bar
+			-- tells you nothing about whether you can raise a militia.
+			ScreenKit.section(body, "Pools", 1)
+			ScreenKit.stat(body, {
+				icon = "Manpower",
+				label = "Manpower",
+				value = commafy(country.manpower),
+				progress = {
+					value = country.manpower or 0,
+					max = math.max(country.maxManpower or country.manpower or 1, 1),
+					color = "green",
+				},
+				layoutOrder = 2,
+			})
+			if country.levyManpower ~= nil then
+				ScreenKit.stat(body, { icon = "Army", label = "Levy Manpower", value = commafy(country.levyManpower), layoutOrder = 3 })
+			end
+			ScreenKit.stat(body, { icon = "Economy", label = "Treasury", value = commafy(country.treasury), layoutOrder = 4 })
+
+			-- Province target. Defaults to the capital, else the first eligible province.
+			local provinces = recruitProvinces()
+			if #provinces == 0 then
+				ScreenKit.section(body, "Recruit", 10)
+				ScreenKit.note(body, "You control no provinces that can raise troops.", 11)
+				return
+			end
+			local selected = nil
+			for _, p in ipairs(provinces) do
+				if p.id == selectedProvinceId then
+					selected = p
+					break
+				end
+			end
+			if not selected then
+				-- Selection lost (province taken, or first open): fall back to the capital, else the first.
+				for _, p in ipairs(provinces) do
+					if p.id == country.capitalProvinceId then
+						selected = p
+						break
+					end
+				end
+				selected = selected or provinces[1]
+				selectedProvinceId = selected.id
+			end
+
+			local used, cap = linesUsedAt(country, selected.id), lineCapOf(selected)
+			local full = used >= cap
+			ScreenKit.section(body, "Recruit", 10)
+			local pickRow = ScreenKit.buttonRow(body, 11)
+			Button.create({
+				parent = pickRow,
+				variant = "secondary",
+				text = "Province: " .. provinceLabel(selected),
+				onClick = function()
+					openProvincePicker(function(id)
+						selectedProvinceId = id
+						render(activeTab)
+					end)
+				end,
+			})
+			ScreenKit.stat(body, {
+				icon = "Building",
+				label = "Production lines",
+				value = string.format("%d / %d", used, cap),
+				valueColor = full and "warning" or nil,
+				progress = { value = used, max = cap, color = full and "amber" or "green" },
+				layoutOrder = 12,
+			})
+			if full then
+				ScreenKit.note(body, "This province's lines are full. Finish or cancel something, or pick another province.", 13)
+			end
+
+			local hasMilitary = RecruitGate.provinceHasMilitaryDistrict(selected)
+			for i, item in ipairs(recruitPool()) do
+				local locked = RecruitGate.unitNeedsMilitaryDistrict(item.def) and not hasMilitary
+				local pool = item.def.class == "levy" and "levy" or "regular"
+				PickerRow.create({
+					parent = body,
+					order = 20 + i,
+					icon = "Army",
+					buttonText = "Recruit",
+					locked = locked,
+					label = item.def.displayName or titleCase(item.id),
+					-- The subline names the pool because levy and professional draw from DIFFERENT ones, so
+					-- "1000 levy" vs "1000 regular" is the difference between affordable and not.
+					sub = locked and "Needs a Military district in this province"
+						or string.format(
+							"%s gold  \u{00B7}  %s %s  \u{00B7}  %d ticks",
+							commafy(item.def.recruitCost),
+							commafy(item.def.recruitManpower),
+							pool,
+							item.def.recruitTicks or 0
+						),
+					onClick = function()
+						ctx.fire("RecruitUnit", selectedProvinceId, item.id, 1)
+					end,
+				})
+			end
+
+			-- Production queue: every regiment in build, across the whole realm. Progress is live (SimClock is
+			-- sim-time, so it respects pause and game speed) rather than redrawn per tick.
+			ScreenKit.section(body, "Production Queue", 50)
+			local queue = country.recruitQueue or {}
+			if #queue == 0 then
+				ScreenKit.note(body, "Nothing in production.", 51)
+				return
+			end
+			local sorted = table.clone(queue)
+			table.sort(sorted, function(a, b)
+				return (a.completesAt or math.huge) < (b.completesAt or math.huge)
+			end)
+			for i, ticket in ipairs(sorted) do
+				local prov = ctx.cache.getProvince and ctx.cache.getProvince(ticket.provinceId)
+				local label = unitName(registries, ticket.unitTypeId)
+				if (ticket.count or 1) > 1 then
+					label ..= "  \u{00D7}" .. ticket.count
+				end
+				local live = function()
+					return progressOf(ticket.queuedAt, ticket.completesAt)
+				end
+				local _, fill = queueRow(body, {
+					label = label,
+					sub = provinceLabel(prov),
+					order = 51 + i,
+					live = live,
+					onCancel = function()
+						ctx.fire("CancelRecruit", ticket.id)
+					end,
+				})
+				liveBars[#liveBars + 1] = { fill = fill, live = live }
+			end
+		end,
+
 		army = function(body)
 			local country = ctx.cache.getCountry(ctx.tag)
 			ScreenKit.section(body, "Manpower", 1)
@@ -433,11 +770,13 @@ function MilitaryScreen.create(ctx)
 		end,
 	}
 
-	local activeTab = "army"
+	activeTab = "army"
 	local lastSig = nil
 	local dirty = false
 
-	local function render(tab)
+	function render(tab)
+		-- The fills tracked here are about to be destroyed by clearBody(); drop them before they dangle.
+		table.clear(liveBars)
 		handle.clearBody()
 		local fn = renderers[tab] or renderers.army
 		fn(handle.body)
@@ -451,7 +790,32 @@ function MilitaryScreen.create(ctx)
 	local function contentSignature(tabKey)
 		local country = ctx.cache.getCountry(ctx.tag)
 		local parts = { tabKey }
-		if tabKey == "navy" then
+		if tabKey == "recruit" then
+			-- Hash the queue by PRESENCE (id/unit/province/count), never by progress: the Heartbeat ticker
+			-- advances the bars in place, so including a live fraction here would rebuild the whole tab every
+			-- tenth of a second. Pools and the selected province's line count are what gate the buttons.
+			if not country then
+				parts[#parts + 1] = "noclaim"
+			else
+				parts[#parts + 1] = "mp:" .. tostring(country.manpower)
+				parts[#parts + 1] = "lv:" .. tostring(country.levyManpower)
+				parts[#parts + 1] = "tr:" .. tostring(country.treasury)
+				parts[#parts + 1] = "sel:" .. tostring(selectedProvinceId)
+				parts[#parts + 1] = "ln:" .. tostring(linesUsedAt(country, selectedProvinceId))
+				local items = {}
+				for _, t in ipairs(country.recruitQueue or {}) do
+					items[#items + 1] = string.format(
+						"%s~%s~%s~%d",
+						tostring(t.id),
+						tostring(t.unitTypeId),
+						tostring(t.provinceId),
+						t.count or 1
+					)
+				end
+				table.sort(items)
+				parts[#parts + 1] = "q:" .. table.concat(items, ",")
+			end
+		elseif tabKey == "navy" then
 			local fleets = ownFleets()
 			local shipTotal = 0
 			local items = {}
@@ -550,9 +914,34 @@ function MilitaryScreen.create(ctx)
 	render(activeTab)
 	lastSig = contentSignature(activeTab)
 
+	-- Advance the production bars in place. The recruit queue only changes on enqueue/complete, so without
+	-- this the bars would sit frozen between rebuilds; and rebuilding the tab often enough to animate them
+	-- would be far more expensive than moving a Frame's Size. 0.1s matches ProvinceOverview's ticker.
+	local liveAccum = 0
+	local hbConn = RunService.Heartbeat:Connect(function(dt)
+		liveAccum += dt
+		if liveAccum < 0.1 then
+			return
+		end
+		liveAccum = 0
+		if not (handle and handle.root and handle.root.Parent) then
+			return
+		end
+		for _, b in ipairs(liveBars) do
+			if b.fill and b.fill.Parent then
+				b.fill.Size = UDim2.fromScale(math.clamp(b.live(), 0, 1), 1)
+			end
+		end
+	end)
+	table.insert(conns, function()
+		hbConn:Disconnect()
+	end)
+
 	table.insert(conns, ctx.cache.onChangePrefix("armies", scheduleRefresh))
 	table.insert(conns, ctx.cache.onChangePrefix("fleets", scheduleRefresh))
 	table.insert(conns, ctx.cache.onChangePrefix("countries", scheduleRefresh))
+	-- The recruit tab reads province districts (the Military gate) and devTier (the line cap).
+	table.insert(conns, ctx.cache.onChangePrefix("provinces", scheduleRefresh))
 	-- Combat depth B: the Army Groups list lives in the armyGroups collection (only when the in-screen
 	-- list is the active surface; the card strip owns its own subscriptions otherwise).
 	if WorldConstants.EnableArmyGroups and not WorldConstants.EnableGroupCards then

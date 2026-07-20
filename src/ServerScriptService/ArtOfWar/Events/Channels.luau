@@ -26,6 +26,9 @@ Channels.CountryLawPassed = "country.law.passed"
 Channels.CountryLawFailed = "country.law.failed"
 Channels.CountryLawCancelled = "country.law.cancelled"
 
+Channels.TechCompleted = "country.tech.completed"
+Channels.TechSlotsChanged = "country.tech.slots.changed"
+
 Channels.LeaderAppointed = "leader.appointed"
 Channels.LeaderDismissed = "leader.dismissed"
 Channels.LeaderCandidatesGenerated = "leader.candidates.generated"

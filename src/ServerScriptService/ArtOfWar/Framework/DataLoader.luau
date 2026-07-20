@@ -60,6 +60,13 @@ local numericCountryFields = {
 	"politicalPower",
 }
 
+-- B15: when true (default) a country whose capitalProvinceId is not one of its OWN provinces has its capital
+-- RELOCATED to a province it owns (or is dropped if it owns none), instead of the legacy heal that
+-- force-transferred the foreign capital province (owner + controller + core) to the record-holder on every
+-- boot -- which let a crafted capitalProvinceId steal a rival's province each restart. Flip to false to
+-- restore the legacy force-transfer heal.
+local RELOCATE_CAPITAL_HEAL = true
+
 local function keysAsSet(t)
 	local set = {}
 	for key in t do
@@ -1220,7 +1227,9 @@ function DataLoader.healBundle(bundle)
 
 			local capId = country.capitalProvinceId
 			local capProvince = capId and bundle.provinces and bundle.provinces[capId]
-			if capProvince and capProvince.ownerTag ~= tag then
+			local ownsCapital = capProvince ~= nil and capProvince.ownerTag == tag
+			if capProvince and not ownsCapital and not RELOCATE_CAPITAL_HEAL then
+				-- Legacy heal (kill-switch off): force the capital province's ownership to the record-holder.
 				table.insert(
 					heals,
 					string.format(
@@ -1244,7 +1253,10 @@ function DataLoader.healBundle(bundle)
 					capProvince.cores = capProvince.cores or {}
 					table.insert(capProvince.cores, tag)
 				end
-			elseif capId and not capProvince then
+			elseif (capId and not capProvince) or (capProvince and not ownsCapital) then
+				-- B15: capital is missing, OR (default) owned by another tag. Relocate to a province this country
+				-- actually owns rather than STEALING the foreign province the way the legacy force-transfer did on
+				-- every boot; drop the country only if it owns nothing.
 				local replacement
 				for pid, prov in pairs(bundle.provinces or {}) do
 					if type(prov) == "table" and prov.ownerTag == tag then
@@ -1256,9 +1268,10 @@ function DataLoader.healBundle(bundle)
 					table.insert(
 						heals,
 						string.format(
-							"Country '%s' capital %s missing → relocated to %s",
+							"Country '%s' capital %s %s → relocated to %s",
 							tag,
 							tostring(capId),
+							capProvince and "not owned" or "missing",
 							tostring(replacement)
 						)
 					)

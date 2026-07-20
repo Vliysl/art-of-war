@@ -95,4 +95,52 @@ function CountryColor.resolveFlag(tag)
 	return flag
 end
 
+-- Warm the authored nation crests into the texture cache. Nation selection renders ~25 CountryBadges on its
+-- first page, and each one otherwise fetches its decal LAZILY on first render -- over a connection already
+-- saturated by the 5,713-part province mesh preload and the province chunk stream, which is exactly when that
+-- first page draws. The result is crests popping in one by one, and again on every filter/page/keystroke,
+-- because the list rebuilds its rows. Shells, icons, sounds and province meshes are all preloaded; crests were
+-- the one asset class that never was.
+--
+-- Static majors only: this runs at boot, before the country records replicate, so live/editor-authored crests
+-- aren't resolvable yet. That's the right ~9 anyway -- the default "biggest realm first" sort puts exactly
+-- these nations on page one. Yields (PreloadAsync); call from a task.spawn and bound the wait.
+function CountryColor.preloadCrests()
+	local ContentProvider = game:GetService("ContentProvider")
+	local seen, holders = {}, {}
+	for _, rec in pairs(CountriesData) do
+		local id = type(rec) == "table" and rec.flagAssetId
+		if type(id) == "string" and id ~= "" and not seen[id] then
+			seen[id] = true
+			local img = Instance.new("ImageLabel")
+			img.Image = id
+			holders[#holders + 1] = img
+		end
+	end
+	if #holders == 0 then
+		return
+	end
+	local ok, err = pcall(function()
+		ContentProvider:PreloadAsync(holders)
+	end)
+	if not ok then
+		warn("[AoW CountryColor] crest preload failed: " .. tostring(err))
+	end
+	for _, img in ipairs(holders) do
+		img:Destroy()
+	end
+end
+
+-- Has this nation FORMED a formable identity (a persistent "formed power" marker, RON-style)? Reads the
+-- replicated `formedTags` set (forming sets country.formedTags[formableTag] = true). Live state only -- a
+-- static/dead tag is never "formed".
+function CountryColor.isFormed(tag)
+	if not tag then
+		return false
+	end
+	local rec = ClientStateCache.getCountry(tag)
+	local ft = rec and rec.formedTags
+	return type(ft) == "table" and next(ft) ~= nil
+end
+
 return CountryColor

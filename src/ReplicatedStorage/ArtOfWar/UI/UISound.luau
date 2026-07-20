@@ -17,6 +17,8 @@ local ASSETS = {
 	claim   = "rbxassetid://130735746419880",
 	phase   = "rbxasset://sounds/bass.wav",
 	delete  = "rbxassetid://10066926605",
+	economy  = "rbxassetid://99927446005550",  -- Economy window open/close
+	military = "rbxassetid://140203539654892", -- Military window open/close
 }
 
 local PITCH = {
@@ -28,6 +30,8 @@ local PITCH = {
 	claim  = 1.0,
 	phase  = 0.85,
 	delete = 1.0,
+	economy  = 1.0,
+	military = 1.0,
 }
 
 local VOLUMES = {
@@ -39,6 +43,8 @@ local VOLUMES = {
 	claim  = 0.7,
 	phase  = 0.35,
 	delete = 0.5,
+	economy  = 0.5,
+	military = 0.5,
 }
 
 local sounds = {}
@@ -164,12 +170,61 @@ function UISound.isMuted()
 	return _muted
 end
 
+-- Only one event sting may play at a time (see playAssetId).
+local _eventStingActive = nil
+
+-- One-shot event sting from an ARBITRARY asset id (e.g. a formable's authored formation audio). Non-looping,
+-- 2D (parented to SoundService so everyone hears it equally), destroyed when it ends. Guards, per research:
+--   * blank / non-string id -> no-op (a formable with no audio is silent, not an error),
+--   * respects the player's "Event / Formation Audio" mute (LocalPlayer attribute MuteEventAudio, set by
+--     the Settings toggle -- same pattern as HideOtherCustomColors),
+--   * ONE sting at a time: a second concurrent formation is dropped rather than stacked into noise.
+-- `volume` defaults to a moderate 0.6. Returns the Sound (or nil if it didn't play).
+function UISound.playAssetId(id, volume)
+	if type(id) ~= "string" or id == "" then
+		return nil
+	end
+	local lp = Players.LocalPlayer
+	if lp and lp:GetAttribute("MuteEventAudio") then
+		return nil
+	end
+	if _eventStingActive then
+		return nil
+	end
+	local snd = Instance.new("Sound")
+	snd.Name = "AoWEventSting"
+	snd.SoundId = id
+	snd.Volume = volume or 0.6
+	snd.Looped = false
+	snd.PlayOnRemove = false
+	snd.Parent = SoundService
+	_eventStingActive = snd
+	local function clear()
+		if _eventStingActive == snd then
+			_eventStingActive = nil
+		end
+		if snd then
+			snd:Destroy()
+		end
+	end
+	snd.Ended:Connect(clear)
+	snd:Play()
+	-- Backstop: a bad/never-loading id would otherwise pin the single-sting slot forever.
+	task.delay(12, clear)
+	return snd
+end
+
 -- Boot entry: hook EVERY ScreenGui under PlayerGui (current + future), so default click/hover
 -- sounds reach all UI regardless of which ScreenGui a button lives in -- the live HUD builds its
 -- own ScreenGuis (Hud.makeLayer) outside UIRoot, which UIRoot.attachAll never saw. Also preloads.
 function UISound.start()
 	local player = Players.LocalPlayer
 	if not player then return end
+	-- The Settings "Sound" toggle writes the SoundMuted attribute; honor it live (SFX vs Music split).
+	UISound.setMuted(player:GetAttribute("SoundMuted") == true)
+	player:GetAttributeChangedSignal("SoundMuted"):Connect(function()
+		UISound.setMuted(player:GetAttribute("SoundMuted") == true)
+	end)
 	local pg = player:WaitForChild("PlayerGui")
 	local function hook(inst)
 		if inst:IsA("ScreenGui") then UISound.attachAll(inst) end

@@ -1974,20 +1974,27 @@ local function renderProvinces()
 				setStatus("No seeded land tiles selected (shift-click tiles on the map)", Colors.Negative)
 				return
 			end
-			if #items > 500 then
-				setStatus(string.format("Too many (%d); max 500 — select fewer", #items), Colors.Negative)
-				return
-			end
 			local target = state.paintTarget or "owner"
 			local field = paintFieldForTarget(target)
 			local mode = state.paintMode or "add"
-			local res, err
-			if not field then
-				res, err = editorCall("assignBatch", { ownerTag = tag, items = items })
-			else
-				res, err = editorCall("paintTagBatch", { target = target, tag = tag, mode = mode, items = items })
-			end
-			if res then
+			-- Auto-split large selections into successive <=500-item batch calls (the server rejects a single
+			-- batch over 500). Each chunk stays on the efficient batched path instead of forcing the user to
+			-- manually re-select in pieces. Chunks are spaced above the 0.05s PAINT_COOLDOWN, and we accumulate
+			-- results across them, mirroring only the tiles the server actually wrote.
+			local BATCH_MAX = 500
+			local totalProcessed, totalFailed, callErr = 0, 0, nil
+			for start = 1, #items, BATCH_MAX do
+				local chunk = table.move(items, start, math.min(start + BATCH_MAX - 1, #items), 1, {})
+				local res, err
+				if not field then
+					res, err = editorCall("assignBatch", { ownerTag = tag, items = chunk })
+				else
+					res, err = editorCall("paintTagBatch", { target = target, tag = tag, mode = mode, items = chunk })
+				end
+				if not res then
+					callErr = err
+					break -- stop on a call-level failure (e.g. rate limit); tiles already applied stay applied
+				end
 				-- Honor the server's per-item results: only mirror tiles it actually applied into the local
 				-- snapshot (so rejected tiles don't show a tag/owner the server never wrote and then get
 				-- persisted on the next Save), and surface any failures.
@@ -1998,8 +2005,9 @@ local function renderProvinces()
 							failed[e.id] = true
 						end
 					end
+					totalFailed += #res.errors
 				end
-				for _, it in ipairs(items) do
+				for _, it in ipairs(chunk) do
 					local p = not failed[it.id] and snap.provinces[it.id]
 					if p then
 						if not field then
@@ -2024,19 +2032,27 @@ local function renderProvinces()
 						end
 					end
 				end
-				local processed = tonumber(res.processed) or #items
-				local failCount = (type(res.errors) == "table") and #res.errors or 0
+				totalProcessed += (tonumber(res.processed) or #chunk)
+				if start + BATCH_MAX <= #items then
+					task.wait(0.1) -- keep successive chunks above the server PAINT_COOLDOWN
+				end
+			end
+			if totalProcessed > 0 then
 				local what = field and (mode .. " " .. target) or "owner"
+				local suffix = totalFailed > 0 and string.format(" (%d failed)", totalFailed) or ""
+				if callErr then
+					suffix = suffix .. " — stopped: " .. tostring(callErr)
+				end
 				setStatus(
 					string.format(
 						"Applied %s to %d tile%s -> %s%s",
 						what,
-						processed,
-						processed == 1 and "" or "s",
+						totalProcessed,
+						totalProcessed == 1 and "" or "s",
 						tag,
-						failCount > 0 and string.format(" (%d failed)", failCount) or ""
+						suffix
 					),
-					failCount > 0 and (Colors.Warning or Colors.Negative) or Colors.Positive
+					(totalFailed > 0 or callErr) and (Colors.Warning or Colors.Negative) or Colors.Positive
 				)
 				markDirty()
 				if paintUpdate then
@@ -2047,8 +2063,10 @@ local function renderProvinces()
 				end
 				state.multiSelCount = 0
 				updatePaintUI() -- refresh the Apply-selected label/enabled state
+			elseif callErr then
+				setStatus("Bulk apply failed: " .. tostring(callErr), Colors.Negative)
 			else
-				setStatus("Bulk apply failed: " .. tostring(err), Colors.Negative)
+				setStatus(string.format("No tiles applied (%d rejected)", totalFailed), Colors.Negative)
 			end
 		end,
 	})
@@ -2319,13 +2337,65 @@ local function renderFormables()
 			})
 		end
 
-		-- The forming nation KEEPS its own tag (HoI4-style); a formable is just an identity (name/colour/
-		-- flag) it ADOPTS on formation — so there's no "formable tag" to enter. The internal id is derived
-		-- from the name on create (kept as-is when editing). "Formed by (tags)" is the comma-separated
+		-- Fields grouped into three sections. The forming nation KEEPS its own tag (HoI4-style); a formable is
+		-- just an identity (name/colour/flag) it ADOPTS on formation. "Formed by (tags)" is the comma-separated
 		-- whitelist of countries that may form it (e.g. POR, SPA for Iberia); empty = any holder.
+		local function sectionHeader(text)
+			local h = label(detail, string.upper(text), "label", Colors.Accent or Colors.TextSecondary)
+			h.Size = UDim2.new(1, 0, 0, 24)
+			return h
+		end
+
+		-- ── Information ──────────────────────────────────────────────────────────────────────────────
+		sectionHeader("Information")
 		local nameBox = field("Display name", def and def.displayName or "")
 		local formerBox = field("Formed by (tags)", def and def.formerTags and table.concat(def.formerTags, ", ") or "")
+		local descBox = bigField("Formable description", def and def.description or "", 54)
 		local col3 = (def and def.color) or { 150, 150, 150 }
+		local colorBox = field("Colour (r,g,b)", string.format("%d, %d, %d", col3[1] or 0, col3[2] or 0, col3[3] or 0))
+		do
+			local pick = Instance.new("TextButton")
+			pick.Size = UDim2.fromOffset(46, 22)
+			pick.AnchorPoint = Vector2.new(1, 0.5)
+			pick.Position = UDim2.new(1, -2, 0.5, 0)
+			pick.BackgroundColor3 = Colors.SurfaceOverlay or Colors.SurfaceElevated
+			pick.TextColor3 = Colors.TextPrimary
+			pick.Text = "Pick"
+			pick.Font = Enum.Font.GothamMedium
+			pick.TextSize = 12
+			pick.BorderSizePixel = 0
+			pick.ZIndex = 3
+			pick.Parent = colorBox
+			pick.Activated:Connect(function()
+				local cur = {}
+				for n in string.gmatch(colorBox.Text or "", "%d+") do
+					cur[#cur + 1] = tonumber(n)
+				end
+				openColorPicker(gui, { cur[1] or 150, cur[2] or 150, cur[3] or 150 }, function(rgb)
+					colorBox.Text = string.format("%d, %d, %d", rgb[1], rgb[2], rgb[3])
+				end)
+			end)
+		end
+		local flagBox = field("Flag (rbxassetid)", (def and def.flag) or "")
+		do
+			-- Live crest preview at the right edge of the field (mirrors the country editor's crest preview).
+			local flagPrev = Instance.new("ImageLabel")
+			flagPrev.Size = UDim2.fromOffset(22, 22)
+			flagPrev.AnchorPoint = Vector2.new(1, 0.5)
+			flagPrev.Position = UDim2.new(1, -2, 0.5, 0)
+			flagPrev.BackgroundTransparency = 1
+			flagPrev.ScaleType = Enum.ScaleType.Crop
+			flagPrev.ZIndex = 3
+			flagPrev.Parent = flagBox
+			local function refresh()
+				flagPrev.Image = normalizeAssetId(flagBox.Text) or ""
+			end
+			refresh()
+			flagBox:GetPropertyChangedSignal("Text"):Connect(refresh)
+		end
+
+		-- ── Requirements ────────────────────────────────────────────────────────────────────────────
+		sectionHeader("Requirements")
 		local reqBox = bigField(
 			"Required province IDs",
 			def and def.requiredProvinceIds and table.concat(def.requiredProvinceIds, ", ") or "",
@@ -2407,47 +2477,6 @@ local function renderFormables()
 		end
 		refreshCount()
 		reqBox:GetPropertyChangedSignal("Text"):Connect(refreshCount)
-		local colorBox = field("Colour (r,g,b)", string.format("%d, %d, %d", col3[1] or 0, col3[2] or 0, col3[3] or 0))
-		do
-			local pick = Instance.new("TextButton")
-			pick.Size = UDim2.fromOffset(46, 22)
-			pick.AnchorPoint = Vector2.new(1, 0.5)
-			pick.Position = UDim2.new(1, -2, 0.5, 0)
-			pick.BackgroundColor3 = Colors.SurfaceOverlay or Colors.SurfaceElevated
-			pick.TextColor3 = Colors.TextPrimary
-			pick.Text = "Pick"
-			pick.Font = Enum.Font.GothamMedium
-			pick.TextSize = 12
-			pick.BorderSizePixel = 0
-			pick.ZIndex = 3
-			pick.Parent = colorBox
-			pick.Activated:Connect(function()
-				local cur = {}
-				for n in string.gmatch(colorBox.Text or "", "%d+") do
-					cur[#cur + 1] = tonumber(n)
-				end
-				openColorPicker(gui, { cur[1] or 150, cur[2] or 150, cur[3] or 150 }, function(rgb)
-					colorBox.Text = string.format("%d, %d, %d", rgb[1], rgb[2], rgb[3])
-				end)
-			end)
-		end
-		local flagBox = field("Flag (rbxassetid)", (def and def.flag) or "")
-		do
-			-- Live crest preview at the right edge of the field (mirrors the country editor's crest preview).
-			local flagPrev = Instance.new("ImageLabel")
-			flagPrev.Size = UDim2.fromOffset(22, 22)
-			flagPrev.AnchorPoint = Vector2.new(1, 0.5)
-			flagPrev.Position = UDim2.new(1, -2, 0.5, 0)
-			flagPrev.BackgroundTransparency = 1
-			flagPrev.ScaleType = Enum.ScaleType.Crop
-			flagPrev.ZIndex = 3
-			flagPrev.Parent = flagBox
-			local function refresh()
-				flagPrev.Image = normalizeAssetId(flagBox.Text) or ""
-			end
-			refresh()
-			flagBox:GetPropertyChangedSignal("Text"):Connect(refresh)
-		end
 		-- Territory requirement (blank = must own ALL required provinces). "Min provinces" needs holding N of
 		-- them; "Percent required" needs that % of them. These cure the "own everything before you qualify" and
 		-- "blocked by one obscure province" problems and let big-territory formables stay achievable.
@@ -2457,10 +2486,46 @@ local function renderFormables()
 		local bonusBox =
 			field("Form bonus: stability", def and def.formBonuses and tostring(def.formBonuses.stability or "") or "")
 		local canFormDD = ddYesNo("Can form", def == nil or def.canForm ~= false)
-		local canReleaseDD = ddYesNo("Can release", def == nil or def.canRelease ~= false)
+		-- (Can Release removed: releasing is now driven by per-province Releasable Cores, not the formable def.)
 		-- Secret: hide from the Missions tab until a nation already holds the full territory (otherwise
 		-- eligible formers see it as a goal with progress). Default No (visible as a goal).
 		local secretDD = ddYesNo("Secret formable", def ~= nil and def.secret == true)
+
+		-- ── Formable Event ──────────────────────────────────────────────────────────────────────────
+		-- A global super-event banner (+ optional audio sting) authored per formable. All blank => a generic
+		-- templated event still fires. Forming reads these; releasing reuses them if a def exists for the
+		-- released tag. Rendered by UI/Screens/SuperEvent via NotificationBroadcaster.
+		sectionHeader("Formable Event")
+		local eventTitleBox = field("Event: title", def and def.eventTitle or "", "blank = generic")
+		local eventDescBox = bigField("Event: description", def and def.eventDesc or "", 54)
+		local eventButtonBox = field("Event: button text", def and def.eventButton or "", "e.g. Glory!")
+		local eventAudioBox = field("Event: audio id", def and def.eventAudioId or "", "rbxassetid (blank = none)")
+		local eventImageBox = field("Event: image id", def and def.eventImageId or "", "rbxassetid (blank = crest)")
+		do
+			local imgPrev = Instance.new("ImageLabel")
+			imgPrev.Size = UDim2.fromOffset(22, 22)
+			imgPrev.AnchorPoint = Vector2.new(1, 0.5)
+			imgPrev.Position = UDim2.new(1, -2, 0.5, 0)
+			imgPrev.BackgroundTransparency = 1
+			imgPrev.ScaleType = Enum.ScaleType.Crop
+			imgPrev.ZIndex = 3
+			imgPrev.Parent = eventImageBox
+			local function refresh()
+				imgPrev.Image = normalizeAssetId(eventImageBox.Text) or ""
+			end
+			refresh()
+			eventImageBox:GetPropertyChangedSignal("Text"):Connect(refresh)
+		end
+		-- Who sees the banner: Everyone (a world super-event) or only the forming player. Default Everyone.
+		local audienceRow = frame({ parent = detail, transparent = true, size = UDim2.new(1, 0, 0, LBLH + GAP + 26) })
+		rowLabel(audienceRow, "Announce to")
+		local audienceDD = dropdown({
+			parent = audienceRow,
+			size = UDim2.new(0, 140, 0, 26),
+			position = UDim2.fromOffset(0, LBLH + GAP),
+			options = { "Everyone", "Only me" },
+			value = (def and def.eventAudience == "personal") and "Only me" or "Everyone",
+		})
 
 		local saveBtn = Button.create({
 			parent = detail,
@@ -2500,7 +2565,6 @@ local function renderFormables()
 					requiredProvinceIds = ids,
 					formerTags = (#formers > 0) and formers or nil,
 					canForm = canFormDD.get() == "Yes",
-					canRelease = canReleaseDD.get() == "Yes",
 					secret = (secretDD.get() == "Yes") or nil,
 				}
 				if flagBox.Text ~= "" then
@@ -2520,6 +2584,36 @@ local function renderFormables()
 				if stab then
 					newDef.formBonuses = { stability = stab }
 				end
+				-- Event fields (all optional; blank => omitted so the generic fallback fires). Text is trimmed;
+				-- audio/image ids are normalized like the crest. eventAudience defaults to global (nil).
+				local function trimText(s)
+					return (tostring(s or ""):match("^%s*(.-)%s*$")) or ""
+				end
+				local descText = trimText(descBox.Text)
+				if descText ~= "" then
+					newDef.description = descText
+				end
+				local etitle = trimText(eventTitleBox.Text)
+				if etitle ~= "" then
+					newDef.eventTitle = etitle
+				end
+				local edesc = trimText(eventDescBox.Text)
+				if edesc ~= "" then
+					newDef.eventDesc = edesc
+				end
+				local ebtn = trimText(eventButtonBox.Text)
+				if ebtn ~= "" then
+					newDef.eventButton = ebtn
+				end
+				if eventAudioBox.Text ~= "" then
+					newDef.eventAudioId = normalizeAssetId(eventAudioBox.Text) or eventAudioBox.Text
+				end
+				if eventImageBox.Text ~= "" then
+					newDef.eventImageId = normalizeAssetId(eventImageBox.Text) or eventImageBox.Text
+				end
+				if audienceDD.get() == "Only me" then
+					newDef.eventAudience = "personal"
+				end
 				fireRemote("SetFormable", newTag, newDef)
 				state.selected = newTag
 				markDirty()
@@ -2527,6 +2621,45 @@ local function renderFormables()
 			end,
 		})
 		saveBtn.LayoutOrder = 98
+
+		-- Preview the formation banner with the CURRENT field values (client-only; renders the real SuperEvent
+		-- card + plays the audio once, so authors catch overflow / bad ids before publishing). {nation} resolves
+		-- to the display name in the preview.
+		local previewBtn = Button.create({
+			parent = detail,
+			variant = "ghost",
+			text = "Preview event",
+			width = 150,
+			onClick = function()
+				local SuperEvent = require(game:GetService("ReplicatedStorage").ArtOfWar.UI.Screens.SuperEvent)
+				local rgb = {}
+				for s in string.gmatch(colorBox.Text or "", "%d+") do
+					rgb[#rgb + 1] = tonumber(s)
+				end
+				local nm = (nameBox.Text ~= "" and nameBox.Text) or "New Nation"
+				local function sub(t, fallback)
+					if t == nil or t == "" then
+						return fallback
+					end
+					return (t:gsub("{(%w+)}", function(k)
+						return k == "nation" and nm or ("{" .. k .. "}")
+					end))
+				end
+				SuperEvent.show(gui, {
+					title = sub(eventTitleBox.Text, "A New Power Rises"),
+					body = sub(eventDescBox.Text, nm .. " has been forged!"),
+					buttonText = eventButtonBox.Text ~= "" and eventButtonBox.Text or "Interesting.",
+					imageId = normalizeAssetId(eventImageBox.Text) or normalizeAssetId(flagBox.Text),
+					audioId = normalizeAssetId(eventAudioBox.Text),
+					color = { rgb[1] or 150, rgb[2] or 150, rgb[3] or 150 },
+					tag = nm,
+					subject = nm, -- colophon place + photo caption
+					eventType = "nation.formed", -- sample kind so the kicker + deck render in the preview
+					date = { year = 1750, month = 7, day = 12 }, -- sample dateline for the preview
+				})
+			end,
+		})
+		previewBtn.LayoutOrder = 97
 
 		if tag then
 			local delBtn = Button.create({
@@ -3270,11 +3403,15 @@ local function loadProvincesPaged(snap)
 	table.clear(livePatchedProvinces)
 	local offset, total = 0, nil
 	while snap == state.snapshot do
+		-- Space each page above the server's 0.2s CALL_COOLDOWN. Keep this wait BEFORE the fetch: page 1
+		-- follows immediately after loadState (which already stamped the cooldown), so firing it with no gap
+		-- would be rejected as "too many calls" and abort the whole fill. Request the server's max page size
+		-- (1200, matching its clamp) so a ~5.7k-province world is 5 pages instead of 8 — 3 fewer round-trips.
 		task.wait(0.25)
 		if snap ~= state.snapshot then
 			return
 		end
-		local page, err = editorCall("provincesPage", { offset = offset, limit = 800 })
+		local page, err = editorCall("provincesPage", { offset = offset, limit = 1200 })
 		if type(page) ~= "table" then
 			setStatus("Province load failed: " .. tostring(err), Colors.Negative)
 			return
@@ -3364,9 +3501,10 @@ ensureLoaded = function()
 	applySnapshot(snap)
 	-- Surface read-only up-front: if this server can't write (off the editor place, or not the blessed
 	-- single-server writer), say so now rather than only when an edit is rejected. Edits still round-trip to
-	-- the server, which is the authoritative gate; this is just an early heads-up.
-	state.canWrite = snap.canWriteHere ~= false
-	if not state.canWrite then
+	-- the server, which is the authoritative gate; this is just an early heads-up. (We don't disable the edit
+	-- controls on a read-only server — the server rejects the write regardless — so there's no persisted flag
+	-- to keep; the banner below is the only use of canWriteHere.)
+	if snap.canWriteHere == false then
 		setStatus("Read-only on this server — browse only. Reopen from the editor's blessed server to make changes.", Colors.Negative)
 	end
 end
@@ -3511,7 +3649,6 @@ ClientSignals.connect("OpenDataEditor", function()
 	setEditorOpen(true)
 end)
 
--- If access is revoked while the window is open, close it.
 -- Live co-editor sync: the server fires DataEditorLive when another editor's Save or config Load moves the
 -- shared editor world. Auto-reload when we have no unsaved edits (re-baselining so our next Save diffs
 -- against the new shared world); if we DO have unsaved edits, only prompt, so we never clobber them.
@@ -3614,6 +3751,8 @@ do
 	end
 end
 
+-- If access is revoked while the window is open, close it. The server clears IsAdmin (and Destroys this GUI)
+-- when an editor loses authorization; this catches the window still being open at that moment.
 player:GetAttributeChangedSignal("IsAdmin"):Connect(function()
 	if gui.Enabled and player:GetAttribute("IsAdmin") ~= true then
 		setEditorOpen(false)

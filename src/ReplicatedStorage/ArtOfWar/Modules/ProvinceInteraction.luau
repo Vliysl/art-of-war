@@ -191,7 +191,7 @@ local altInspecting = false
 -- Multi-province selection cap (server-side batch remotes reject larger lists; the panel
 -- title surfaces the cap). Touch has no modifier keys: multiSelectMode makes plain taps
 -- toggle provinces instead (on-screen toggle in HudWiring).
-local MULTI_SELECT_MAX = 25
+local MULTI_SELECT_MAX = 200
 local multiSelectMode = false
 -- Phase C touch-gesture state (flag-gated). dragMoveProbe: fn(screenPos,maxPx)->selected army provinceId near
 -- the point (set by ArmyView) for drag-to-move; dragMoveFrom: province the current drag started on. Long-press
@@ -803,10 +803,10 @@ function ProvinceInteraction.init()
 				return
 			end
 			if WorldConstants.EnableNewInputScheme then
-				-- RMB click = select/inspect with the OLD left-click semantics, including the
-				-- army-deselect ripple through the select listeners (symmetric button swap).
-				clearMultiSelection()
-				setSelection(province)
+				-- New scheme: RMB is CAMERA-ONLY. A right-click (non-drag) does nothing to selection --
+				-- players pan/rotate the camera with RMB, and deselecting on a camera tap was a playtest
+				-- annoyance. All select/move/inspect lives on the LMB/touch handler above. (Previously this
+				-- did clearMultiSelection()+setSelection(province), which rippled an army deselect.)
 				return
 			end
 			if province and onRightClicked then

@@ -104,8 +104,17 @@ local function spawn(parentTag, kind, _context)
 
 	local breakawayTag, provincesToTake, opts
 	local rel = matchingReleasable(parentTag, target)
-	if rel then
-		local def = ctx.FormableSystem.getDefinition(rel)
+	local relDef = rel and ctx.FormableSystem.getDefinition(rel)
+	-- A matching releasable with a nil/empty def (a dormant hand-authored releasable, or a custom def that
+	-- failed FormableStore validation) would throw on requiredProvinceIds[1]; fall through to the generic
+	-- rebel seizure instead of crashing the rebellion tick.
+	if
+		rel
+		and type(relDef) == "table"
+		and type(relDef.requiredProvinceIds) == "table"
+		and #relDef.requiredProvinceIds > 0
+	then
+		local def = relDef
 		local capProv = ctx.WorldState.getProvince(def.requiredProvinceIds[1])
 		breakawayTag = rel
 		provincesToTake = def.requiredProvinceIds

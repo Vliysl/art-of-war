@@ -5,6 +5,7 @@ local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
 local Colors = DesignSystem.Colors
 local Typography = DesignSystem.Typography
 local Spacing = DesignSystem.Spacing
+local Tooltip = require(script.Parent.Tooltip) -- for the shared Tooltip.enabled() player setting only
 
 local ProvinceTooltip = {}
 
@@ -137,6 +138,9 @@ function ProvinceTooltip.create(parent)
 	end
 
 	local function showProvince(info)
+		if not Tooltip.enabled() then
+			return
+		end
 		setLand(true)
 		nameRow.Text = info.name or "Province"
 		ownerRow.Text = info.owner or ""
@@ -157,6 +161,9 @@ function ProvinceTooltip.create(parent)
 	end
 
 	local function showWater(name)
+		if not Tooltip.enabled() then
+			return
+		end
 		setLand(false)
 		nameRow.Text = name or "Open Water"
 		if not root.Visible then

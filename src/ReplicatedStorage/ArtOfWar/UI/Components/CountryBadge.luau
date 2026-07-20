@@ -83,6 +83,22 @@ function CountryBadge.create(config)
 	label.Visible = (flag == nil or flag == "")
 	label.Parent = badge
 
+	-- Persistent "formed" marker (RON-style): a small gold star in the corner when this nation has adopted a
+	-- formable identity. Suppress with config.noFormedMarker (e.g. tiny/dense surfaces).
+	if config.code and not config.noFormedMarker and CountryColor.isFormed(config.code) then
+		local star = Instance.new("TextLabel")
+		star.Name = "FormedMark"
+		star.AnchorPoint = Vector2.new(1, 0)
+		star.Position = UDim2.new(1, -1, 0, 0)
+		star.Size = UDim2.fromOffset(12, 12)
+		star.BackgroundTransparency = 1
+		star.Text = "\u{2605}" -- ★
+		star.TextColor3 = Color3.fromRGB(212, 175, 55)
+		star.TextScaled = true
+		star.ZIndex = 4
+		star.Parent = badge
+	end
+
 	if config.parent then
 		badge.Parent = config.parent
 	end

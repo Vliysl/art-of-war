@@ -6,6 +6,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local aow = ReplicatedStorage:WaitForChild("ArtOfWar")
 local MapModeController = require(aow:WaitForChild("Modules"):WaitForChild("MapModeController"))
 local DebugMode = require(aow:WaitForChild("Modules"):WaitForChild("DebugMode"))
+local MusicController = require(aow:WaitForChild("Modules"):WaitForChild("MusicController"))
 
 local SYSTEM_CHANNEL = "RBXSystem"
 local COMMANDS_FOLDER = "AoWChatCommands"
@@ -35,8 +36,8 @@ local function ensureCommand(parent, primary, aliases, fn)
 	cmd.AutocompleteVisible = true
 	cmd.Enabled = true
 	cmd.Parent = parent
-	cmd.Triggered:Connect(function(_origin, _text)
-		local ok, err = pcall(fn)
+	cmd.Triggered:Connect(function(_origin, text)
+		local ok, err = pcall(fn, text)
 		if not ok then
 			warn("[ChatCommands] " .. primary .. " failed: " .. tostring(err))
 		end
@@ -70,6 +71,25 @@ function ChatCommands.start()
 		systemMessage(string.format("Debug mode %s — country tags %s in tooltips and panels.",
 			now and "enabled" or "disabled",
 			now and "shown" or "hidden"))
+	end)
+
+	ensureCommand(folder, "music", nil, function(text)
+		if not DebugMode.isAdmin() then
+			systemMessage("Music audition is restricted to admins.")
+			return
+		end
+		local args = {}
+		for w in string.gmatch(tostring(text or ""), "%S+") do
+			args[#args + 1] = w
+		end
+		local phase = args[2]
+		if not phase or phase == "live" then
+			MusicController.clearAudition()
+			systemMessage("Music: resumed live resolution.")
+			return
+		end
+		MusicController.previewPhase(phase, args[3])
+		systemMessage(string.format("Music: forcing phase %q, region %q.", phase, args[3] or "default"))
 	end)
 
 	MapModeController.onChange(function(mode)

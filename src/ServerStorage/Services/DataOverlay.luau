@@ -2,7 +2,20 @@ local DataStoreService = game:GetService("DataStoreService")
 local HttpService = game:GetService("HttpService")
 local ServerStorage = game:GetService("ServerStorage")
 
-local RelayConfig = require(ServerStorage:WaitForChild("Dev"):WaitForChild("RelayConfig"))
+-- RelayConfig is gitignored + place-only (not in default.project.json), and DATASTORE_NAME/SCOPE select which
+-- DataStore the live world reads/writes. Bound the wait so a place that lacks it (a fresh rojo build, CI, a new
+-- place, an accidental delete) fails LOUD instead of yielding forever inside require() -- pcall can't return
+-- past an infinite WaitForChild, so the old unbounded wait silently WEDGED boot. Never substitute a placeholder
+-- name (it would misdirect the live game to the wrong/empty store); fail loud. See Dev/RelayConfig.template.luau.
+local relayInst = ServerStorage:WaitForChild("Dev"):WaitForChild("RelayConfig", 10)
+if not relayInst then
+	error(
+		"[DataOverlay] RelayConfig missing: it is a gitignored, place-only module (not in "
+			.. "default.project.json), so a from-scratch build lacks it. Copy Dev/RelayConfig.template.luau to "
+			.. "Dev/RelayConfig.luau with the real DATASTORE_NAME/SCOPE. Refusing to boot on a placeholder datastore."
+	)
+end
+local RelayConfig = require(relayInst)
 local RunService = game:GetService("RunService")
 
 -- ── Editor vs Live world isolation ───────────────────────────────────────────────────────────────
@@ -19,7 +32,24 @@ do
 		MAP_EDITOR_PLACE_ID = tonumber(wc.MapEditorPlaceId)
 	end
 end
-local IS_EDITOR_ENV = (game.PlaceId == MAP_EDITOR_PLACE_ID) or RunService:IsStudio()
+-- B27: whether a Studio session OFF the Map Editor place counts as the editor world. Read directly from the
+-- server-only WorldConstantsServer (non-yielding FindFirstChild + pcall, default false) because DataOverlay
+-- loads before Bootstrap merges that table into the shared WorldConstants.
+local ALLOW_MAIN_PLACE_STUDIO_EDIT = false
+do
+	local aow = game:GetService("ServerScriptService"):FindFirstChild("ArtOfWar")
+	local mod = aow and aow:FindFirstChild("WorldConstantsServer")
+	if mod then
+		local ok, wcs = pcall(require, mod)
+		if ok and type(wcs) == "table" and wcs.AllowMainPlaceStudioEditing == true then
+			ALLOW_MAIN_PLACE_STUDIO_EDIT = true
+		end
+	end
+end
+-- B27: without the opt-in, Studio is the editor world ONLY on the Map Editor place -- so a main/experimental
+-- place Studio playtest reads the LIVE world (keyFor returns un-suffixed keys) instead of the mappers' :edit
+-- draft, matching what players see. writeBlocked() below stops such a session persisting live keys.
+local IS_EDITOR_ENV = (game.PlaceId == MAP_EDITOR_PLACE_ID) or (RunService:IsStudio() and ALLOW_MAIN_PLACE_STUDIO_EDIT)
 local EDIT_SUFFIX = ":edit"
 
 -- DataStore per-key value cap is ~4 MB. Stay well under so an oversized aggregate fails loudly with a
@@ -178,6 +208,34 @@ local function keyFor(kind)
 	return base
 end
 
+-- B27 safety net: a Studio session that is NOT on the Map Editor place must never PERSIST an un-suffixed LIVE
+-- world key. With AllowMainPlaceStudioEditing off such a session reads the live world (keyFor returns live
+-- keys); block those writes so a main/experimental-place Studio playtest can inspect the real world but can
+-- never corrupt it. Inert on the Map Editor place (PlaceId match), on live servers (not Studio), and when the
+-- opt-in restores editor-env (keys are then :edit-suffixed). Independent of the flag -- keyed purely on the
+-- write target -- so the invariant holds however IS_EDITOR_ENV was resolved.
+local warnedStudioLiveBlock = false
+local function writeBlocked(key)
+	if not RunService:IsStudio() then
+		return false
+	end
+	if game.PlaceId == MAP_EDITOR_PLACE_ID then
+		return false
+	end
+	if string.find(key, EDIT_SUFFIX, 1, true) then
+		return false
+	end
+	if not warnedStudioLiveBlock then
+		warnedStudioLiveBlock = true
+		warn(
+			"[DataOverlay] B27: a Studio session off the Map Editor place is READ-ONLY on the live world -- "
+				.. "refusing to persist un-suffixed live keys. Set WorldConstantsServer.AllowMainPlaceStudioEditing"
+				.. " = true to edit the :edit draft instead. (This warns once.)"
+		)
+	end
+	return true
+end
+
 local lastMigrateAt = 0
 
 local migrationListeners = {}
@@ -279,6 +337,9 @@ local function readAggregate(kind, overrideKey)
 end
 
 local function writeAggregateToKey(k, kind, map)
+	if writeBlocked(k) then
+		return false, "studio_live_readonly"
+	end
 	local ds = store()
 	local serializable = {}
 	for key, v in pairs(map) do
@@ -316,6 +377,9 @@ end
 local function writeAggregateMerged(kind, pending)
 	local ds = store()
 	local k = keyFor(kind)
+	if writeBlocked(k) then
+		return false, "studio_live_readonly", nil
+	end
 	local merged
 	local ok, err = withRetry(function()
 		return ds:UpdateAsync(k, function(raw)
@@ -371,6 +435,9 @@ local function readSchemaVersion()
 end
 
 local function writeSchemaVersion(version)
+	if writeBlocked(SCHEMA_KEY) then
+		return false, "studio_live_readonly"
+	end
 	local ds = store()
 	local payload = HttpService:JSONEncode({ version = version, stampedAt = os.time() })
 	return withRetry(function()
@@ -1936,6 +2003,9 @@ local function countOf(t)
 end
 
 local function rawWriteKey(key, map)
+	if writeBlocked(key) then
+		return false, "studio_live_readonly"
+	end
 	local ds = store()
 	local serializable = {}
 	for k, v in pairs(map) do

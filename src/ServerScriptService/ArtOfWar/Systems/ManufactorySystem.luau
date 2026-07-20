@@ -145,9 +145,23 @@ local function recomputeFor(tag)
 				local mdef, cycles = run.mdef, run.cycles
 				-- Inputs are per-cycle; multiplied by daily cycles for per-day demand.
 				for goodId, amount in (mdef.inputs or {}) do
-					consumption[goodId] = (consumption[goodId] or 0) + (amount * cycles)
+					local consumed = amount * cycles
+					-- TECH HOOK fuel_efficiency: reduce consumption of fuel-category inputs (bonus capped/gated in ResearchSystem)
+					local gdef = bundle.tradeGoods and bundle.tradeGoods[goodId]
+					if gdef and gdef.category == "fuel" then
+						local rsFuel = ctx.ResearchSystem
+						if rsFuel and rsFuel.bonus then
+							consumed *= (1 - rsFuel.bonus(tag, "fuel_efficiency"))
+						end
+					end
+					consumption[goodId] = (consumption[goodId] or 0) + consumed
 				end
 				local outAmt = (mdef.outputAmount or 0) * cycles
+				-- TECH HOOK factory_output: increase per-cycle output (bonus capped/gated in ResearchSystem)
+				local rsOut = ctx.ResearchSystem
+				if rsOut and rsOut.bonus then
+					outAmt *= (1 + rsOut.bonus(tag, "factory_output"))
+				end
 				if mdef.output and outAmt > 0 then
 					production[mdef.output] = (production[mdef.output] or 0) + outAmt
 				end

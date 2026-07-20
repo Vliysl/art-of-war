@@ -51,6 +51,9 @@ local function recomputeProductionFor(tag)
 			and ctx.ModifierStack.resolveAdditive
 			and ctx.ModifierStack.resolveAdditive(tag, "country_production")
 		or 0
+	-- tech: mining_output (capped +TechCapMining; 0 while EnableTechTree off) -> productionOf Mining branch
+	local rs = ctx.ResearchSystem
+	local miningBonus = (rs and rs.bonus and rs.bonus(tag, "mining_output")) or 0
 
 	local provinceIds = (ctx.ProvinceRegistry and ctx.ProvinceRegistry.byOwner(tag)) or {}
 	local dailyTax = 0
@@ -60,7 +63,7 @@ local function recomputeProductionFor(tag)
 		if province then
 			local cap = isCapital(country, province)
 			dailyTax += EconomyPreview.taxOf(province, country, ctx.WorldConstants, ctx.Bundle, cap, taxAdd)
-			local prod = EconomyPreview.productionOf(province, country, ctx.WorldConstants, ctx.Bundle, prodAdd)
+			local prod = EconomyPreview.productionOf(province, country, ctx.WorldConstants, ctx.Bundle, prodAdd, miningBonus)
 			for goodId, amount in prod do
 				dailyProduction[goodId] = (dailyProduction[goodId] or 0) + amount
 			end
@@ -250,6 +253,12 @@ local function applyDays(daysAdvanced, commit)
 				totalExpenses += amount
 			end
 
+			-- tech: government_spending_reduction (capped -TechCapGovSpend; 0 while EnableTechTree off) on the whole expense total
+			local rs = ctx.ResearchSystem
+			if rs and rs.bonus then
+				totalExpenses *= (1 - rs.bonus(tag, "government_spending_reduction"))
+			end
+
 			local netDaily = totalIncome - totalExpenses
 
 			-- S1 guard: a country with no income, no expenses and no production has nothing to
@@ -334,6 +343,33 @@ local function setEconomyPolicy(tag, policyId)
 	return true
 end
 
+-- Keep only known trade-good keys with finite, bounded numeric priorities. The remote schema caps the
+-- table at 256 entries but does not validate its contents, so a crafted client could otherwise inject
+-- arbitrary keys/values into a replicated country field (junk injection + payload bloat).
+local function sanitizeConsumerGoods(priorities)
+	if priorities == nil then
+		return nil
+	end
+	local goods = ctx.Bundle and ctx.Bundle.tradeGoods
+	if not goods then
+		return nil
+	end
+	local clean = {}
+	for goodId, value in pairs(priorities) do
+		if
+			type(goodId) == "string"
+			and goods[goodId] ~= nil
+			and type(value) == "number"
+			and value == value
+			and value ~= math.huge
+			and value ~= -math.huge
+		then
+			clean[goodId] = math.clamp(value, 0, 1e6)
+		end
+	end
+	return clean
+end
+
 local function setConsumerGoods(tag, priorities)
 	local country = ctx.WorldState.getCountry(tag)
 	if not country then
@@ -342,7 +378,7 @@ local function setConsumerGoods(tag, priorities)
 	if priorities ~= nil and type(priorities) ~= "table" then
 		return false
 	end
-	country.consumerGoodsPriority = priorities
+	country.consumerGoodsPriority = sanitizeConsumerGoods(priorities)
 	ctx.WorldState.setCountry(tag, country)
 	return true
 end

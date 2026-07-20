@@ -40,6 +40,7 @@ local CANARIES = {
 	"NotificationChannel",
 	"Hud",
 	"HudWiring",
+	"SaveClientSettings",
 }
 
 -- Lune renamed process.spawn -> process.exec across versions; support both.

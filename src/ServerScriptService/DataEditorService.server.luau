@@ -7,7 +7,15 @@ local Editor = require(ServerStorage:WaitForChild("Dev"):WaitForChild("DataEdito
 local EditorAdmins = require(ServerStorage:WaitForChild("Dev"):WaitForChild("EditorAdmins"))
 local DataStoreService = game:GetService("DataStoreService")
 local HttpService = game:GetService("HttpService")
-local RelayConfig = require(ServerStorage:WaitForChild("Dev"):WaitForChild("RelayConfig"))
+-- Bounded so a missing place-only RelayConfig fails loud instead of yielding forever inside require (B24).
+local relayInst = ServerStorage:WaitForChild("Dev"):WaitForChild("RelayConfig", 10)
+if not relayInst then
+	error(
+		"[DataEditorService] RelayConfig missing: gitignored, place-only module absent from a from-scratch "
+			.. "build. Copy Dev/RelayConfig.template.luau to Dev/RelayConfig.luau with the real DATASTORE_NAME/SCOPE."
+	)
+end
+local RelayConfig = require(relayInst)
 local DataOverlay = require(ServerStorage:WaitForChild("Services"):WaitForChild("DataOverlay"))
 
 local STAGING_ENABLED = true
@@ -242,8 +250,12 @@ local function stampTileAttributes(part, ownerTag, partName, map)
 	end
 end
 
-local api = ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Remotes"):WaitForChild("DataEditorAPI")
-
+-- DataEditorAPI (the editor command RemoteFunction) is created via ensureRemote below, alongside the two
+-- editor RemoteEvents. It used to be WaitForChild'd off an instance nothing in tracked source creates, so if
+-- that instance ever went missing this script would yield forever at boot and silently never bind
+-- OnServerInvoke (the editor would just go dead with no error). Creating it here makes the bridge
+-- self-healing and keeps its existence visible to source control. ensureRemote reuses a pre-placed instance
+-- of the right ClassName if one already exists, so this is backward compatible.
 local function ensureRemote(name, className)
 	local remotesFolder = ReplicatedStorage:WaitForChild("ArtOfWar"):WaitForChild("Remotes")
 	local existing = remotesFolder:FindFirstChild(name)
@@ -259,6 +271,7 @@ local function ensureRemote(name, className)
 	return r
 end
 
+local api = ensureRemote("DataEditorAPI", "RemoteFunction")
 local LiveSync = ensureRemote("DataEditorLive", "RemoteEvent")
 local Presence = ensureRemote("DataEditorPresence", "RemoteEvent")
 
@@ -916,6 +929,14 @@ end)()
 local logStore = DataStoreService:GetDataStore(RelayConfig.DATASTORE_NAME, RelayConfig.DATASTORE_SCOPE)
 local pendingLog = {} -- entries created on THIS server, not yet flushed
 
+-- Short-TTL cache of the SHARED stored log (the GetAsync result). getLogs is served before the command lock
+-- and outside the rate limiter, so without this every Logs-tab refresh issued a fresh DataStore GetAsync
+-- against the editor store's read budget. Only the cross-server portion is cached; this server's own
+-- un-flushed pendingLog is appended fresh on each read (below), so local actions still appear immediately.
+-- The cache is invalidated on a successful flush so just-flushed entries aren't hidden for up to the TTL.
+local LOG_READ_TTL = 5
+local logReadCache = { at = -math.huge, stored = nil }
+
 local function logDecode(raw)
 	if type(raw) == "string" then
 		local ok, dec = pcall(HttpService.JSONDecode, HttpService, raw)
@@ -1013,25 +1034,44 @@ local function flushLogs()
 		for i = #batch, 1, -1 do
 			table.insert(pendingLog, 1, batch[i])
 		end
+	else
+		-- These entries now live in the shared store but left pendingLog; drop the read cache so the next
+		-- Logs refresh re-fetches them rather than briefly showing neither copy for up to LOG_READ_TTL.
+		logReadCache.at = -math.huge
 	end
 end
 
 -- Newest-first list of up to `limit` entries: the shared stored log plus this server's un-flushed batch.
+-- The shared portion is served from a short-TTL cache (see logReadCache) so rapid refreshes don't each hit
+-- DataStore; pendingLog is merged fresh every call so this server's own actions never lag the cache.
 local function readLogs(limit)
 	limit = limit or 300
-	local stored = {}
-	local ok, raw = pcall(function()
-		return logStore:GetAsync(LOG_KEY)
-	end)
-	if ok then
-		stored = logDecode(raw)
+	local now = os.clock()
+	local stored
+	if logReadCache.stored and (now - logReadCache.at) < LOG_READ_TTL then
+		stored = logReadCache.stored
+	else
+		local ok, raw = pcall(function()
+			return logStore:GetAsync(LOG_KEY)
+		end)
+		if ok then
+			stored = logDecode(raw)
+			logReadCache.stored = stored
+			logReadCache.at = now
+		else
+			-- On a failed read, serve the last good cache if we have one rather than an empty log.
+			stored = logReadCache.stored or {}
+		end
 	end
+	-- Clone before appending: `stored` may be the cached table, and mutating it would accumulate duplicate
+	-- pendingLog entries across successive reads.
+	local merged = table.clone(stored)
 	for _, e in ipairs(pendingLog) do
-		stored[#stored + 1] = e
+		merged[#merged + 1] = e
 	end
 	local out = {}
-	for i = #stored, math.max(1, #stored - limit + 1), -1 do
-		out[#out + 1] = stored[i]
+	for i = #merged, math.max(1, #merged - limit + 1), -1 do
+		out[#out + 1] = merged[i]
 	end
 	return out
 end
@@ -1057,6 +1097,33 @@ local function ensureEditorLoaded()
 		provinces += 1
 	end
 	print(string.format("[DataEditorService] ready — %d countries, %d provinces loaded", countries, provinces))
+end
+
+-- Cache the sorted province-id list so a full paged load (~8 pages for ~5.7k provinces) doesn't re-enumerate
+-- and re-sort the whole id set on every page. Invalidation is conservative and cheap: reload/undo/redo and
+-- the per-user state swap all REPLACE the province table (new identity), and add/removeProvince change the
+-- entry count -- so keying on (table identity, count) catches every case that alters the id set. The count
+-- walk stays O(n) but the array build + O(n log n) sort (the dominant cost) is skipped on a hit.
+local provIdCache = { prov = nil, count = -1, ids = nil }
+local function sortedProvinceIds(prov)
+	local count = 0
+	for _ in pairs(prov) do
+		count += 1
+	end
+	if provIdCache.prov == prov and provIdCache.count == count then
+		return provIdCache.ids, count
+	end
+	local ids = table.create(count)
+	for id in pairs(prov) do
+		ids[#ids + 1] = id
+	end
+	table.sort(ids, function(a, b)
+		return (tonumber(a) or 0) < (tonumber(b) or 0)
+	end)
+	provIdCache.prov = prov
+	provIdCache.count = count
+	provIdCache.ids = ids
+	return ids, count
 end
 
 local function handleEditorCommand(player, command, payload)
@@ -1129,14 +1196,7 @@ local function handleEditorCommand(player, command, payload)
 		return safeCall(function()
 			local state = Editor.getState()
 			local prov = state.provinces or {}
-			local ids = {}
-			for id in pairs(prov) do
-				ids[#ids + 1] = id
-			end
-			table.sort(ids, function(a, b)
-				return (tonumber(a) or 0) < (tonumber(b) or 0)
-			end)
-			local total = #ids
+			local ids, total = sortedProvinceIds(prov)
 			local offset = math.max(0, math.floor(tonumber(payload and payload.offset) or 0))
 			local limit = math.clamp(math.floor(tonumber(payload and payload.limit) or 800), 1, 1200)
 			local last = math.min(offset + limit, total)
@@ -1864,6 +1924,10 @@ local function handleEditorCommand(player, command, payload)
 		end
 		EditorAdmins.revoke(uid)
 		return { ok = true, result = { userId = uid } }
+	-- === One-shot schema-migration tooling (migrateLegacy / migrateV3toV4 / rollbackV4 / importSeed) ===
+	-- These are NOT live editor features and have no client button: v4 is the live schema, so they run only as
+	-- manual dev-console/RemoteFunction one-shots for an emergency re-migrate or rollback. They are reachable
+	-- only by a manager (canManage) crafting the call directly. Do not wire them into the editor UI.
 	elseif command == "migrateLegacy" then
 		-- Destructive DataStore-writing migration — manager-only, like its v4 siblings below.
 		if not EditorAdmins.canManage(player) then

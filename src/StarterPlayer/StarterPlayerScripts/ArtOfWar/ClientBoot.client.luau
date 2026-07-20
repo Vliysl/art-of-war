@@ -61,6 +61,8 @@ local CombatView = safeRequire("CombatView")
 local SimClock = safeRequire("SimClock")
 local MoveArrowView = safeRequire("MoveArrowView")
 local CapitalMarkerView = safeRequire("CapitalMarkerView")
+local MusicController = safeRequire("MusicController")
+local SettingsSync = safeRequire("SettingsSync")
 local WorldConstants = require(aow:WaitForChild("Shared"):WaitForChild("WorldConstants"))
 local provinceRecolorWired = false
 
@@ -114,6 +116,28 @@ if OwnPolitics and ClientStateCache then
 	OwnPolitics.OnClientEvent:Connect(function(packet)
 		if type(packet) == "table" then
 			ClientStateCache.setOwnPolitics(packet)
+		end
+	end)
+end
+
+-- Fog of war: this player's own armies arrive in full detail here, stripped from the fogged shared StateSync
+-- broadcast when EnableFogOfWar is on. ClientStateCache overlays them so own armies show full, enemies fogged.
+local OwnArmies = Remotes and Remotes:WaitForChild("OwnArmies", 120)
+if OwnArmies and ClientStateCache then
+	OwnArmies.OnClientEvent:Connect(function(packet)
+		if type(packet) == "table" then
+			ClientStateCache.setOwnArmies(packet)
+		end
+	end)
+end
+
+-- Technology tree: this player's own tech state (levels + research slots) arrives here, stripped from the shared
+-- StateSync broadcast (COUNTRY_DROP). ResearchScreen overlays it onto the own-country record.
+local OwnResearch = Remotes and Remotes:WaitForChild("OwnResearch", 120)
+if OwnResearch and ClientStateCache then
+	OwnResearch.OnClientEvent:Connect(function(packet)
+		if type(packet) == "table" then
+			ClientStateCache.setOwnResearch(packet)
 		end
 	end)
 end
@@ -181,10 +205,35 @@ do
 	end
 end
 
+-- Nation crests, for the selection screen's first page. BOUNDED-BLOCKING like Shells above, not
+-- fire-and-forget like Icons: the whole point is that the crests are in the cache before the first page
+-- draws, and this is the last chance to guarantee that -- the screen mounts inside the task.defer below.
+-- ~9 static assets, so the wait is short in practice and the cap only bounds a cold/flaky CDN.
+if CountryColor and CountryColor.preloadCrests then
+	local done = false
+	task.spawn(function()
+		CountryColor.preloadCrests()
+		done = true
+	end)
+	local startedAt = os.clock()
+	while not done and os.clock() - startedAt < 5 do
+		task.wait()
+	end
+end
+
 local NotificationChannel = Remotes and Remotes:WaitForChild("NotificationChannel", 120)
 if NotificationChannel then
 	NotificationChannel.OnClientEvent:Connect(function(payload)
 		if type(payload) ~= "table" then
+			return
+		end
+		if MusicController then
+			MusicController.onEvent(payload) -- one-shot music stings + ducking (no-op unless EnableMusic)
+		end
+		-- Formation/release announcements ride the same channel as toasts but render as a prominent,
+		-- non-blocking banner (crest + title + body + dismiss + audio) instead of a corner toast.
+		if payload.kind == "superevent" and Hud and Hud.showSuperEvent then
+			Hud.showSuperEvent(payload)
 			return
 		end
 		if Hud and Hud.notify then
@@ -228,6 +277,11 @@ do
 	end
 end
 
+-- Apply any DataStore-persisted client settings BEFORE the first controller reads an attribute (UISound just
+-- below, then MusicController; RenderDistanceController later), so a restored value wins over a seeded default.
+-- Bounded, and a no-op unless WorldConstants.PersistClientSettings is on.
+safeCall(SettingsSync, "awaitLoaded")
+
 -- Wire default UI sounds to EVERY ScreenGui (the HUD builds its own ScreenGuis outside UIRoot,
 -- so UIRoot.attachAll alone missed them -> no click/hover sounds).
 do
@@ -240,6 +294,14 @@ do
 		end
 	end
 end
+
+if WorldConstants.EnableMusic then
+	safeCall(MusicController, "start")
+end
+
+-- Now that the controllers have applied/seeded their attributes, start persisting changes to them. A no-op
+-- unless WorldConstants.PersistClientSettings is on.
+safeCall(SettingsSync, "start")
 
 task.defer(function()
 	-- Cinematic intro: start zoomed in (behind the loading screen) so the reveal is a smooth zoom-out
@@ -463,12 +525,46 @@ task.spawn(function()
 	local Players = game:GetService("Players")
 	local RunService = game:GetService("RunService")
 	local plr = Players.LocalPlayer
+
+	-- Province RECORDS are chunk-streamed and land independently of the map being painted: `mapPainted` only
+	-- tracks the SERVER's province stamping, so it says nothing about whether THIS client has its records yet.
+	-- The cover therefore used to lift onto a nation-selection screen where every nation read 0 provinces, the
+	-- "biggest realm first" sort was meaningless, every continent filter (bucketed off the capital's province)
+	-- returned nothing, and the map highlight was inert -- then the whole list reordered in front of the player.
+	-- Subscribing HERE is what makes this safe: task.spawn runs this body synchronously up to the first yield,
+	-- so the subscription is registered while the main flow is still running -- and RequestFullState, which is
+	-- what makes the server start pushing chunks, lives in the task.defer above and cannot run until the main
+	-- flow finishes. The signal can never fire before we are listening for it.
+	local provincesReady = false
+	local unsubProvinces
+	if ClientStateCache and ClientStateCache.onChange then
+		unsubProvinces = ClientStateCache.onChange("provincesReady", function()
+			provincesReady = true
+		end)
+	else
+		provincesReady = true -- no cache -> nothing to wait for; never block boot on a missing module
+	end
+
 	local stopAt = os.clock() + 75
 	while os.clock() < stopAt do
 		if map and map:GetAttribute("mapPainted") then
 			break
 		end
 		task.wait(0.1)
+	end
+
+	-- Bounded like every other gate here (mapPainted 75s, AoW_Hud 5s): a slow or dropped chunk stream must
+	-- degrade to "the old behaviour" -- an honest-ish screen a moment early -- never to a black screen.
+	-- NationSelection keeps its own provincesReady subscription, which repairs the list if this expires.
+	local provDeadline = os.clock() + 20
+	while os.clock() < provDeadline and not provincesReady do
+		task.wait(0.1)
+	end
+	if unsubProvinces then
+		pcall(unsubProvinces)
+	end
+	if not provincesReady then
+		warn("[AoW Boot] province stream did not complete within 20s -- uncovering with partial province data")
 	end
 	-- Confirm the persistent HUD ScreenGui exists (built synchronously in the main flow above). Bounded so
 	-- a failed HUD build can't hang boot -- the render-frame settle + deadline still uncover the map.

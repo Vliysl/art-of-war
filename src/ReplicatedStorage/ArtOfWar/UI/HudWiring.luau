@@ -155,34 +155,8 @@ function HudWiring.start(modules)
 		})
 	end
 
-	local function aggregateArmies(tag)
-		local regiments = 0
-		for _, a in pairs(ClientStateCache.allArmies() or {}) do
-			if a.ownerTag == tag then
-				for _, n in pairs(a.composition or {}) do
-					regiments += n
-				end
-			end
-		end
-		return regiments, regiments * 1000
-	end
-
-	local function provinceTotals()
-		local totals = {}
-		for _, p in pairs(ClientStateCache.allProvinces() or {}) do
-			local owner = p.ownerTag
-			if owner then
-				local t = totals[owner]
-				if not t then
-					t = { count = 0, dev = 0 }
-					totals[owner] = t
-				end
-				t.count += 1
-				t.dev += (p.devTier or 0)
-			end
-		end
-		return totals
-	end
+	-- (aggregateArmies + provinceTotals removed with buildClaimable: an every-army and an every-province scan
+	-- that existed solely to build the nation-selection payload nothing ever read.)
 
 	-- Active tech + progress %, for the Research button tooltip (e.g. "Field Howitzers  62%").
 	local function researchLabel(c)
@@ -211,6 +185,12 @@ function HudWiring.start(modules)
 			code = tag,
 			name = c.displayName or tag,
 			color = CountryColor.resolve(tag),
+			-- Carried purely so sameCountryData below can see a crest swap. Forming a formable keeps the tag and
+			-- changes displayName/color/flagAssetId independently, so without these an editor-authored formable
+			-- that sets only a flag would be judged "same country", Hud.setCountry would never be called, and
+			-- the bar would keep the old crest -- the same trap CountryBar's own update() used to fall into.
+			flag = CountryColor.resolveFlag(tag),
+			formed = CountryColor.isFormed(tag),
 			government = prettify(c.governmentForm),
 			culture = prettify(c.primaryCulture),
 			resources = {
@@ -332,31 +312,6 @@ function HudWiring.start(modules)
 		Hud.openProvince(normalizeProvince(rec, id))
 	end
 
-	local function buildClaimable()
-		local nations = {}
-		local totals = provinceTotals()
-		for tag, c in pairs(ClientStateCache.allCountries() or {}) do
-			if not c.claimedBy then
-				local t = totals[tag]
-				nations[#nations + 1] = {
-					tag = tag,
-					name = c.displayName or tag,
-					color = CountryColor.resolve(tag),
-					government = prettify(c.governmentForm),
-					treasury = money(c.treasury),
-					manpower = abbreviate(c.manpower),
-					provinces = t and t.count or 0,
-					development = t and t.dev or 0,
-					regiments = (aggregateArmies(tag)),
-				}
-			end
-		end
-		table.sort(nations, function(a, b)
-			return (a.name or "") < (b.name or "")
-		end)
-		return nations
-	end
-
 	local function resolveTag()
 		for tag, c in pairs(ClientStateCache.allCountries() or {}) do
 			if c.claimedBy == localPlayer.UserId then
@@ -423,8 +378,10 @@ function HudWiring.start(modules)
 		if Hud.closeScreen then
 			Hud.closeScreen()
 		end
+		-- NationSelection builds its own view models straight from ClientStateCache; the only thing it ever
+		-- reads off ctx.data is onPlay. This used to also pass `nations = buildClaimable()` -- a full province
+		-- scan plus a per-country army aggregation, computed on the boot path and then discarded unread.
 		local handle = Hud.openNationSelection({
-			nations = buildClaimable(),
 			onPlay = function(tag)
 				fire("ClaimCountry", tag)
 			end,
@@ -467,6 +424,9 @@ function HudWiring.start(modules)
 			return false
 		end
 		if a.government ~= b.government or a.culture ~= b.culture or a.color ~= b.color then
+			return false
+		end
+		if a.flag ~= b.flag or a.formed ~= b.formed then
 			return false
 		end
 		local ra, rb = a.resources or {}, b.resources or {}

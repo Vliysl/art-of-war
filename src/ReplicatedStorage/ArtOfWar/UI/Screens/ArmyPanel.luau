@@ -3,6 +3,7 @@ local Components = script.Parent.Parent.Components
 local Button = require(Components.Button)
 local CountryBadge = require(Components.CountryBadge)
 local Modal = require(Components.Modal)
+local PickerRow = require(Components.PickerRow)
 local DesignSystem = require(script.Parent.Parent.Parent.DesignSystem)
 local Colors = DesignSystem.Colors
 local Typography = DesignSystem.Typography
@@ -638,33 +639,25 @@ function ArmyPanel.create(ctx)
 
 		for i, item in ipairs(pool) do
 			local locked = RecruitGate.unitNeedsMilitaryDistrict(item.def) and not hasMilitary
-			local row = ScreenKit.stat(list, {
+			-- PickerRow reserves the button's width in the text column. The old StatRow + overlaid button put
+			-- the value and the Add button in the same pixels; it only LOOKED fine because "28 gold" is short
+			-- enough to hide behind the button -- "Needs Military" was already being clipped by it.
+			PickerRow.create({
+				parent = list,
+				order = i,
 				icon = "Army",
 				label = item.def.displayName or titleCase(item.id),
-				value = locked and "Needs Military" or string.format("%s gold", commafy(item.def.recruitCost)),
-				valueColor = locked and Colors.Warning or nil,
-				mono = true,
-				layoutOrder = i,
-			})
-			if locked then
-				local lbl = row:FindFirstChild("Label")
-				if lbl then
-					lbl.TextColor3 = Colors.TextDisabled
-				end
-			end
-			local add = Button.create({
-				parent = row,
-				variant = "secondary",
-				text = "Add",
-				width = 72,
-				size = "sm",
-				disabled = locked, -- greys the button + blocks its onClick (Button.create gates on Active)
+				-- Terser than the Military screen's wording on purpose: this picker is a 300px floating modal,
+				-- so its text column is ~142px and the full sentence would truncate.
+				sub = locked and "Needs a Military district"
+					or string.format("%s gold", commafy(item.def.recruitCost)),
+				buttonText = "Add",
+				buttonWidth = 72,
+				locked = locked,
 				onClick = function()
 					ctx.fire("RecruitUnit", provinceId, item.id, 1)
 				end,
 			})
-			add.AnchorPoint = Vector2.new(1, 0.5)
-			add.Position = UDim2.fromScale(1, 0.5)
 		end
 	end
 
@@ -1034,6 +1027,21 @@ function ArmyPanel.create(ctx)
 			ctx.fire("SetAutoCapture", id, not allOn)
 		end
 	end
+	function cmd.toggleMerge()
+		-- Merge is default-ON (mergeEnabled ~= false). "All on" means none is explicitly off.
+		local targets = liveTargets()
+		local allOn = true
+		for _, id in ipairs(targets) do
+			local a = getArmy(id)
+			if a and a.mergeEnabled == false then
+				allOn = false
+				break
+			end
+		end
+		for _, id in ipairs(targets) do
+			ctx.fire("SetMerge", id, not allOn)
+		end
+	end
 	function cmd.halt()
 		for _, id in ipairs(liveTargets()) do
 			local a = getArmy(id)
@@ -1303,7 +1311,7 @@ function ArmyPanel.create(ctx)
 	local function buildCommandBar(parent, order)
 		local targets = liveTargets()
 		local primaryArmy = getArmy(targets[1])
-		local reAllOn, capAllOn, anyMoving = true, true, false
+		local reAllOn, capAllOn, mergeAllOn, anyMoving = true, true, true, false
 		for _, id in ipairs(targets) do
 			local a = getArmy(id)
 			if a then
@@ -1312,6 +1320,9 @@ function ArmyPanel.create(ctx)
 				end
 				if not a.autoCapture then
 					capAllOn = false
+				end
+				if a.mergeEnabled == false then -- default ON; only explicit false is "off"
+					mergeAllOn = false
 				end
 				if a.movement then
 					anyMoving = true
@@ -1334,6 +1345,7 @@ function ArmyPanel.create(ctx)
 
 		toggleRow(wrap, { label = "Reinforcements", on = reAllOn, key = "R", onClick = cmd.toggleReinforce, order = 1 })
 		toggleRow(wrap, { label = "Auto-capture", on = capAllOn, key = "C", onClick = cmd.toggleCapture, order = 2 })
+		toggleRow(wrap, { label = "Merge", on = mergeAllOn, key = "M", onClick = cmd.toggleMerge, order = 3 })
 
 		-- Always render the full command grid so the layout is stable and the actions (and their hotkeys)
 		-- are discoverable; disable the ones that don't apply to the current selection rather than hiding
@@ -1813,6 +1825,7 @@ function ArmyPanel.create(ctx)
 		[Enum.KeyCode.T] = cmd.recruit,
 		[Enum.KeyCode.V] = cmd.split,
 		[Enum.KeyCode.G] = cmd.merge,
+		[Enum.KeyCode.M] = cmd.toggleMerge,
 	}
 	local keyConn = game:GetService("UserInputService").InputBegan:Connect(function(input, gameProcessed)
 		if gameProcessed then

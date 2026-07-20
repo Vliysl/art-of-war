@@ -377,6 +377,10 @@ function WorldState.allBattles()
 end
 
 function WorldState.setWar(id, record)
+	if record == nil then
+		tombstone("wars", id)
+		return
+	end
 	store.wars[id] = record
 	mark("wars", id)
 	bump()
@@ -391,6 +395,10 @@ function WorldState.allWars()
 end
 
 function WorldState.setPeaceProposal(id, record)
+	if record == nil then
+		tombstone("peaceProposals", id)
+		return
+	end
 	store.peaceProposals[id] = record
 	mark("peaceProposals", id)
 	bump()
@@ -405,6 +413,10 @@ function WorldState.allPeaceProposals()
 end
 
 function WorldState.setTradeOrder(id, record)
+	if record == nil then
+		tombstone("tradeOrders", id)
+		return
+	end
 	store.tradeOrders[id] = record
 	mark("tradeOrders", id)
 	bump()
@@ -419,6 +431,10 @@ function WorldState.allTradeOrders()
 end
 
 function WorldState.setPact(id, record)
+	if record == nil then
+		tombstone("pacts", id)
+		return
+	end
 	store.pacts[id] = record
 	mark("pacts", id)
 	bump()
@@ -448,27 +464,6 @@ end
 
 function WorldState.allArmyGroups()
 	return store.armyGroups
-end
-
-function WorldState.snapshot()
-	return {
-		revision = revision,
-		provinces = store.provinces,
-		countries = store.countries,
-		markets = store.markets,
-		units = store.units,
-		fleets = store.fleets,
-		tradeRoutes = store.tradeRoutes,
-		ideologies = store.ideologies,
-		leaders = store.leaders,
-		armies = store.armies,
-		battles = store.battles,
-		wars = store.wars,
-		peaceProposals = store.peaceProposals,
-		tradeOrders = store.tradeOrders,
-		pacts = store.pacts,
-		armyGroups = store.armyGroups,
-	}
 end
 
 function WorldState.drainDirty()

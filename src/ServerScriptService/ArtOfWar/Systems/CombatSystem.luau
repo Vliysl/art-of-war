@@ -400,6 +400,31 @@ local function onArmyArrival(armyId, provinceId)
 	end
 
 	captureIfUndefended(armyId, provinceId)
+
+	-- Auto-merge (per-army toggle, DEFAULT ON): a PEACEFUL arrival (no battle joined/started above) onto a
+	-- tile that already holds friendly, idle armies consolidates them into one stack (RoN-style), unless an
+	-- army has merge turned off. The arriving army is kept as the primary so its queued movementPath survives
+	-- for finishMove's continuePath. Runs after capture so the merged stack holds the (now-ours) tile.
+	if ctx.ArmySystem.mergeArmies then
+		local me = ctx.WorldState.getArmy(armyId)
+		if me and not me.battleId and not me.movement and me.mergeEnabled ~= false then
+			local others = {}
+			for _, other in ctx.ArmySystem.armiesInProvince(provinceId) do
+				if
+					other.id ~= armyId
+					and other.ownerTag == me.ownerTag
+					and not other.battleId
+					and not other.movement
+					and other.mergeEnabled ~= false
+				then
+					others[#others + 1] = other.id
+				end
+			end
+			if #others > 0 then
+				ctx.ArmySystem.mergeArmies(armyId, others)
+			end
+		end
+	end
 end
 
 function CombatSystem.register(context)

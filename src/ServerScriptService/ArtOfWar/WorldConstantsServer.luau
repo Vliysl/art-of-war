@@ -11,10 +11,61 @@ local WorldConstants = {}
 -- ignores this flag entirely (see Framework/BakedWorld.isActive).
 WorldConstants.UseBakedWorldData = false
 
+-- B27: whether a Studio session OFF the Map Editor place may edit the shared :edit draft world. Default false
+-- => Studio is treated as the editor world ONLY on the Map Editor place, so a main/experimental-place Studio
+-- playtest reads the LIVE world players see (and DataOverlay.writeBlocked stops it persisting live keys). Set
+-- true to restore the old behavior (any Studio session edits the :edit draft). Server-only; DataOverlay reads it.
+WorldConstants.AllowMainPlaceStudioEditing = false
+
+-- B9: enforce structural validation of owner-authored custom formable defs in FormableStore.set (asset-id
+-- allowlist + string/array caps + JSON size backstop). Kill-switch: flip false to bypass if it ever rejects a
+-- legitimate editor def. Server-only -- FormableStore is server-side and clients never read it.
+WorldConstants.EnforceFormableDefValidation = true
+
 WorldConstants.MultiplierCapEconomy = 10
 WorldConstants.MultiplierCapCombatStat = 2
 WorldConstants.MultiplierCapTechPerBranch = 3
 WorldConstants.MultiplierCapArtillerySubStat = 2
+
+-- Technology tree per-branch effect caps (2026-07). Combat per-unit-class buffs are MULTIPLICATIVE products of
+-- per-level (1+bonus), clamped to the reserved MultiplierCapTechPerBranch (3x) / MultiplierCapArtillerySubStat
+-- (2x) above. The caps below are ADDITIVE-fraction ceilings for the non-combat branches; each consumer applies
+-- them as (1 +/- clamp(sum, 0, cap)). Domain->capKey wiring lives in Shared/TechDomains.
+WorldConstants.TechCapFactoryOutput = 1.0 -- +100% manufactory/factory output
+WorldConstants.TechCapGovSpend = 0.30 -- -30% government spending (all expense types)
+WorldConstants.TechCapFuel = 0.50 -- +50% fuel efficiency (fuel-input reduction)
+WorldConstants.TechCapMining = 0.80 -- +80% mining extraction
+WorldConstants.TechCapBuildingCost = 0.30 -- -30% building/district cost
+WorldConstants.TechCapBuildingSpeed = 0.50 -- -50% building/district time
+WorldConstants.TechCapTaxIncome = 0.75 -- +75% tax (city-tier + infrastructure branches combined)
+WorldConstants.TechCapPPGain = 1.0 -- +100% political power gain
+WorldConstants.TechCapPolicyEff = 0.50 -- -50% policy cost/upkeep
+WorldConstants.TechCapUnrestReduction = 0.80 -- +80% unrest relief
+WorldConstants.TechCapUnrestBuild = 0.20 -- -20% unrest build penalty
+WorldConstants.TechCapStability = 1.0 -- +100% raw stability gain (Phase 2 stability tick)
+WorldConstants.TechCapIntegration = 1.5 -- +150% integration speed (Phase 2 integration timer)
+WorldConstants.TechCapFortDefense = 0.50 -- +50% fortification defense (Phase 2)
+WorldConstants.TechCapDoctrineCost = 0.30 -- -30% doctrine/operation cost
+WorldConstants.TechCapResearchEfficiency = 0.30 -- -30% research cost
+WorldConstants.TechCapResearchPower = 1.20 -- +120% research power gain
+
+-- Per-country tech-group starting era: seedAll grants each node the highest level whose era <= this year, so a
+-- less-advanced group begins the scenario further left in the tree ("some tribes lack the 1600s techs"). Unknown
+-- groups fall back to TechGroupStartYearDefault. Keys match country.technologyGroup values in Data/Countries.
+WorldConstants.TechGroupStartYearDefault = 1750
+WorldConstants.TechGroupStartYear = {
+	western = 1750,
+	eastern = 1730,
+	ottoman = 1720,
+	muslim = 1710,
+	indian = 1700,
+	chinese = 1710,
+	nomad = 1660,
+	sub_saharan = 1650,
+	north_american = 1630,
+	south_american = 1630,
+	oceanian = 1600,
+}
 
 WorldConstants.EntrenchedDefense = 1.5
 WorldConstants.TrainingTierStep = 1.1
@@ -139,6 +190,11 @@ WorldConstants.NapBreakOpinionPenalty = 40 -- both-ways for breaking a NAP early
 WorldConstants.NapAcceptThreshold = 0 -- AI signs a NAP when opinion >= this
 WorldConstants.GuaranteeOpinionBonus = 15 -- both-ways when a guarantee is issued
 WorldConstants.GuaranteeRevokeOpinionPenalty = 15 -- protected->guarantor when a guarantee is revoked
+WorldConstants.GuaranteeCost = 40 -- B37: political-power cost to issue a guarantee (was free -> spammable opinion lever)
+WorldConstants.GuaranteeCooldownDays = 30 -- B37: per-protected-target cooldown before the guarantor can re-guarantee it
+WorldConstants.MaxArmiesPerCountry = 40 -- B22: cap on a country's army count (splitArmy rejects past this) so split-spam can't mint armies unbounded
+WorldConstants.AutoCaptureBfsNodeBudget = 400 -- B22: max provinces one AutoCapture nearest-target BFS explores before giving up
+WorldConstants.AutoCaptureMissCooldownSec = 15 -- B22: after a BFS finds no reachable target, back off this long before re-scanning
 
 -- Alliances + call-to-arms (Phase 3). Alliances reuse the pacts pipeline; call-to-arms drags a
 -- defender's allies/guarantors into linked co-belligerent wars.
@@ -187,6 +243,11 @@ WorldConstants.PeaceAIExhaustionWeight = 0.5 -- each exhaustion point adds this 
 WorldConstants.PeaceAIAcceptMargin = 0 -- accept when willingness - cost >= this
 WorldConstants.PeaceVassalizeCost = 90 -- vassalize peace term: very high war-score cost (AI only when crushed)
 WorldConstants.ReleaseSubjectOpinionBonus = 30 -- a freed subject's opinion of its former overlord
+-- B14: prune ended wars a short grace after endWar stamps endedAt (mirrors the shipped peaceProposal/pact
+-- prune) so the wars collection + every findActiveWar scan stay bounded. Kill-switch: PruneEndedWars=false
+-- restores the old never-prune behavior.
+WorldConstants.PruneEndedWars = true
+WorldConstants.EndedWarTTLSeconds = 60 -- grace before an ended war drops; >> the ~6s diplomacy tick so the client's "war concluded" delta lands first
 -- =====================================================================
 -- ATTRITION (spec B.10 / 6.9, Phase 5) - see Systems.AttritionSystem.
 -- Monthly: provinces with stacked armies over supply bleed manpower (crowding);

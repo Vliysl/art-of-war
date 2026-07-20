@@ -172,7 +172,28 @@ for mid, mdef in Manufactories do
 			infraRequirement = mdef.minInfraTier or 0,
 			manufactoryId = mid,
 			researchGate = mdef.researchGate,
+			-- Manufactories live in the Industrial/Manufacturing district now (see below).
+			absorbedByDistrict = true,
 		}
+	end
+end
+
+-- Economy rework: these base buildings were folded into the district economy (their effects live in a district
+-- or, for tax_office, in base tax). When WorldConstants.DistrictsPlayable is on they are no longer separately
+-- buildable -- hidden from every build catalog and rejected by the build remote. This `absorbedByDistrict` flag
+-- (plus the manufactory flag above) is the SINGLE source of truth for that; all UI/server consumers read it.
+local ABSORBED_BY_DISTRICT = {
+	marketplace = true,
+	workshop = true,
+	granary = true,
+	tax_office = true,
+	barracks = true,
+	stables = true,
+	trading_port = true,
+}
+for id in ABSORBED_BY_DISTRICT do
+	if BuildingTypes[id] then
+		BuildingTypes[id].absorbedByDistrict = true
 	end
 end
 

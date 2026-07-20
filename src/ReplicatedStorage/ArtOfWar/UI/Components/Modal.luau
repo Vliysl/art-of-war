@@ -238,4 +238,23 @@ function Modal.create(config)
 	}
 end
 
+-- `content` is a plain Frame that neither clips nor scrolls, so a caller that parents a long list straight into
+-- it gets rows stacked past the panel and drawn over the map (a UIListLayout never shrinks or clips its
+-- children). Callers with a list that can outgrow the panel should parent into this instead: a ScrollingFrame
+-- clips by default, and AutomaticCanvasSize grows the canvas to fit. Returns the scroller; parent your
+-- UIListLayout and rows to IT, not to modal.content.
+function Modal.scrollBody(modal)
+	local list = Instance.new("ScrollingFrame")
+	list.Name = "ScrollBody"
+	list.Size = UDim2.fromScale(1, 1)
+	list.BackgroundTransparency = 1
+	list.BorderSizePixel = 0
+	list.ScrollBarThickness = 4
+	list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	list.CanvasSize = UDim2.new() -- AutomaticCanvasSize needs a zero base to grow from
+	list.ZIndex = modal.content.ZIndex
+	list.Parent = modal.content
+	return list
+end
+
 return Modal
