@@ -15,7 +15,11 @@ local MapModeController = require(aow.Modules:WaitForChild("MapModeController"))
 local CameraController = require(aow.Modules:WaitForChild("CameraController"))
 local ProvincePositions = require(aow.Modules:WaitForChild("ProvincePositions"))
 local SeaNodes = require(aow:WaitForChild("Shared"):WaitForChild("SeaNodes"))
-local Motion = require(aow:WaitForChild("DesignSystem"):WaitForChild("Motion"))
+-- Read Motion from the required DesignSystem aggregator (NOT a WaitForChild on the Motion child instance):
+-- the child ModuleScript can replicate late/intermittently on the client, and waiting on the instance
+-- directly here infinite-yielded and stalled the entire client boot (character stuck mid-air). require()'s
+-- cached value is immune to that.
+local Motion = require(aow:WaitForChild("DesignSystem")).Motion
 
 local STATE_ICON = {
 	idle = "",
